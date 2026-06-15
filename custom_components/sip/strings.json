@@ -27,10 +27,20 @@
   "entity": {
     "sensor": {
       "registration_status": {
-        "name": "Registration Status"
+        "name": "Registration Status",
+        "state": {
+          "registered": "Registered",
+          "registering": "Registering",
+          "unregistered": "Unregistered"
+        }
       },
       "last_call": {
-        "name": "Last Call"
+        "name": "Last Call",
+        "state": {
+          "none": "None",
+          "incoming": "Incoming",
+          "outgoing": "Outgoing"
+        }
       }
     },
     "binary_sensor": {

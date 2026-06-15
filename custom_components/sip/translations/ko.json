@@ -27,10 +27,20 @@
   "entity": {
     "sensor": {
       "registration_status": {
-        "name": "등록 상태"
+        "name": "등록 상태",
+        "state": {
+          "registered": "등록됨",
+          "registering": "등록 중",
+          "unregistered": "등록 안 됨"
+        }
       },
       "last_call": {
-        "name": "최근 통화"
+        "name": "최근 통화",
+        "state": {
+          "none": "없음",
+          "incoming": "수신",
+          "outgoing": "발신"
+        }
       }
     },
     "binary_sensor": {

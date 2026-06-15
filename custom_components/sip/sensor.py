@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
@@ -36,6 +36,8 @@ class SipRegistrationSensor(SensorEntity):
 
     _attr_icon = "mdi:phone-check"
     _attr_has_entity_name = True
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ["registered", "registering", "unregistered"]
 
     def __init__(self, entry: ConfigEntry, entry_data: dict[str, Any]) -> None:
         """Initialize the registration sensor."""
@@ -88,6 +90,8 @@ class SipLastCallSensor(SensorEntity):
 
     _attr_icon = "mdi:phone"
     _attr_has_entity_name = True
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ["none", "incoming", "outgoing"]
 
     def __init__(self, entry: ConfigEntry, entry_data: dict[str, Any]) -> None:
         """Initialize the last call sensor."""
