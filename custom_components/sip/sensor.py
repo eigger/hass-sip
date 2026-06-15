@@ -7,11 +7,11 @@ from typing import Any
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
+from .helpers import build_device_info
 from .sip_client.sip_client import SipClient, SipState
 
 
@@ -45,13 +45,7 @@ class SipRegistrationSensor(SensorEntity):
         self._config = entry_data["config"]
         self._attr_unique_id = f"{entry.entry_id}_registration_status"
         self._attr_translation_key = "registration_status"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=f"SIP Client ({self._config.username})",
-            manufacturer="Home Assistant",
-            model="SIP Client UA",
-            configuration_url=f"http://{self._config.server}",
-        )
+        self._attr_device_info = build_device_info(entry, self._config)
 
     async def async_added_to_hass(self) -> None:
         """Register dispatcher callback on mount."""
@@ -103,13 +97,7 @@ class SipLastCallSensor(SensorEntity):
         self._config = entry_data["config"]
         self._attr_unique_id = f"{entry.entry_id}_last_call"
         self._attr_translation_key = "last_call"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=f"SIP Client ({self._config.username})",
-            manufacturer="Home Assistant",
-            model="SIP Client UA",
-            configuration_url=f"http://{self._config.server}",
-        )
+        self._attr_device_info = build_device_info(entry, self._config)
         self._last_state = "none"
         self._timestamp: str | None = None
 

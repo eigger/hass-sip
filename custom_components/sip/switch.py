@@ -6,10 +6,9 @@ from typing import Any
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .helpers import build_device_info
 from .sip_client.sip_client import SipClient
 
 
@@ -26,7 +25,6 @@ async def async_setup_entry(
 class SipDndSwitch(SwitchEntity):
     """Representation of a DND switch for the SIP client."""
 
-    _attr_icon = "mdi:phone-message-off"
     _attr_has_entity_name = True
 
     def __init__(self, entry: ConfigEntry, entry_data: dict[str, Any]) -> None:
@@ -37,13 +35,12 @@ class SipDndSwitch(SwitchEntity):
         self._config = entry_data["config"]
         self._attr_unique_id = f"{entry.entry_id}_dnd"
         self._attr_translation_key = "dnd"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=f"SIP Client ({self._config.username})",
-            manufacturer="Home Assistant",
-            model="SIP Client UA",
-            configuration_url=f"http://{self._config.server}",
-        )
+        self._attr_device_info = build_device_info(entry, self._config)
+
+    @property
+    def icon(self) -> str:
+        """Reflect DND state with a valid MDI icon."""
+        return "mdi:do-not-disturb" if self._client.dnd else "mdi:do-not-disturb-off"
 
     @property
     def is_on(self) -> bool:

@@ -48,5 +48,73 @@
         "name": "Phone Line"
       }
     }
+  },
+  "services": {
+    "dial": {
+      "name": "Dial",
+      "description": "Initiates an outbound SIP call.",
+      "fields": {
+        "number": {
+          "name": "Number",
+          "description": "SIP target number or URI to dial (e.g. 100 or sip:100@freepbx)."
+        },
+        "menu": {
+          "name": "IVR menu",
+          "description": "Optional IVR menu configuration to run on the call."
+        },
+        "ring_timeout": {
+          "name": "Ring timeout",
+          "description": "Seconds to let the call ring before canceling."
+        }
+      }
+    },
+    "hangup": {
+      "name": "Hang up",
+      "description": "Ends the active SIP call or declines an incoming call.",
+      "fields": {
+        "sip_code": {
+          "name": "SIP status code",
+          "description": "Optional status code to send when rejecting a ringing call (e.g. 486 Busy Here)."
+        }
+      }
+    },
+    "answer": {
+      "name": "Answer",
+      "description": "Answers an incoming SIP call.",
+      "fields": {
+        "menu": {
+          "name": "IVR menu",
+          "description": "Optional IVR menu configuration to start on answer."
+        }
+      }
+    },
+    "send_dtmf": {
+      "name": "Send DTMF",
+      "description": "Sends DTMF digits to the active SIP call.",
+      "fields": {
+        "digits": {
+          "name": "Digits",
+          "description": "DTMF digits to send (e.g. 123#)."
+        }
+      }
+    },
+    "start_recording": {
+      "name": "Start recording",
+      "description": "Starts recording call audio to a local WAV file.",
+      "fields": {
+        "recording_file": {
+          "name": "Recording file path",
+          "description": "Absolute path of the WAV file to save (e.g. /media/recording.wav)."
+        }
+      }
+    },
+    "stop_recording": {
+      "name": "Stop recording",
+      "description": "Stops the active call recording."
+    },
+    "start_assist": {
+      "name": "Start Assist",
+      "description": "Bridges the active call to Home Assistant's Voice Assist pipeline."
+    }
   }
 }

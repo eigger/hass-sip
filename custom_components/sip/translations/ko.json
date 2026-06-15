@@ -48,5 +48,73 @@
         "name": "전화선"
       }
     }
+  },
+  "services": {
+    "dial": {
+      "name": "전화 걸기",
+      "description": "SIP 발신 통화를 시작합니다.",
+      "fields": {
+        "number": {
+          "name": "번호",
+          "description": "발신할 SIP 번호 또는 URI (예: 100 또는 sip:100@freepbx)."
+        },
+        "menu": {
+          "name": "IVR 메뉴",
+          "description": "통화에서 실행할 선택적 IVR 메뉴 설정."
+        },
+        "ring_timeout": {
+          "name": "수신 대기 시간",
+          "description": "통화를 취소하기 전 벨이 울리는 시간(초)."
+        }
+      }
+    },
+    "hangup": {
+      "name": "전화 끊기",
+      "description": "활성 SIP 통화를 종료하거나 수신 전화를 거절합니다.",
+      "fields": {
+        "sip_code": {
+          "name": "SIP 상태 코드",
+          "description": "수신 전화를 거절할 때 보낼 선택적 상태 코드 (예: 486 통화 중)."
+        }
+      }
+    },
+    "answer": {
+      "name": "전화 받기",
+      "description": "수신 중인 SIP 통화에 응답합니다.",
+      "fields": {
+        "menu": {
+          "name": "IVR 메뉴",
+          "description": "응답 시 시작할 선택적 IVR 메뉴 설정."
+        }
+      }
+    },
+    "send_dtmf": {
+      "name": "DTMF 전송",
+      "description": "활성 SIP 통화에 DTMF 숫자를 전송합니다.",
+      "fields": {
+        "digits": {
+          "name": "숫자",
+          "description": "전송할 DTMF 숫자 (예: 123#)."
+        }
+      }
+    },
+    "start_recording": {
+      "name": "녹음 시작",
+      "description": "통화 오디오를 로컬 WAV 파일로 녹음합니다.",
+      "fields": {
+        "recording_file": {
+          "name": "녹음 파일 경로",
+          "description": "저장할 WAV 파일의 절대 경로 (예: /media/recording.wav)."
+        }
+      }
+    },
+    "stop_recording": {
+      "name": "녹음 중지",
+      "description": "진행 중인 통화 녹음을 중지합니다."
+    },
+    "start_assist": {
+      "name": "Assist 시작",
+      "description": "활성 통화를 Home Assistant 음성 어시스트 파이프라인에 연결합니다."
+    }
   }
 }

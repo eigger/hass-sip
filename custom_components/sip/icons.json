@@ -1,0 +1,11 @@
+{
+  "services": {
+    "dial": { "service": "mdi:phone-outgoing" },
+    "hangup": { "service": "mdi:phone-hangup" },
+    "answer": { "service": "mdi:phone-incoming" },
+    "send_dtmf": { "service": "mdi:dialpad" },
+    "start_recording": { "service": "mdi:record-rec" },
+    "stop_recording": { "service": "mdi:stop" },
+    "start_assist": { "service": "mdi:assistant" }
+  }
+}
