@@ -1,6 +1,6 @@
 dial:
   name: Dial
-  description: Initiate a SIP call.
+  description: Initiate a SIP call to a specified number or SIP URI.
   target:
     entity:
       integration: sip
@@ -8,21 +8,31 @@ dial:
   fields:
     number:
       name: Number
-      description: SIP target number/URI to dial (e.g. 100 or sip:100@freepbx).
+      description: The extension number or full SIP URI to dial (e.g. 100, sip:100@freepbx).
       required: true
       example: "100"
       selector:
         text:
     menu:
       name: IVR Menu
-      description: Optional menu configuration for the call.
+      description: Optional IVR menu dictionary structure to start when the call connects.
       required: false
+      example:
+        id: "greet_menu"
+        tts:
+          message: "Welcome. Press 1 to speak to the family."
+          engine: "tts.google_translate"
+          language: "en"
+        choices:
+          "1":
+            post_action: "hangup"
       selector:
         object:
     ring_timeout:
       name: Ring Timeout
-      description: Timeout in seconds for the call to ring before canceling.
+      description: Duration in seconds to wait for the call to ring before canceling the dial attempt.
       required: false
+      example: 30
       selector:
         number:
           min: 1
@@ -33,32 +43,37 @@ dial:
       name: Message
       description: Optional text message to speak via TTS upon call connection. Supports Jinja templates.
       required: false
+      example: "Hello, this is Home Assistant. The current time is {{ now().strftime('%H:%M') }}."
       selector:
         text:
           multiline: true
     tts_engine:
       name: TTS Engine
-      description: Optional TTS engine to use for speaking the message.
+      description: Optional TTS engine entity ID to use for speaking the message.
       required: false
+      example: "tts.google_translate"
       selector:
         entity:
           domain: tts
     language:
       name: Language
-      description: Optional language code for TTS (e.g. ko).
+      description: Optional language code for speech output (e.g. ko, en).
       required: false
+      example: "ko"
       selector:
         text:
     tts_options:
       name: TTS Options
-      description: Optional extra voice or speech settings (e.g. voice name).
+      description: Optional configuration options dictionary passed to the selected TTS engine (e.g. voice or quality).
       required: false
+      example:
+        voice: "ko-KR-SunHiNeural"
       selector:
         object:
 
 hangup:
   name: Hang up
-  description: End the active SIP call.
+  description: End the active SIP call, or decline/busy an incoming call.
   target:
     entity:
       integration: sip
@@ -66,7 +81,7 @@ hangup:
   fields:
     sip_code:
       name: SIP Status Code
-      description: Optional status code to send if hanging up a ringing call.
+      description: Optional SIP status code to send if hanging up a ringing incoming call (e.g. 486 for Busy Here, 603 for Decline).
       required: false
       example: 486
       selector:
@@ -85,34 +100,52 @@ answer:
   fields:
     menu:
       name: IVR Menu
-      description: Optional menu configuration to start on answer.
+      description: Optional IVR menu dictionary structure to start immediately upon answering.
       required: false
+      example:
+        id: "incoming_menu"
+        tts:
+          message: "Press 1 to unlock the door."
+          engine: "tts.google_translate"
+          language: "en"
+        choices:
+          "1":
+            action:
+              domain: "lock"
+              service: "unlock"
+              entity_id: "lock.front_door"
+            post_action: "hangup"
       selector:
         object:
     message:
       name: Message
       description: Optional text message to speak via TTS upon answering. Supports Jinja templates.
       required: false
+      example: "Connecting you now."
       selector:
         text:
           multiline: true
     tts_engine:
       name: TTS Engine
-      description: Optional TTS engine to use for speaking the message.
+      description: Optional TTS engine entity ID to use for speaking the message.
       required: false
+      example: "tts.google_translate"
       selector:
         entity:
           domain: tts
     language:
       name: Language
-      description: Optional language code for TTS (e.g. ko).
+      description: Optional language code for speech output (e.g. ko, en).
       required: false
+      example: "ko"
       selector:
         text:
     tts_options:
       name: TTS Options
-      description: Optional extra voice or speech settings (e.g. voice name).
+      description: Optional configuration options dictionary passed to the selected TTS engine (e.g. voice or quality).
       required: false
+      example:
+        voice: "ko-KR-SunHiNeural"
       selector:
         object:
 
@@ -126,7 +159,7 @@ send_dtmf:
   fields:
     digits:
       name: Digits
-      description: DTMF digits to send (e.g. 123#).
+      description: DTMF keypress string to send (e.g. 123#).
       required: true
       example: "123#"
       selector:
@@ -142,9 +175,9 @@ start_recording:
   fields:
     recording_file:
       name: Recording File Path
-      description: Absolute path of the WAV file to save (e.g. /media/recording.wav). Supports Jinja templates.
+      description: Absolute path of the WAV file to save. Supports Jinja templates and target variables.
       required: true
-      example: "/media/recording.wav"
+      example: "/media/voicemails/call_{{ username }}_{{ now().strftime('%Y%m%d_%H%M%S') }}.wav"
       selector:
         text:
 
@@ -158,7 +191,7 @@ stop_recording:
 
 start_assist:
   name: Start Assist
-  description: Connect the active call to Home Assistant's Voice Assist.
+  description: Connect the active call directly to Home Assistant's Voice Assist pipeline.
   target:
     entity:
       integration: sip

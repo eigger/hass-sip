@@ -54,9 +54,9 @@ Initiates an outbound SIP call.
 - `ring_timeout` *(Optional)*: Number of seconds to let the call ring before canceling (e.g., `30`).
 - `menu` *(Optional)*: IVR menu configuration object (see below).
 - `message` *(Optional)*: Text message to speak via TTS upon call connection. If provided without a menu, the call will automatically hang up after speaking. If both `menu` and `message` are provided, `menu` takes precedence and `message` is ignored.
-- `tts_engine` *(Optional)*: Specific TTS engine to use (e.g., `tts.piper`, `tts.google_translate`).
+- `tts_engine` *(Optional)*: Specific TTS engine to use (e.g., `tts.google_translate`, `tts.piper`).
 - `language` *(Optional)*: Optional language code for TTS (e.g., `ko`, `en`).
-- `tts_options` *(Optional)*: Dictionary of extra voice or speech settings (e.g., `voice: ko_KR-gsw-medium`).
+- `tts_options` *(Optional)*: Dictionary of extra voice or speech settings (e.g., dynamic parameters).
 
 ### `sip.hangup`
 Ends an active SIP call or declines an incoming call.
@@ -68,7 +68,7 @@ Answers an incoming SIP call.
 - `entity_id` *(Required)*: The target SIP media player entity.
 - `menu` *(Optional)*: IVR menu configuration object to start immediately on answer.
 - `message` *(Optional)*: Text message to speak via TTS upon answering. If provided without a menu, the call will automatically hang up after speaking. If both `menu` and `message` are provided, `menu` takes precedence and `message` is ignored.
-- `tts_engine` *(Optional)*: Specific TTS engine to use (e.g., `tts.piper`, `tts.google_translate`).
+- `tts_engine` *(Optional)*: Specific TTS engine to use (e.g., `tts.google_translate`, `tts.piper`).
 - `language` *(Optional)*: Optional language code for TTS.
 - `tts_options` *(Optional)*: Dictionary of extra voice or speech settings.
 
@@ -133,10 +133,8 @@ action:
       entity_id: media_player.phone_line
     data:
       message: "Hello, this is an automated response."
-      tts_engine: tts.piper
+      tts_engine: tts.google_translate
       language: en
-      tts_options:
-        voice: en_US-lessac-medium
 ```
 
 #### Outbound — dial, speak when answered, and hang up automatically
@@ -150,7 +148,7 @@ action:
       number: "100"
       ring_timeout: 30
       message: "A package has been delivered."
-      tts_engine: tts.piper
+      tts_engine: tts.google_translate
       language: en
 ```
 
@@ -176,7 +174,7 @@ action:
     timeout: "00:00:10"
   - service: tts.speak
     target:
-      entity_id: tts.piper
+      entity_id: tts.google_translate
     data:
       media_player_entity_id: media_player.phone_line
       message: "Hello, this is an automated response."
@@ -207,7 +205,7 @@ action:
     timeout: "00:00:35"
   - service: tts.speak
     target:
-      entity_id: tts.piper
+      entity_id: tts.google_translate
     data:
       media_player_entity_id: media_player.phone_line
       message: "A package has been delivered."
@@ -237,10 +235,8 @@ data:
     id: root
     tts:
       message: "Welcome to our Home. Press 1 to toggle the living room light. Press 2 to talk to our Voice Assistant. Or enter your four-digit PIN code followed by hash."
-      engine: tts.piper
+      engine: tts.google_translate
       language: en
-      options:
-        voice: en_US-lessac-medium
     wait_for_audio_to_finish: true
     timeout: 10
     choices_are_pin: false
@@ -252,7 +248,7 @@ data:
           entity_id: light.living_room_light
         tts:
           message: "Toggling the light now."
-          engine: tts.piper
+          engine: tts.google_translate
           language: en
         post_action: hangup
       "2":
@@ -262,7 +258,7 @@ data:
       "default":
         tts:
           message: "Invalid selection."
-          engine: tts.piper
+          engine: tts.google_translate
           language: en
         post_action: repeat_message
       "timeout":
@@ -272,7 +268,7 @@ data:
 ### IVR TTS Configuration Options
 Within the `tts` block of a menu or a choice, you can specify the following parameters:
 - `message` (or `text`): The text content to be spoken.
-- `engine` (or `tts_engine`): The specific TTS engine to use (e.g., `tts.piper`, `tts.google_translate`).
+- `engine` (or `tts_engine`): The specific TTS engine to use (e.g., `tts.google_translate`, `tts.piper`).
 - `language` (or `lang`): Optional language code (e.g., `en`, `ko`).
 - `options` (or `tts_options`): A dictionary of voice-specific configurations.
 - `handle_as_template`: A boolean value (`true` or `false`). When set to `true`, the text in `message`/`text` will be rendered as a Home Assistant Jinja template before speaking.
