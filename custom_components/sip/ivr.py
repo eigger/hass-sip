@@ -1,4 +1,28 @@
-"""IVR (Interactive Voice Response) Menu Engine for SIP Client."""
+"""IVR (Interactive Voice Response) menu engine for SIP Client.
+
+Menu schema (canonical, flat — matches the service TTS parameters):
+
+    id: main                 # optional, target for "goto"
+    message: "Welcome"       # TTS text to speak
+    audio_file: /media/x.wav # OR an audio file / URL to play
+    template: true           # render `message` as a Jinja template
+    tts_engine: tts.piper    # TTS engine entity
+    language: ko             # TTS language
+    tts_options: {...}       # extra TTS voice/speech options
+    wait_for_audio: true     # collect input only after playback finishes
+    timeout: 10              # seconds to wait for input
+    input: digit             # "digit" (single key) or "pin" (multi-key + #)
+    choices:                 # input key -> target (pure digits/pins only)
+      "1": { ... }
+    on_invalid: { ... }      # target when input matches no choice
+    on_timeout: { ... }      # target when no input arrives in time
+    action: { ... }          # HA service to call on entry
+    assist: true             # hand the call to Home Assistant Voice Assist
+    post_action: hangup      # terminal action: hangup | repeat | back [n] | goto <id> | wait
+
+A target ("choices" value, on_invalid, on_timeout) is either a nested menu dict
+or a bare post_action string.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -18,7 +42,9 @@ class IvrSession:
         self,
         hass: HomeAssistant,
         menu_config: dict[str, Any],
-        play_message_fn: Callable[[str, str | None, str | None, dict[str, Any] | None], Coroutine[Any, Any, None]],
+        play_message_fn: Callable[
+            [str, str | None, str | None, dict[str, Any] | None], Coroutine[Any, Any, None]
+        ],
         play_audio_file_fn: Callable[[str], Coroutine[Any, Any, None]],
         hangup_fn: Callable[[], None],
         fire_event_fn: Callable[[str, dict[str, Any]], None],
@@ -44,6 +70,7 @@ class IvrSession:
         """Start the IVR session."""
         await self._enter_menu(self.root_menu)
 
+    # -- input handling -------------------------------------------------
     async def handle_dtmf(self, digit: str) -> None:
         """Process a received DTMF digit."""
         if not self.is_active or not self.waiting_for_dtmf:
@@ -54,48 +81,34 @@ class IvrSession:
         LOGGER.debug("IVR digit buffer: %s", self.digit_buffer)
 
         choices = self.current_menu.get("choices", {})
-        choices_are_pin = self.current_menu.get("choices_are_pin", False)
 
-        if choices_are_pin:
-            # PIN logic: check for # delimiter or match
+        if self.current_menu.get("input") == "pin":
             if digit == "#":
-                pin = self.digit_buffer[:-1]  # remove '#'
-                await self._process_pin(pin)
+                await self._resolve_input(self.digit_buffer[:-1])  # strip '#'
+            elif self.digit_buffer in choices:
+                await self._resolve_input(self.digit_buffer)
             else:
-                # If it exactly matches one of the PIN keys, process it immediately
-                if self.digit_buffer in choices:
-                    await self._process_pin(self.digit_buffer)
-                else:
-                    # If the buffer has grown longer than the longest PIN in choices, trigger default
-                    max_len = max([len(k) for k in choices.keys() if k != "default"] or [0])
-                    if len(self.digit_buffer) >= max_len:
-                        await self._process_pin(self.digit_buffer)
-        else:
-            # Single digit menu logic
-            if self.digit_buffer in choices:
-                choice = choices[self.digit_buffer]
-                self.digit_buffer = ""
-                await self._execute_choice(choice)
-            elif "default" in choices:
-                # If there's no match for this single digit, use default
-                choice = choices["default"]
-                self.digit_buffer = ""
-                await self._execute_choice(choice)
+                max_len = max([len(k) for k in choices] or [0])
+                if len(self.digit_buffer) >= max_len:
+                    await self._resolve_input(self.digit_buffer)
+        else:  # single-digit mode
+            await self._resolve_input(self.digit_buffer)
 
-    async def _process_pin(self, pin: str) -> None:
-        choices = self.current_menu.get("choices", {})
+    async def _resolve_input(self, key: str) -> None:
+        """Route a completed input to its choice / on_invalid / keep waiting."""
         self.digit_buffer = ""
-        if pin in choices:
-            await self._execute_choice(choices[pin])
-        elif "default" in choices:
-            await self._execute_choice(choices["default"])
+        choices = self.current_menu.get("choices", {})
+        if key in choices:
+            await self._execute_choice(choices[key])
+        elif "on_invalid" in self.current_menu:
+            await self._execute_choice(self.current_menu["on_invalid"])
         else:
-            # No matching pin and no default choice: repeat message or return
-            LOGGER.warning("No choice matched PIN '%s' and no default choice", pin)
-            await self._enter_menu(self.current_menu)
+            LOGGER.debug("IVR: no choice for '%s'; awaiting further input", key)
+            self._start_dtmf_collection()
 
+    # -- menu playback --------------------------------------------------
     async def _enter_menu(self, menu: dict[str, Any]) -> None:
-        """Enter a new menu or sub-menu."""
+        """Enter a menu: run its action, hand off to Assist, or play its prompt."""
         if not self.is_active:
             return
 
@@ -104,63 +117,67 @@ class IvrSession:
         if menu_id:
             self.fire_event("entered_menu", {"menu_id": menu_id})
 
-        # Run HA Action if defined
         action = menu.get("action")
         if action:
             await self._run_ha_action(action)
 
-        # Handle message rendering and playback
-        tts_config = menu.get("tts", {}) if isinstance(menu.get("tts"), dict) else {}
-        msg = tts_config.get("message") or tts_config.get("text") or menu.get("message", "")
-        audio_file = menu.get("audio_file", "")
-        lang = tts_config.get("language") or tts_config.get("lang") or menu.get("language")
-        engine = tts_config.get("engine") or tts_config.get("tts_engine") or menu.get("tts_engine") or menu.get("engine")
-        options = tts_config.get("options") or tts_config.get("tts_options") or menu.get("tts_options") or menu.get("options")
+        if menu.get("assist"):
+            self.is_active = False
+            self._reset_timeout()
+            await self.trigger_assist()
+            return
 
-        if (menu.get("handle_as_template", False) or tts_config.get("handle_as_template", False)) and msg:
-            try:
-                msg = template.Template(msg, self.hass).async_render()
-            except Exception as err:
-                LOGGER.error("Failed to render IVR message template: %s", err)
+        message = menu.get("message", "")
+        audio_file = menu.get("audio_file", "")
+        if menu.get("template") and message:
+            message = self._render(message)
 
         self.waiting_for_dtmf = False
 
         if audio_file:
             await self.play_audio_file(audio_file)
-        elif msg:
-            await self.play_message(msg, lang, engine, options)
+        elif message:
+            await self.play_message(
+                message,
+                menu.get("language"),
+                menu.get("tts_engine"),
+                menu.get("tts_options"),
+            )
         else:
-            # No playback, jump straight to DTMF collection
+            # Nothing to play; collect input right away.
             self._start_dtmf_collection()
             return
 
-        # If we do not wait for audio to finish, start DTMF collection immediately.
-        # Otherwise, the client's on_call_playback_done callback will trigger
-        # on_playback_done() when playing finishes.
-        if not menu.get("wait_for_audio_to_finish", True):
+        # With playback, wait for on_playback_done unless told not to.
+        if not menu.get("wait_for_audio", True):
             self._start_dtmf_collection()
 
     def on_playback_done(self) -> None:
-        """Called when audio playback completes."""
-        if self.is_active and not self.waiting_for_dtmf:
-            if not self.current_menu.get("choices"):
-                post_action = self.current_menu.get("post_action", "hangup")
-                self.hass.async_create_task(self._execute_post_action(post_action))
-            else:
-                self._start_dtmf_collection()
+        """Called when audio playback finishes."""
+        if not self.is_active:
+            return
 
+        if not self.current_menu.get("choices"):
+            # An announcement (no choices): run its terminal action immediately.
+            post_action = self.current_menu.get("post_action", "hangup")
+            self.hass.async_create_task(self._execute_post_action(post_action))
+            return
+
+        if self.waiting_for_dtmf:
+            return
+        self._start_dtmf_collection()
+
+    # -- input collection / timeout ------------------------------------
     def _start_dtmf_collection(self) -> None:
-        """Start collecting DTMF inputs and set a timeout timer."""
+        """Begin collecting DTMF input and (re)arm the timeout."""
         self.waiting_for_dtmf = True
         self.digit_buffer = ""
         self._reset_timeout()
 
     def _reset_timeout(self) -> None:
-        """Reset the menu timeout timer."""
         if self.timeout_task:
             self.timeout_task.cancel()
             self.timeout_task = None
-
         timeout_sec = self.current_menu.get("timeout", 10)
         self.timeout_task = asyncio.create_task(self._timeout_timer(timeout_sec))
 
@@ -173,73 +190,48 @@ class IvrSession:
 
     async def _handle_timeout(self) -> None:
         LOGGER.info("IVR menu timeout reached")
-        choices = self.current_menu.get("choices", {})
-        if "timeout" in choices:
-            await self._execute_choice(choices["timeout"])
+        on_timeout = self.current_menu.get("on_timeout")
+        if on_timeout is not None:
+            await self._execute_choice(on_timeout)
         else:
-            # Default timeout behavior: execute post_action if any, otherwise hang up
-            post_action = self.current_menu.get("post_action", "hangup")
-            await self._execute_post_action(post_action)
+            await self._execute_post_action(self.current_menu.get("post_action", "hangup"))
 
+    # -- choices / actions ---------------------------------------------
     async def _execute_choice(self, choice: dict[str, Any] | str) -> None:
-        """Execute the selected choice."""
+        """Execute a choice: a bare post_action string, a sub-menu, or an action."""
         if isinstance(choice, str):
             await self._execute_post_action(choice)
             return
 
-        # Check if the choice itself is a Voice Assist trigger
-        action = choice.get("action", {})
-        if action and action.get("domain") == "assist_pipeline":
-            # Jump to HA Voice Assist
+        if choice.get("assist"):
             self.is_active = False
             self._reset_timeout()
             await self.trigger_assist()
             return
 
-        # If it is a full sub-menu (or has choices/messages), push to stack and enter it
+        # A sub-menu / prompt handles its own playback and terminal action.
         if "choices" in choice or "message" in choice or "audio_file" in choice:
             self.menu_stack.append(self.current_menu)
             await self._enter_menu(choice)
             return
 
-        # If the choice has its own action, run it
+        # An action-only choice: run it, then apply its post_action.
         if "action" in choice:
             await self._run_ha_action(choice["action"])
-
-        # Execute choice message or audio file if present
-        tts_config = choice.get("tts", {}) if isinstance(choice.get("tts"), dict) else {}
-        msg = tts_config.get("message") or tts_config.get("text") or choice.get("message", "")
-        audio_file = choice.get("audio_file", "")
-        lang = tts_config.get("language") or tts_config.get("lang") or choice.get("language")
-        engine = tts_config.get("engine") or tts_config.get("tts_engine") or choice.get("tts_engine") or choice.get("engine")
-        options = tts_config.get("options") or tts_config.get("tts_options") or choice.get("tts_options") or choice.get("options")
-
-        if (choice.get("handle_as_template", False) or tts_config.get("handle_as_template", False)) and msg:
-            try:
-                msg = template.Template(msg, self.hass).async_render()
-            except Exception as err:
-                LOGGER.error("Failed to render IVR choice template: %s", err)
-
-        if audio_file:
-            await self.play_audio_file(audio_file)
-        elif msg:
-            await self.play_message(msg, lang, engine, options)
-
-        post_action = choice.get("post_action", "noop")
-        await self._execute_post_action(post_action)
+        await self._execute_post_action(choice.get("post_action", "wait"))
 
     async def _execute_post_action(self, post_action: str) -> None:
-        """Process post_action keywords like return, hangup, repeat_message, jump."""
+        """Terminal keywords: hangup | repeat | back [n] | goto <id> | wait."""
         if not self.is_active:
             return
 
         parts = post_action.split()
-        cmd = parts[0].lower() if parts else "noop"
+        cmd = parts[0].lower() if parts else "wait"
 
         if cmd == "hangup":
             self.close()
             self.hangup()
-        elif cmd == "return":
+        elif cmd == "back":
             levels = 1
             if len(parts) > 1:
                 try:
@@ -250,58 +242,64 @@ class IvrSession:
                 if self.menu_stack:
                     self.current_menu = self.menu_stack.pop()
             await self._enter_menu(self.current_menu)
-        elif cmd == "repeat_message":
+        elif cmd == "repeat":
             await self._enter_menu(self.current_menu)
-        elif cmd == "jump":
+        elif cmd == "goto":
             if len(parts) > 1:
-                menu_id = parts[1]
-                target = self._find_menu_by_id(self.root_menu, menu_id)
+                target = self._find_menu_by_id(self.root_menu, parts[1])
                 if target:
                     await self._enter_menu(target)
                 else:
-                    LOGGER.error("IVR jump target menu ID '%s' not found", menu_id)
+                    LOGGER.error("IVR goto target '%s' not found", parts[1])
                     await self._enter_menu(self.current_menu)
-        elif cmd == "noop":
+        elif cmd == "wait":
             if not self.current_menu.get("choices"):
-                LOGGER.warning("IVR menu has no choices but post_action is 'noop'. This will keep the call open indefinitely without any interaction options.")
-            # Just keep waiting for DTMF in the current menu
+                LOGGER.warning(
+                    "IVR menu has no choices but post_action is 'wait'; the call "
+                    "will stay open with no way to proceed."
+                )
             self._start_dtmf_collection()
 
     def _find_menu_by_id(self, menu: dict[str, Any], menu_id: str) -> dict[str, Any] | None:
-        """Search recursively for a menu or choice matching the given menu_id."""
+        """Search recursively (choices, on_invalid, on_timeout) for a menu id."""
         if menu.get("id") == menu_id:
             return menu
-
-        choices = menu.get("choices", {})
-        for _, choice in choices.items():
-            if isinstance(choice, dict):
-                res = self._find_menu_by_id(choice, menu_id)
-                if res:
-                    return res
+        candidates = list(menu.get("choices", {}).values())
+        candidates.extend(menu.get(key) for key in ("on_invalid", "on_timeout"))
+        for candidate in candidates:
+            if isinstance(candidate, dict):
+                found = self._find_menu_by_id(candidate, menu_id)
+                if found:
+                    return found
         return None
 
     async def _run_ha_action(self, action: dict[str, Any]) -> None:
-        """Trigger a native Home Assistant service call."""
+        """Call a Home Assistant service."""
         domain = action.get("domain")
         service = action.get("service")
         entity_id = action.get("entity_id")
-        service_data = action.get("service_data") or action.get("data") or {}
 
         if not domain or not service:
             LOGGER.error("IVR action missing domain or service: %s", action)
             return
 
-        data = dict(service_data)
+        data = dict(action.get("data") or {})
         if entity_id:
             data["entity_id"] = entity_id
 
-        LOGGER.info("IVR action calling service: %s.%s with data %s", domain, service, data)
+        LOGGER.info("IVR action: %s.%s with %s", domain, service, data)
         try:
-            await self.hass.services.async_call(
-                domain, service, data, blocking=False
-            )
-        except Exception as err:
-            LOGGER.error("Failed to run IVR action service call: %s", err)
+            await self.hass.services.async_call(domain, service, data, blocking=False)
+        except Exception as err:  # noqa: BLE001
+            LOGGER.error("IVR action service call failed: %s", err)
+
+    # -- helpers --------------------------------------------------------
+    def _render(self, text: str) -> str:
+        try:
+            return template.Template(text, self.hass).async_render()
+        except Exception as err:  # noqa: BLE001
+            LOGGER.error("Failed to render IVR template: %s", err)
+            return text
 
     def close(self) -> None:
         """Close the IVR session and clean up resources."""

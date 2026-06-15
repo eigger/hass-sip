@@ -19,10 +19,9 @@ dial:
       required: false
       example:
         id: "greet_menu"
-        tts:
-          message: "Welcome. Press 1 to speak to the family."
-          engine: "tts.google_translate"
-          language: "en"
+        message: "Welcome. Press 1 to speak to the family."
+        tts_engine: "tts.google_translate"
+        language: "en"
         choices:
           "1":
             post_action: "hangup"
@@ -104,10 +103,9 @@ answer:
       required: false
       example:
         id: "incoming_menu"
-        tts:
-          message: "Press 1 to unlock the door."
-          engine: "tts.google_translate"
-          language: "en"
+        message: "Press 1 to unlock the door."
+        tts_engine: "tts.google_translate"
+        language: "en"
         choices:
           "1":
             action:

@@ -543,12 +543,10 @@ async def async_register_services(hass: HomeAssistant) -> None:
             if not target_menu and message:
                 target_menu = {
                     "id": f"simple_dial_announcement_{entry_id}",
-                    "tts": {
-                        "message": message,
-                        "engine": tts_engine,
-                        "language": language,
-                        "options": tts_options or {},
-                    },
+                    "message": message,
+                    "tts_engine": tts_engine,
+                    "language": language,
+                    "tts_options": tts_options or {},
                     "post_action": "hangup",
                 }
 
@@ -605,12 +603,10 @@ async def async_register_services(hass: HomeAssistant) -> None:
             if not target_menu and message:
                 target_menu = {
                     "id": f"simple_answer_announcement_{entry_id}",
-                    "tts": {
-                        "message": message,
-                        "engine": tts_engine,
-                        "language": language,
-                        "options": tts_options or {},
-                    },
+                    "message": message,
+                    "tts_engine": tts_engine,
+                    "language": language,
+                    "tts_options": tts_options or {},
                     "post_action": "hangup",
                 }
 

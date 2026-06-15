@@ -320,7 +320,7 @@ action:
 
 ## IVR Configuration Example
 
-You can pass a YAML configuration schema to the `menu` field in the `sip.dial` or `sip.answer` service. You can group TTS settings in a dedicated `tts` block for menus and choices.
+You can pass a menu tree to the `menu` field of `sip.dial` or `sip.answer`. TTS settings use the **same flat field names** as the service parameters (`message`, `tts_engine`, `language`, `tts_options`).
 
 ```yaml
 service: sip.answer
@@ -329,45 +329,45 @@ target:
 data:
   menu:
     id: root
-    tts:
-      message: "Welcome to our Home. Press 1 to toggle the living room light. Press 2 to talk to our Voice Assistant. Or enter your four-digit PIN code followed by hash."
-      engine: tts.google_translate
-      language: en
-    wait_for_audio_to_finish: true
+    message: "Welcome. Press 1 to toggle the living room light. Press 2 to talk to the Voice Assistant. Or enter your four-digit PIN followed by hash."
+    tts_engine: tts.google_translate
+    language: en
+    wait_for_audio: true
     timeout: 10
-    choices_are_pin: false
+    input: digit          # "digit" (single key) or "pin" (multi-key, ends with #)
     choices:
       "1":
         action:
           domain: light
           service: toggle
           entity_id: light.living_room_light
-        tts:
-          message: "Toggling the light now."
-          engine: tts.google_translate
-          language: en
+        message: "Toggling the light now."
         post_action: hangup
       "2":
-        action:
-          domain: assist_pipeline
-        post_action: noop
-      "default":
-        tts:
-          message: "Invalid selection."
-          engine: tts.google_translate
-          language: en
-        post_action: repeat_message
-      "timeout":
-        post_action: hangup
+        assist: true        # hand the call to Home Assistant Voice Assist
+    on_invalid:
+      message: "Invalid selection."
+      post_action: repeat   # re-play the current menu
+    on_timeout: hangup
 ```
 
-### IVR TTS Configuration Options
-Within the `tts` block of a menu or a choice, you can specify the following parameters:
-- `message` (or `text`): The text content to be spoken.
-- `engine` (or `tts_engine`): The specific TTS engine to use (e.g., `tts.google_translate`, `tts.piper`).
-- `language` (or `lang`): Optional language code (e.g., `en`, `ko`).
-- `options` (or `tts_options`): A dictionary of voice-specific configurations.
-- `handle_as_template`: A boolean value (`true` or `false`). When set to `true`, the text in `message`/`text` will be rendered as a Home Assistant Jinja template before speaking.
+### Menu fields
+| Field | Description |
+|-------|-------------|
+| `id` | Optional menu id; target for `goto`. |
+| `message` | TTS text to speak. |
+| `audio_file` | Audio file path/URL to play instead of `message`. |
+| `template` | `true` to render `message` as a Jinja template before speaking. |
+| `tts_engine` / `language` / `tts_options` | TTS voice settings (same as the service params). |
+| `wait_for_audio` | `true` (default): collect input only after playback finishes. |
+| `timeout` | Seconds to wait for input (default `10`). |
+| `input` | `digit` (default, single key) or `pin` (multi-key, ends with `#`). |
+| `choices` | Map of input key → target (nested menu, or a bare `post_action` string). |
+| `on_invalid` | Target when the input matches no choice. |
+| `on_timeout` | Target when no input arrives in time. |
+| `action` | A Home Assistant service to call on entry (`domain`, `service`, `entity_id`, `data`). |
+| `assist` | `true` to hand the call to Voice Assist. |
+| `post_action` | Terminal action: `hangup` · `repeat` · `back [n]` · `goto <id>` · `wait`. |
 
 ---
 
