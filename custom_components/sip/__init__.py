@@ -12,6 +12,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.service import async_extract_config_entry_ids
 
@@ -39,6 +40,13 @@ from .const import (
 )
 from .helpers import get_ffmpeg_bin
 from .ivr import IvrSession
+
+
+def _sip_device_id(hass: HomeAssistant, entry_id: str) -> str | None:
+    """Return the device registry id for a SIP config entry, if created yet."""
+    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, entry_id)})
+    return device.id if device else None
+
 from .sip_client.audio import FfmpegAudioSource
 from .sip_client.sip_client import SipCallbacks, SipClient, SipConfig, SipState
 
@@ -163,6 +171,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "sip_account": sip_config.username,
             "server": sip_config.server,
         }
+        # Associate the event with the SIP device so it shows in the device logbook.
+        device_id = _sip_device_id(hass, entry.entry_id)
+        if device_id:
+            data["device_id"] = device_id
         if extra_data:
             data.update(extra_data)
         # event_type constants already carry the "sip_" prefix.
@@ -661,10 +673,11 @@ async def async_register_services(hass: HomeAssistant) -> None:
             recorder = WavRecorderSink(target_file)
             client.set_sink(recorder)
             data["recorder"] = recorder
-            hass.bus.async_fire(
-                EVENT_SIP_RECORDING_STARTED,
-                {"sip_account": data["config"].username, "recording_file": target_file},
-            )
+            rec_data = {"sip_account": data["config"].username, "recording_file": target_file}
+            device_id = _sip_device_id(hass, entry_id)
+            if device_id:
+                rec_data["device_id"] = device_id
+            hass.bus.async_fire(EVENT_SIP_RECORDING_STARTED, rec_data)
             async_dispatcher_send(
                 hass,
                 f"{DOMAIN}_event_{entry_id}",
@@ -683,10 +696,11 @@ async def async_register_services(hass: HomeAssistant) -> None:
 
                 client.set_sink(NullSink())
                 data.pop("recorder")
-                hass.bus.async_fire(
-                    EVENT_SIP_RECORDING_STOPPED,
-                    {"sip_account": data["config"].username},
-                )
+                stop_data = {"sip_account": data["config"].username}
+                device_id = _sip_device_id(hass, entry_id)
+                if device_id:
+                    stop_data["device_id"] = device_id
+                hass.bus.async_fire(EVENT_SIP_RECORDING_STOPPED, stop_data)
                 async_dispatcher_send(
                     hass,
                     f"{DOMAIN}_event_{entry_id}",
