@@ -39,6 +39,7 @@ class SipTelephonyEventEntity(EventEntity):
 
     _attr_has_entity_name = True
     _attr_translation_key = "telephony"
+    _attr_icon = "mdi:phone-log"
     _attr_event_types = [
         "incoming",
         "connected",

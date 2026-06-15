@@ -62,15 +62,19 @@
     "event": {
       "telephony": {
         "name": "통화 이벤트",
-        "state": {
-          "incoming": "수신 통화",
-          "connected": "통화 연결됨",
-          "playback_done": "안내 재생 완료",
-          "dtmf": "DTMF 키 입력",
-          "ended": "통화 종료됨",
-          "recording_started": "녹음 시작됨",
-          "recording_stopped": "녹음 중지됨",
-          "registered": "등록됨"
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "incoming": "수신 통화",
+              "connected": "통화 연결됨",
+              "playback_done": "안내 재생 완료",
+              "dtmf": "DTMF 키 입력",
+              "ended": "통화 종료됨",
+              "recording_started": "녹음 시작됨",
+              "recording_stopped": "녹음 중지됨",
+              "registered": "등록됨"
+            }
+          }
         }
       }
     }

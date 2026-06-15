@@ -62,15 +62,19 @@
     "event": {
       "telephony": {
         "name": "Call Events",
-        "state": {
-          "incoming": "Incoming Call",
-          "connected": "Call Connected",
-          "playback_done": "Playback Finished",
-          "dtmf": "DTMF Keypress",
-          "ended": "Call Ended",
-          "recording_started": "Recording Started",
-          "recording_stopped": "Recording Stopped",
-          "registered": "Registered"
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "incoming": "Incoming Call",
+              "connected": "Call Connected",
+              "playback_done": "Playback Finished",
+              "dtmf": "DTMF Keypress",
+              "ended": "Call Ended",
+              "recording_started": "Recording Started",
+              "recording_stopped": "Recording Stopped",
+              "registered": "Registered"
+            }
+          }
         }
       }
     }
