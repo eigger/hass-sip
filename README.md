@@ -188,6 +188,9 @@ action:
       message: "Hello, this is an automated response."
       tts_engine: tts.google_translate
       language: en
+      # Optional: engine-specific options, e.g. a voice
+      # tts_options:
+      #   voice: ko-KR-SunHiNeural
 ```
 
 #### Outbound — dial, speak when answered, and hang up automatically
@@ -271,7 +274,47 @@ action:
       entity_id: media_player.phone_line
 ```
 
-> Instead of `tts.speak` you can also call `media_player.play_media` with a `media-source://tts/...` id, or a plain audio file URL, on the same entity.
+---
+
+### Option C: Play a media-source TTS URL
+
+If you generate the TTS as a `media-source://tts/...` URL (for example by picking it from the media browser), play it straight to the phone line with `media_player.play_media`. This is handy when you want full control over the TTS entity/voice without the `sip.answer` shortcut.
+
+```yaml
+alias: "SIP: Announce via media-source TTS"
+trigger:
+  - platform: event
+    event_type: sip_incoming_call
+action:
+  - service: sip.answer
+    target:
+      entity_id: media_player.phone_line
+  # Wait until the call is actually two-way connected
+  - wait_for_trigger:
+      - platform: event
+        event_type: sip_call_connected
+    timeout: "00:00:10"
+    continue_on_timeout: false
+  - service: media_player.play_media
+    target:
+      entity_id: media_player.phone_line
+    data:
+      media_content_id: >-
+        media-source://tts/tts.edge_tts_service_edge_tts?message=안녕하세요&language=ko-KR
+      media_content_type: music
+  # Wait until the whole message has been sent (prevents truncation)
+  - wait_for_trigger:
+      - platform: event
+        event_type: sip_playback_done
+    timeout: "00:00:30"
+  - service: sip.hangup
+    target:
+      entity_id: media_player.phone_line
+```
+
+> The `media_content_id` query string is URL-encoded automatically, so you can write a plain (or templated) `message=...`. A plain audio file URL works in place of the `media-source://` id too.
+
+> **Entity IDs:** examples use `media_player.phone_line` as a placeholder. Your actual ids are prefixed with the account, e.g. `media_player.sip_client_100_phone_line` — copy the real one from **Developer Tools → States** (or target the SIP device instead).
 
 ---
 
