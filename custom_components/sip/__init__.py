@@ -480,6 +480,12 @@ async def async_register_services(hass: HomeAssistant) -> None:
             # Fallback to the first loaded entry
             loaded_entries = [e for e in entries if e.state.value == "loaded"]
             if loaded_entries:
+                if len(loaded_entries) > 1:
+                    LOGGER.warning(
+                        "SIP service called without a target; defaulting to account '%s'. "
+                        "Specify a target entity/device to control a specific account.",
+                        loaded_entries[0].runtime_data["config"].username,
+                    )
                 matched_entries.append((loaded_entries[0].entry_id, loaded_entries[0].runtime_data))
 
         return matched_entries
@@ -659,6 +665,12 @@ async def async_register_services(hass: HomeAssistant) -> None:
                 EVENT_SIP_RECORDING_STARTED,
                 {"sip_account": data["config"].username, "recording_file": target_file},
             )
+            async_dispatcher_send(
+                hass,
+                f"{DOMAIN}_event_{entry_id}",
+                EVENT_SIP_RECORDING_STARTED,
+                {"recording_file": target_file},
+            )
 
     async def handle_stop_recording(call: ServiceCall) -> None:
         targets = await get_client_entries(call)
@@ -674,6 +686,12 @@ async def async_register_services(hass: HomeAssistant) -> None:
                 hass.bus.async_fire(
                     EVENT_SIP_RECORDING_STOPPED,
                     {"sip_account": data["config"].username},
+                )
+                async_dispatcher_send(
+                    hass,
+                    f"{DOMAIN}_event_{entry_id}",
+                    EVENT_SIP_RECORDING_STOPPED,
+                    None,
                 )
 
     async def handle_start_assist(call: ServiceCall) -> None:

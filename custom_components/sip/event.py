@@ -9,6 +9,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .helpers import build_device_info
 from .const import (
     DOMAIN,
     EVENT_SIP_CALL_CONNECTED,
@@ -55,14 +56,8 @@ class SipTelephonyEventEntity(EventEntity):
         self._entry_id = config_entry.entry_id
         self._attr_unique_id = f"{config_entry.entry_id}_telephony_events"
 
-        # Expose device info so the entity is grouped under the unified SIP device
-        username = entry_data["config"].username
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, config_entry.entry_id)},
-            "name": f"SIP Client ({username})",
-            "manufacturer": "hass-sip",
-            "model": "SIP Client Extension",
-        }
+        # Group under the unified SIP device shared by all platform entities.
+        self._attr_device_info = build_device_info(config_entry, entry_data["config"])
 
     async def async_added_to_hass(self) -> None:
         """Register callbacks when added to hass."""

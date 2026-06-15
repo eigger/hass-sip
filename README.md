@@ -104,6 +104,21 @@ The integration exposes native switch and button entities for easy dashboard con
 - **Answer Button** (`button.phone_line_answer`): Press this button to answer an active incoming call.
 - **Hang Up Button** (`button.phone_line_hangup`): Press this button to end the current call or decline an incoming call.
 
+Each button exposes a `can_press` attribute that reflects whether the action applies in the current call state (`answer` → only while a call is ringing in; `hangup` → whenever any call is active). Use it to hide the buttons when they are not actionable:
+
+```yaml
+type: conditional
+conditions:
+  - condition: state
+    entity: button.phone_line_answer
+    attribute: can_press
+    state: true
+card:
+  type: button
+  entity: button.phone_line_answer
+  name: Answer
+```
+
 ---
 
 ## Events & Event Entity
