@@ -98,7 +98,6 @@ The integration exposes native switch and button entities for easy dashboard con
 
 ### 1. Switches
 - **Do Not Disturb Switch** (`switch.phone_line_dnd`): Turn this ON to automatically reject all incoming calls with a `486 Busy Here` SIP response.
-- **Auto-Answer Switch** (`switch.phone_line_auto_answer`): Turn this ON to globally auto-answer all incoming calls immediately.
 
 ### 2. Buttons
 - **Answer Button** (`button.phone_line_answer`): Press this button to answer an active incoming call.
@@ -350,12 +349,13 @@ If mapped, the `last_call` Friendly Name sensor will display the contact name in
 
 ## Intercom & Auto-Answer Mode
 
-The integration can automatically answer incoming calls (useful for intercoms and doorbells). It triggers in three ways:
-1. **Global Toggle**: The Auto-Answer switch entity (`switch.phone_line_auto_answer`) is turned ON.
-2. **SIP Headers**: The incoming call includes standard auto-answer headers like `Call-Info: ...; answer-after=0` or `Alert-Info: Ring Answer`.
-3. **Contacts Configuration**: The incoming caller ID matches an extension marked with `"auto_answer": true` in `sip_contacts.json`.
+The integration can automatically answer specific incoming calls (useful for intercoms and doorbells). It triggers in two ways:
+1. **SIP Headers**: The incoming call includes standard auto-answer headers like `Call-Info: ...; answer-after=0` or `Alert-Info: Ring Answer`.
+2. **Contacts Configuration**: The incoming caller ID matches an extension marked with `"auto_answer": true` in `sip_contacts.json`.
 
-When triggered, the integration answers immediately, opens a two-way audio channel, and bypasses the ringing phase.
+When triggered, the integration answers immediately, opens the audio channel, and bypasses the ringing phase. Auto-answer only opens the channel — pair it with `sip.start_assist`, a TTS `message`, or `sip.start_recording` to actually send or capture audio.
+
+> To answer arbitrary calls under your own conditions, trigger an automation on the `sip_incoming_call` event and call `sip.answer` (optionally with a `message` or `menu`) instead.
 
 ---
 

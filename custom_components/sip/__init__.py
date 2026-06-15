@@ -208,10 +208,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry.runtime_data["contacts"] = contacts_data
         hass.async_add_executor_job(reload_contacts_bg)
 
-        caller_name, contact_auto_answer = get_contact_info_from_cache(
+        caller_name, auto_answer = get_contact_info_from_cache(
             entry.runtime_data.get("contacts", {}), caller
         )
-        auto_answer = contact_auto_answer or getattr(client, "auto_answer", False)
         entry.runtime_data["last_caller"] = caller_name
         entry.runtime_data["call_number"] = caller
 

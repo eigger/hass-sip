@@ -51,9 +51,6 @@
     "switch": {
       "dnd": {
         "name": "Do Not Disturb"
-      },
-      "auto_answer": {
-        "name": "Auto-Answer"
       }
     },
     "button": {

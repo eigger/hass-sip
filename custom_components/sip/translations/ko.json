@@ -51,9 +51,6 @@
     "switch": {
       "dnd": {
         "name": "방해 금지"
-      },
-      "auto_answer": {
-        "name": "자동 응답"
       }
     },
     "button": {

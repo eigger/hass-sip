@@ -140,7 +140,6 @@ class SipClient:
         self._invite_retx_handle: asyncio.TimerHandle | None = None
         self._invite_retx_count = 0
         self.dnd = False
-        self.auto_answer = False
         self.auto_answer_checker: Callable[[str], bool] | None = None
 
     # ------------------------------------------------------------------
@@ -694,10 +693,6 @@ class SipClient:
                     auto_answer = self.auto_answer_checker(caller)
                 except Exception:
                     pass
-
-            # Also check global auto-answer toggle
-            if not auto_answer and self.auto_answer:
-                auto_answer = True
 
             if auto_answer:
                 _LOGGER.info("Auto-answering incoming call from %s (intercom)", caller)
