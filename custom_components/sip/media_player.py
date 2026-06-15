@@ -5,6 +5,7 @@ from typing import Any
 
 from homeassistant.components import media_source
 from homeassistant.components.media_player import (
+    BrowseMedia,
     MediaPlayerEntity,
     MediaPlayerEntityFeature,
     MediaPlayerState,
@@ -12,6 +13,7 @@ from homeassistant.components.media_player import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.network import get_url
@@ -38,7 +40,9 @@ class SipMediaPlayer(MediaPlayerEntity):
     _attr_icon = "mdi:phone-in-talk"
     _attr_has_entity_name = True
     _attr_supported_features = (
-        MediaPlayerEntityFeature.PLAY_MEDIA | MediaPlayerEntityFeature.STOP
+        MediaPlayerEntityFeature.PLAY_MEDIA
+        | MediaPlayerEntityFeature.BROWSE_MEDIA
+        | MediaPlayerEntityFeature.STOP
     )
 
     def __init__(self, entry: ConfigEntry, entry_data: dict[str, Any]) -> None:
@@ -73,7 +77,7 @@ class SipMediaPlayer(MediaPlayerEntity):
         if state == SipState.IDLE:
             return MediaPlayerState.OFF
 
-        # If we are in call, check if audio source is playing
+        # If we are in call, check if an audio source is playing.
         if state == SipState.IN_CALL:
             if self._client.media_playing:
                 return MediaPlayerState.PLAYING
@@ -89,42 +93,101 @@ class SipMediaPlayer(MediaPlayerEntity):
 
         return MediaPlayerState.OFF
 
+    # -- read-only call/playback info shown on the card -----------------
+    @property
+    def media_content_type(self) -> str | None:
+        """Mark playback as music so the card renders the now-playing area."""
+        if (
+            self.entry_data.get("state") == SipState.IN_CALL
+            and self._client.media_playing
+        ):
+            return MediaType.MUSIC
+        return None
+
+    @property
+    def media_title(self) -> str | None:
+        """Human-readable description of what the line is doing."""
+        state = self.entry_data.get("state", SipState.IDLE)
+        if state in (SipState.INVITING, SipState.RINGING_OUT):
+            return "Dialing"
+        if state == SipState.INCOMING:
+            return "Incoming call"
+        if state == SipState.ANSWERING:
+            return "Connecting"
+        if state == SipState.IN_CALL:
+            return "Playing message" if self._client.media_playing else "In call"
+        return None
+
+    @property
+    def media_artist(self) -> str | None:
+        """The remote party (friendly name if known, otherwise the number)."""
+        if self.entry_data.get("state", SipState.IDLE) == SipState.IDLE:
+            return None
+        party = self.entry_data.get("last_caller") or self.entry_data.get("call_number")
+        return party or None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose call details for dashboards/automations."""
+        state = self.entry_data.get("state", SipState.IDLE)
+        return {
+            "sip_state": str(state),
+            "remote_party": self.entry_data.get("call_number") or "",
+            "remote_name": self.entry_data.get("last_caller") or "",
+            "call_direction": self.entry_data.get("call_direction"),
+        }
+
+    # -- controls -------------------------------------------------------
+    async def async_browse_media(
+        self,
+        media_content_type: str | None = None,
+        media_content_id: str | None = None,
+    ) -> BrowseMedia:
+        """Browse audio media (TTS engines, local media) to play into the call."""
+        return await media_source.async_browse_media(
+            self.hass,
+            media_content_id,
+            content_filter=lambda item: item.media_content_type.startswith("audio/"),
+        )
+
     async def async_play_media(
         self, media_type: MediaType | str, media_id: str, **kwargs: Any
     ) -> None:
         """Play a piece of media (URL or TTS media source ID) to the call."""
         if not self._client.in_call:
-            LOGGER.warning("Cannot play media: SIP client is not in an active call")
-            return
+            raise HomeAssistantError(
+                "Cannot play media: the SIP line is not in an active call"
+            )
 
         url = media_id
-        # Resolve media source ID if provided (e.g. for TTS or media browser)
+        # Resolve a media source ID if provided (e.g. TTS or the media browser).
         if media_source.is_media_source_id(media_id):
             try:
-                media_item = await media_source.async_resolve_media(self.hass, media_id, None)
+                media_item = await media_source.async_resolve_media(
+                    self.hass, media_id, self.entity_id
+                )
                 url = media_item.url
             except Exception as err:
-                LOGGER.error("Failed to resolve media source ID %s: %s", media_id, err)
-                return
+                raise HomeAssistantError(
+                    f"Failed to resolve media source '{media_id}': {err}"
+                ) from err
 
-        # Prepend base URL for relative paths (e.g. local media or TTS proxy paths)
+        # Prepend the base URL for relative paths (local media / TTS proxy).
         if url.startswith("/"):
             try:
-                base_url = get_url(self.hass)
-                url = base_url + url
+                url = get_url(self.hass) + url
             except Exception as err:
-                LOGGER.error("Failed to resolve base URL for relative media path: %s", err)
-                return
+                raise HomeAssistantError(
+                    f"Failed to resolve a base URL for '{url}'. Set an internal "
+                    f"URL in Home Assistant network settings: {err}"
+                ) from err
 
         LOGGER.info("Streaming media to SIP call: %s", url)
-        try:
-            source = FfmpegAudioSource(url=url, ffmpeg_bin=get_ffmpeg_bin(self.hass))
-            self._client.play_source(source)
-            self.async_write_ha_state()
-        except Exception as err:
-            LOGGER.error("Failed to play media over SIP stream: %s", err)
+        source = FfmpegAudioSource(url=url, ffmpeg_bin=get_ffmpeg_bin(self.hass))
+        self._client.play_source(source)
+        self.async_write_ha_state()
 
     async def async_media_stop(self) -> None:
-        """Stop playing the current audio source."""
+        """Stop playing the current audio source (does not end the call)."""
         self._client.stop_audio()
         self.async_write_ha_state()
