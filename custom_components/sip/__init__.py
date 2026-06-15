@@ -47,6 +47,8 @@ PLATFORMS = [
     Platform.BINARY_SENSOR,
     Platform.MEDIA_PLAYER,
     Platform.SWITCH,
+    Platform.EVENT,
+    Platform.BUTTON,
 ]
 
 
@@ -156,7 +158,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ivr_session: IvrSession | None = None
     assist_bridge: AssistBridge | None = None
 
-    # Forward declaration of event fires to access callbacks
     def fire_sip_event(event_type: str, extra_data: dict[str, Any] | None = None) -> None:
         data = {
             "sip_account": sip_config.username,
@@ -166,6 +167,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             data.update(extra_data)
         # event_type constants already carry the "sip_" prefix.
         hass.bus.async_fire(event_type, data)
+        async_dispatcher_send(
+            hass, f"{DOMAIN}_event_{entry.entry_id}", event_type, extra_data
+        )
 
     # Callbacks implementation
     @callback
@@ -192,9 +196,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry.runtime_data["contacts"] = contacts_data
         hass.async_add_executor_job(reload_contacts_bg)
 
-        caller_name, auto_answer = get_contact_info_from_cache(
+        caller_name, contact_auto_answer = get_contact_info_from_cache(
             entry.runtime_data.get("contacts", {}), caller
         )
+        auto_answer = contact_auto_answer or getattr(client, "auto_answer", False)
         entry.runtime_data["last_caller"] = caller_name
         entry.runtime_data["call_number"] = caller
 

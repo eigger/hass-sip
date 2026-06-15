@@ -41,11 +41,37 @@
     "switch": {
       "dnd": {
         "name": "방해 금지"
+      },
+      "auto_answer": {
+        "name": "자동 응답"
+      }
+    },
+    "button": {
+      "answer": {
+        "name": "전화 받기"
+      },
+      "hangup": {
+        "name": "전화 끊기"
       }
     },
     "media_player": {
       "phone_line": {
         "name": "전화선"
+      }
+    },
+    "event": {
+      "telephony": {
+        "name": "통화 이벤트",
+        "state": {
+          "incoming": "수신 통화",
+          "connected": "통화 연결됨",
+          "playback_done": "안내 재생 완료",
+          "dtmf": "DTMF 키 입력",
+          "ended": "통화 종료됨",
+          "recording_started": "녹음 시작됨",
+          "recording_stopped": "녹음 중지됨",
+          "registered": "등록됨"
+        }
       }
     }
   },

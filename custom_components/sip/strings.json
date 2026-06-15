@@ -41,11 +41,37 @@
     "switch": {
       "dnd": {
         "name": "Do Not Disturb"
+      },
+      "auto_answer": {
+        "name": "Auto-Answer"
+      }
+    },
+    "button": {
+      "answer": {
+        "name": "Answer"
+      },
+      "hangup": {
+        "name": "Hang Up"
       }
     },
     "media_player": {
       "phone_line": {
         "name": "Phone Line"
+      }
+    },
+    "event": {
+      "telephony": {
+        "name": "Call Events",
+        "state": {
+          "incoming": "Incoming Call",
+          "connected": "Call Connected",
+          "playback_done": "Playback Finished",
+          "dtmf": "DTMF Keypress",
+          "ended": "Call Ended",
+          "recording_started": "Recording Started",
+          "recording_stopped": "Recording Stopped",
+          "registered": "Registered"
+        }
       }
     }
   },

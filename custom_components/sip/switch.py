@@ -19,7 +19,10 @@ async def async_setup_entry(
 ) -> None:
     """Set up SIP Client switch from a config entry."""
     entry_data = entry.runtime_data
-    async_add_entities([SipDndSwitch(entry, entry_data)])
+    async_add_entities([
+        SipDndSwitch(entry, entry_data),
+        SipAutoAnswerSwitch(entry, entry_data),
+    ])
 
 
 class SipDndSwitch(SwitchEntity):
@@ -55,4 +58,40 @@ class SipDndSwitch(SwitchEntity):
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn DND off."""
         self._client.dnd = False
+        self.async_write_ha_state()
+
+
+class SipAutoAnswerSwitch(SwitchEntity):
+    """Representation of an Auto-Answer switch for the SIP client."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, entry: ConfigEntry, entry_data: dict[str, Any]) -> None:
+        """Initialize the Auto-Answer switch."""
+        self.entry = entry
+        self.entry_data = entry_data
+        self._client: SipClient = entry_data["client"]
+        self._config = entry_data["config"]
+        self._attr_unique_id = f"{entry.entry_id}_auto_answer"
+        self._attr_translation_key = "auto_answer"
+        self._attr_device_info = build_device_info(entry, self._config)
+
+    @property
+    def icon(self) -> str:
+        """Auto-Answer on -> phone-ring-outline; Auto-Answer off -> phone-cancel-outline."""
+        return "mdi:phone-ring" if self._client.auto_answer else "mdi:phone-off"
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if Auto-Answer is on."""
+        return self._client.auto_answer
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Turn Auto-Answer on."""
+        self._client.auto_answer = True
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Turn Auto-Answer off."""
+        self._client.auto_answer = False
         self.async_write_ha_state()
