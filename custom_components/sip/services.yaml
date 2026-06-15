@@ -3,6 +3,7 @@ dial:
   description: Initiate a SIP call.
   target:
     entity:
+      integration: sip
       domain: media_player
   fields:
     number:
@@ -34,6 +35,7 @@ hangup:
   description: End the active SIP call.
   target:
     entity:
+      integration: sip
       domain: media_player
   fields:
     sip_code:
@@ -52,6 +54,7 @@ answer:
   description: Answer an incoming SIP call.
   target:
     entity:
+      integration: sip
       domain: media_player
   fields:
     menu:
@@ -66,6 +69,7 @@ send_dtmf:
   description: Send DTMF digits to the active SIP call.
   target:
     entity:
+      integration: sip
       domain: media_player
   fields:
     digits:
@@ -81,6 +85,7 @@ start_recording:
   description: Start recording call audio to a local WAV file.
   target:
     entity:
+      integration: sip
       domain: media_player
   fields:
     recording_file:
@@ -96,6 +101,7 @@ stop_recording:
   description: Stop active call recording.
   target:
     entity:
+      integration: sip
       domain: media_player
 
 start_assist:
@@ -103,4 +109,5 @@ start_assist:
   description: Connect the active call to Home Assistant's Voice Assist.
   target:
     entity:
+      integration: sip
       domain: media_player
