@@ -18,7 +18,7 @@ class IvrSession:
         self,
         hass: HomeAssistant,
         menu_config: dict[str, Any],
-        play_message_fn: Callable[[str, str | None], Coroutine[Any, Any, None]],
+        play_message_fn: Callable[[str, str | None, str | None, dict[str, Any] | None], Coroutine[Any, Any, None]],
         play_audio_file_fn: Callable[[str], Coroutine[Any, Any, None]],
         hangup_fn: Callable[[], None],
         fire_event_fn: Callable[[str, dict[str, Any]], None],
@@ -110,11 +110,14 @@ class IvrSession:
             await self._run_ha_action(action)
 
         # Handle message rendering and playback
-        msg = menu.get("message", "")
+        tts_config = menu.get("tts", {}) if isinstance(menu.get("tts"), dict) else {}
+        msg = tts_config.get("message") or tts_config.get("text") or menu.get("message", "")
         audio_file = menu.get("audio_file", "")
-        lang = menu.get("language")
+        lang = tts_config.get("language") or tts_config.get("lang") or menu.get("language")
+        engine = tts_config.get("engine") or tts_config.get("tts_engine") or menu.get("tts_engine") or menu.get("engine")
+        options = tts_config.get("options") or tts_config.get("tts_options") or menu.get("tts_options") or menu.get("options")
 
-        if menu.get("handle_as_template", False) and msg:
+        if (menu.get("handle_as_template", False) or tts_config.get("handle_as_template", False)) and msg:
             try:
                 msg = template.Template(msg, self.hass).async_render()
             except Exception as err:
@@ -125,7 +128,7 @@ class IvrSession:
         if audio_file:
             await self.play_audio_file(audio_file)
         elif msg:
-            await self.play_message(msg, lang)
+            await self.play_message(msg, lang, engine, options)
         else:
             # No playback, jump straight to DTMF collection
             self._start_dtmf_collection()
@@ -140,7 +143,11 @@ class IvrSession:
     def on_playback_done(self) -> None:
         """Called when audio playback completes."""
         if self.is_active and not self.waiting_for_dtmf:
-            self._start_dtmf_collection()
+            if not self.current_menu.get("choices"):
+                post_action = self.current_menu.get("post_action", "hangup")
+                self.hass.async_create_task(self._execute_post_action(post_action))
+            else:
+                self._start_dtmf_collection()
 
     def _start_dtmf_collection(self) -> None:
         """Start collecting DTMF inputs and set a timeout timer."""
@@ -200,11 +207,14 @@ class IvrSession:
             await self._run_ha_action(choice["action"])
 
         # Execute choice message or audio file if present
-        msg = choice.get("message", "")
+        tts_config = choice.get("tts", {}) if isinstance(choice.get("tts"), dict) else {}
+        msg = tts_config.get("message") or tts_config.get("text") or choice.get("message", "")
         audio_file = choice.get("audio_file", "")
-        lang = choice.get("language")
+        lang = tts_config.get("language") or tts_config.get("lang") or choice.get("language")
+        engine = tts_config.get("engine") or tts_config.get("tts_engine") or choice.get("tts_engine") or choice.get("engine")
+        options = tts_config.get("options") or tts_config.get("tts_options") or choice.get("tts_options") or choice.get("options")
 
-        if choice.get("handle_as_template", False) and msg:
+        if (choice.get("handle_as_template", False) or tts_config.get("handle_as_template", False)) and msg:
             try:
                 msg = template.Template(msg, self.hass).async_render()
             except Exception as err:
@@ -213,7 +223,7 @@ class IvrSession:
         if audio_file:
             await self.play_audio_file(audio_file)
         elif msg:
-            await self.play_message(msg, lang)
+            await self.play_message(msg, lang, engine, options)
 
         post_action = choice.get("post_action", "noop")
         await self._execute_post_action(post_action)
@@ -252,6 +262,8 @@ class IvrSession:
                     LOGGER.error("IVR jump target menu ID '%s' not found", menu_id)
                     await self._enter_menu(self.current_menu)
         elif cmd == "noop":
+            if not self.current_menu.get("choices"):
+                LOGGER.warning("IVR menu has no choices but post_action is 'noop'. This will keep the call open indefinitely without any interaction options.")
             # Just keep waiting for DTMF in the current menu
             self._start_dtmf_collection()
 

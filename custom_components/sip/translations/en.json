@@ -65,6 +65,22 @@
         "ring_timeout": {
           "name": "Ring timeout",
           "description": "Seconds to let the call ring before canceling."
+        },
+        "message": {
+          "name": "Message",
+          "description": "Optional text message to speak via TTS upon connection."
+        },
+        "tts_engine": {
+          "name": "TTS engine",
+          "description": "Optional TTS engine to speak the message."
+        },
+        "language": {
+          "name": "Language",
+          "description": "Optional language code for TTS."
+        },
+        "tts_options": {
+          "name": "TTS options",
+          "description": "Optional extra voice or speech settings."
         }
       }
     },
@@ -85,6 +101,22 @@
         "menu": {
           "name": "IVR menu",
           "description": "Optional IVR menu configuration to start on answer."
+        },
+        "message": {
+          "name": "Message",
+          "description": "Optional text message to speak via TTS upon answering."
+        },
+        "tts_engine": {
+          "name": "TTS engine",
+          "description": "Optional TTS engine to speak the message."
+        },
+        "language": {
+          "name": "Language",
+          "description": "Optional language code for TTS."
+        },
+        "tts_options": {
+          "name": "TTS options",
+          "description": "Optional extra voice or speech settings."
         }
       }
     },

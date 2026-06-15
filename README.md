@@ -53,6 +53,10 @@ Initiates an outbound SIP call.
 - `number` *(Required)*: The destination number or SIP URI to call (e.g., `100` or `sip:100@freepbx`).
 - `ring_timeout` *(Optional)*: Number of seconds to let the call ring before canceling (e.g., `30`).
 - `menu` *(Optional)*: IVR menu configuration object (see below).
+- `message` *(Optional)*: Text message to speak via TTS upon call connection. If provided without a menu, the call will automatically hang up after speaking. If both `menu` and `message` are provided, `menu` takes precedence and `message` is ignored.
+- `tts_engine` *(Optional)*: Specific TTS engine to use (e.g., `tts.piper`, `tts.google_translate`).
+- `language` *(Optional)*: Optional language code for TTS (e.g., `ko`, `en`).
+- `tts_options` *(Optional)*: Dictionary of extra voice or speech settings (e.g., `voice: ko_KR-gsw-medium`).
 
 ### `sip.hangup`
 Ends an active SIP call or declines an incoming call.
@@ -63,6 +67,10 @@ Ends an active SIP call or declines an incoming call.
 Answers an incoming SIP call.
 - `entity_id` *(Required)*: The target SIP media player entity.
 - `menu` *(Optional)*: IVR menu configuration object to start immediately on answer.
+- `message` *(Optional)*: Text message to speak via TTS upon answering. If provided without a menu, the call will automatically hang up after speaking. If both `menu` and `message` are provided, `menu` takes precedence and `message` is ignored.
+- `tts_engine` *(Optional)*: Specific TTS engine to use (e.g., `tts.piper`, `tts.google_translate`).
+- `language` *(Optional)*: Optional language code for TTS.
+- `tts_options` *(Optional)*: Dictionary of extra voice or speech settings.
 
 ### `sip.send_dtmf`
 Sends DTMF digits to the active SIP call.
@@ -106,12 +114,54 @@ The integration fires the following events on the Home Assistant event bus. Ever
 
 ## Example: Announce a TTS message, then hang up
 
-Any standard Home Assistant TTS engine works (Google Translate, Piper, Nabu Casa Cloud, etc.) — the line audio is transcoded with ffmpeg automatically. Replace `media_player.phone_line` / `tts.piper` with your own entities.
+Any standard Home Assistant TTS engine works (Google Translate, Piper, Nabu Casa Cloud, etc.) — the line audio is transcoded with ffmpeg automatically.
 
-### Inbound — answer an incoming call, speak, then hang up
+There are two ways to announce messages:
 
+### Option A: Simplified Parameters (Recommended)
+You can specify the TTS message and settings directly in the `sip.answer` or `sip.dial` service call. The integration will automatically wait for the connection, speak the message, and hang up when finished.
+
+#### Inbound — answer, speak, and hang up automatically
 ```yaml
-alias: "SIP: Announce on incoming call"
+alias: "SIP: Announce on incoming call (Simplified)"
+trigger:
+  - platform: event
+    event_type: sip_incoming_call
+action:
+  - service: sip.answer
+    target:
+      entity_id: media_player.phone_line
+    data:
+      message: "Hello, this is an automated response."
+      tts_engine: tts.piper
+      language: en
+      tts_options:
+        voice: en_US-lessac-medium
+```
+
+#### Outbound — dial, speak when answered, and hang up automatically
+```yaml
+alias: "SIP: Announce on outbound call (Simplified)"
+action:
+  - service: sip.dial
+    target:
+      entity_id: media_player.phone_line
+    data:
+      number: "100"
+      ring_timeout: 30
+      message: "A package has been delivered."
+      tts_engine: tts.piper
+      language: en
+```
+
+---
+
+### Option B: Multi-step Automation (Advanced)
+If you need complex scripting or conditional flows between answering, speaking, and hanging up, you can orchestrate it using Home Assistant events (`sip_call_connected` and `sip_playback_done`).
+
+#### Inbound (Multi-step)
+```yaml
+alias: "SIP: Announce on incoming call (Multi-step)"
 trigger:
   - platform: event
     event_type: sip_incoming_call
@@ -126,7 +176,7 @@ action:
     timeout: "00:00:10"
   - service: tts.speak
     target:
-      entity_id: tts.piper            # any installed TTS engine
+      entity_id: tts.piper
     data:
       media_player_entity_id: media_player.phone_line
       message: "Hello, this is an automated response."
@@ -140,10 +190,9 @@ action:
       entity_id: media_player.phone_line
 ```
 
-### Outbound — call a number, speak when answered, then hang up
-
+#### Outbound (Multi-step)
 ```yaml
-alias: "SIP: Announce on outbound call"
+alias: "SIP: Announce on outbound call (Multi-step)"
 action:
   - service: sip.dial
     target:
@@ -177,7 +226,7 @@ action:
 
 ## IVR Configuration Example
 
-You can pass a YAML configuration schema to the `menu` field in the `sip.dial` or `sip.answer` service.
+You can pass a YAML configuration schema to the `menu` field in the `sip.dial` or `sip.answer` service. You can group TTS settings in a dedicated `tts` block for menus and choices.
 
 ```yaml
 service: sip.answer
@@ -186,7 +235,12 @@ target:
 data:
   menu:
     id: root
-    message: "Welcome to our Home. Press 1 to toggle the living room light. Press 2 to talk to our Voice Assistant. Or enter your four-digit PIN code followed by hash."
+    tts:
+      message: "Welcome to our Home. Press 1 to toggle the living room light. Press 2 to talk to our Voice Assistant. Or enter your four-digit PIN code followed by hash."
+      engine: tts.piper
+      language: en
+      options:
+        voice: en_US-lessac-medium
     wait_for_audio_to_finish: true
     timeout: 10
     choices_are_pin: false
@@ -196,18 +250,32 @@ data:
           domain: light
           service: toggle
           entity_id: light.living_room_light
-        message: "Toggling the light now."
+        tts:
+          message: "Toggling the light now."
+          engine: tts.piper
+          language: en
         post_action: hangup
       "2":
         action:
           domain: assist_pipeline
         post_action: noop
       "default":
-        message: "Invalid selection."
+        tts:
+          message: "Invalid selection."
+          engine: tts.piper
+          language: en
         post_action: repeat_message
       "timeout":
         post_action: hangup
 ```
+
+### IVR TTS Configuration Options
+Within the `tts` block of a menu or a choice, you can specify the following parameters:
+- `message` (or `text`): The text content to be spoken.
+- `engine` (or `tts_engine`): The specific TTS engine to use (e.g., `tts.piper`, `tts.google_translate`).
+- `language` (or `lang`): Optional language code (e.g., `en`, `ko`).
+- `options` (or `tts_options`): A dictionary of voice-specific configurations.
+- `handle_as_template`: A boolean value (`true` or `false`). When set to `true`, the text in `message`/`text` will be rendered as a Home Assistant Jinja template before speaking.
 
 ---
 

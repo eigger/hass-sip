@@ -29,6 +29,32 @@ dial:
           max: 300
           step: 1
           unit_of_measurement: seconds
+    message:
+      name: Message
+      description: Optional text message to speak via TTS upon call connection. Supports Jinja templates.
+      required: false
+      selector:
+        text:
+          multiline: true
+    tts_engine:
+      name: TTS Engine
+      description: Optional TTS engine to use for speaking the message.
+      required: false
+      selector:
+        entity:
+          domain: tts
+    language:
+      name: Language
+      description: Optional language code for TTS (e.g. ko).
+      required: false
+      selector:
+        text:
+    tts_options:
+      name: TTS Options
+      description: Optional extra voice or speech settings (e.g. voice name).
+      required: false
+      selector:
+        object:
 
 hangup:
   name: Hang up
@@ -63,6 +89,32 @@ answer:
       required: false
       selector:
         object:
+    message:
+      name: Message
+      description: Optional text message to speak via TTS upon answering. Supports Jinja templates.
+      required: false
+      selector:
+        text:
+          multiline: true
+    tts_engine:
+      name: TTS Engine
+      description: Optional TTS engine to use for speaking the message.
+      required: false
+      selector:
+        entity:
+          domain: tts
+    language:
+      name: Language
+      description: Optional language code for TTS (e.g. ko).
+      required: false
+      selector:
+        text:
+    tts_options:
+      name: TTS Options
+      description: Optional extra voice or speech settings (e.g. voice name).
+      required: false
+      selector:
+        object:
 
 send_dtmf:
   name: Send DTMF
@@ -90,7 +142,7 @@ start_recording:
   fields:
     recording_file:
       name: Recording File Path
-      description: Absolute path of the WAV file to save (e.g. /media/recording.wav).
+      description: Absolute path of the WAV file to save (e.g. /media/recording.wav). Supports Jinja templates.
       required: true
       example: "/media/recording.wav"
       selector:

@@ -81,6 +81,10 @@ SERVICE_DIAL_SCHEMA = cv.make_entity_service_schema(
         vol.Required("number"): cv.string,
         vol.Optional("menu"): cv.match_all,
         vol.Optional("ring_timeout"): cv.positive_int,
+        vol.Optional("message"): cv.string,
+        vol.Optional("tts_engine"): cv.string,
+        vol.Optional("language"): cv.string,
+        vol.Optional("tts_options"): cv.match_all,
     }
 )
 
@@ -93,6 +97,10 @@ SERVICE_HANGUP_SCHEMA = cv.make_entity_service_schema(
 SERVICE_ANSWER_SCHEMA = cv.make_entity_service_schema(
     {
         vol.Optional("menu"): cv.match_all,
+        vol.Optional("message"): cv.string,
+        vol.Optional("tts_engine"): cv.string,
+        vol.Optional("language"): cv.string,
+        vol.Optional("tts_options"): cv.match_all,
     }
 )
 
@@ -323,13 +331,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     # Helper function to play a message via TTS
-    async def play_message_internal(message: str, language: str | None = None) -> None:
+    async def play_message_internal(
+        message: str,
+        language: str | None = None,
+        engine: str | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> None:
         from homeassistant.components.tts import async_get_media_source_audio
         from homeassistant.components.tts.media_source import generate_media_source_id
 
         try:
             media_source_id = generate_media_source_id(
-                hass, message, language=language
+                hass, message, engine=engine, language=language, options=options
             )
             _, data = await async_get_media_source_audio(hass, media_source_id)
             source = FfmpegAudioSource(data=data, ffmpeg_bin=get_ffmpeg_bin(hass))
@@ -438,167 +451,230 @@ async def async_register_services(hass: HomeAssistant) -> None:
     if hass.services.has_service(DOMAIN, "dial"):
         return
 
-    async def get_client_entry(call: ServiceCall) -> tuple[str, dict[str, Any]] | None:
-        """Helper to get client and entry data based on targeted entity ID."""
+    async def get_client_entries(call: ServiceCall) -> list[tuple[str, dict[str, Any]]]:
+        """Helper to get all matched client and entry data based on targeted entity ID/device ID/area ID."""
         entries = hass.config_entries.async_entries(DOMAIN)
         if not entries:
             LOGGER.error("No active SIP configurations found")
-            return None
+            return []
 
-        # Resolve config entry ID using Home Assistant's service helper
+        # Resolve config entry IDs using Home Assistant's service helper
         try:
             entry_ids = await async_extract_config_entry_ids(call)
         except TypeError:
             entry_ids = await async_extract_config_entry_ids(hass, call)
 
-        entry = None
+        matched_entries = []
         if entry_ids:
             for eid in entry_ids:
                 entry = hass.config_entries.async_get_entry(eid)
-                if entry and entry.domain == DOMAIN:
-                    break
+                if entry and entry.domain == DOMAIN and entry.state.value == "loaded":
+                    matched_entries.append((entry.entry_id, entry.runtime_data))
 
-        if not entry:
+        if not matched_entries:
             # Fallback to the first loaded entry
             loaded_entries = [e for e in entries if e.state.value == "loaded"]
-            entry = loaded_entries[0] if loaded_entries else entries[0]
+            if loaded_entries:
+                matched_entries.append((loaded_entries[0].entry_id, loaded_entries[0].runtime_data))
 
-        return entry.entry_id, entry.runtime_data
+        return matched_entries
 
     async def handle_dial(call: ServiceCall) -> None:
         number = call.data["number"]
         menu = call.data.get("menu")
         ring_timeout = call.data.get("ring_timeout")
+        message = call.data.get("message")
+        tts_engine = call.data.get("tts_engine")
+        language = call.data.get("language")
+        tts_options = call.data.get("tts_options")
 
-        target = await get_client_entry(call)
-        if not target:
+        targets = await get_client_entries(call)
+        if not targets:
             return
-        entry_id, data = target
-        client: SipClient = data["client"]
 
-        # Track active call details
-        data["call_start_time"] = time.time()
-        data["call_connect_time"] = None
-        data["call_direction"] = "outgoing"
-        data["call_status"] = "canceled"
-        data["call_number"] = number
+        if message:
+            try:
+                from homeassistant.helpers import template
+                message = template.Template(message, hass).async_render()
+            except Exception as err:
+                LOGGER.error("Failed to render dial message template: %s", err)
 
-        # Load contacts asynchronously and cache them
-        contacts_data = await hass.async_add_executor_job(load_contacts, hass)
-        data["contacts"] = contacts_data
+        for entry_id, data in targets:
+            client: SipClient = data["client"]
 
-        friendly_name, _ = get_contact_info_from_cache(contacts_data, number)
-        data["last_caller"] = friendly_name
+            # Track active call details
+            data["call_start_time"] = time.time()
+            data["call_connect_time"] = None
+            data["call_direction"] = "outgoing"
+            data["call_status"] = "canceled"
+            data["call_number"] = number
 
-        # Setup IVR Session if menu is provided
-        if menu:
-            session = IvrSession(
-                hass,
-                menu,
-                play_message_fn=data["play_message_fn"],
-                play_audio_file_fn=data["play_audio_file_fn"],
-                hangup_fn=client.hangup,
-                fire_event_fn=lambda event, payload: hass.bus.async_fire(
-                    f"{DOMAIN}_{event}",
-                    {"sip_account": data["config"].username, **payload},
-                ),
-                trigger_assist_fn=data["trigger_assist_fn"],
-            )
-            data["set_ivr"](session)
-        else:
-            data["set_ivr"](None)
+            # Load contacts asynchronously and cache them
+            contacts_data = await hass.async_add_executor_job(load_contacts, hass)
+            data["contacts"] = contacts_data
 
-        client.call(number, ring_timeout=ring_timeout)
+            friendly_name, _ = get_contact_info_from_cache(contacts_data, number)
+            data["last_caller"] = friendly_name
+
+            target_menu = menu
+            # Auto-create simple announcement menu if message is provided without a menu
+            if not target_menu and message:
+                target_menu = {
+                    "id": f"simple_dial_announcement_{entry_id}",
+                    "tts": {
+                        "message": message,
+                        "engine": tts_engine,
+                        "language": language,
+                        "options": tts_options or {},
+                    },
+                    "post_action": "hangup",
+                }
+
+            # Setup IVR Session if menu is provided
+            if target_menu:
+                session = IvrSession(
+                    hass,
+                    target_menu,
+                    play_message_fn=data["play_message_fn"],
+                    play_audio_file_fn=data["play_audio_file_fn"],
+                    hangup_fn=client.hangup,
+                    fire_event_fn=lambda event, payload, data=data: hass.bus.async_fire(
+                        f"{DOMAIN}_{event}",
+                        {"sip_account": data["config"].username, **payload},
+                    ),
+                    trigger_assist_fn=data["trigger_assist_fn"],
+                )
+                data["set_ivr"](session)
+            else:
+                data["set_ivr"](None)
+
+            client.call(number, ring_timeout=ring_timeout)
 
     async def handle_hangup(call: ServiceCall) -> None:
         sip_code = call.data.get("sip_code")
-        target = await get_client_entry(call)
-        if not target:
-            return
-        entry_id, data = target
-        client: SipClient = data["client"]
-        client.hangup(sip_code=sip_code)
+        targets = await get_client_entries(call)
+        for entry_id, data in targets:
+            client: SipClient = data["client"]
+            client.hangup(sip_code=sip_code)
 
     async def handle_answer(call: ServiceCall) -> None:
         menu = call.data.get("menu")
+        message = call.data.get("message")
+        tts_engine = call.data.get("tts_engine")
+        language = call.data.get("language")
+        tts_options = call.data.get("tts_options")
 
-        target = await get_client_entry(call)
-        if not target:
+        targets = await get_client_entries(call)
+        if not targets:
             return
-        entry_id, data = target
-        client: SipClient = data["client"]
 
-        if menu:
-            session = IvrSession(
-                hass,
-                menu,
-                play_message_fn=data["play_message_fn"],
-                play_audio_file_fn=data["play_audio_file_fn"],
-                hangup_fn=client.hangup,
-                fire_event_fn=lambda event, payload: hass.bus.async_fire(
-                    f"{DOMAIN}_{event}",
-                    {"sip_account": data["config"].username, **payload},
-                ),
-                trigger_assist_fn=data["trigger_assist_fn"],
-            )
-            data["set_ivr"](session)
-        else:
-            data["set_ivr"](None)
+        if message:
+            try:
+                from homeassistant.helpers import template
+                message = template.Template(message, hass).async_render()
+            except Exception as err:
+                LOGGER.error("Failed to render answer message template: %s", err)
 
-        client.answer()
+        for entry_id, data in targets:
+            client: SipClient = data["client"]
+
+            target_menu = menu
+            # Auto-create simple announcement menu if message is provided without a menu
+            if not target_menu and message:
+                target_menu = {
+                    "id": f"simple_answer_announcement_{entry_id}",
+                    "tts": {
+                        "message": message,
+                        "engine": tts_engine,
+                        "language": language,
+                        "options": tts_options or {},
+                    },
+                    "post_action": "hangup",
+                }
+
+            if target_menu:
+                session = IvrSession(
+                    hass,
+                    target_menu,
+                    play_message_fn=data["play_message_fn"],
+                    play_audio_file_fn=data["play_audio_file_fn"],
+                    hangup_fn=client.hangup,
+                    fire_event_fn=lambda event, payload, data=data: hass.bus.async_fire(
+                        f"{DOMAIN}_{event}",
+                        {"sip_account": data["config"].username, **payload},
+                    ),
+                    trigger_assist_fn=data["trigger_assist_fn"],
+                )
+                data["set_ivr"](session)
+            else:
+                data["set_ivr"](None)
+
+            client.answer()
 
     async def handle_send_dtmf(call: ServiceCall) -> None:
         digits = call.data["digits"]
-        target = await get_client_entry(call)
-        if not target:
-            return
-        entry_id, data = target
-        client: SipClient = data["client"]
-        client.send_dtmf(digits)
+        targets = await get_client_entries(call)
+        for entry_id, data in targets:
+            client: SipClient = data["client"]
+            client.send_dtmf(digits)
 
     async def handle_start_recording(call: ServiceCall) -> None:
         recording_file = call.data["recording_file"]
-        target = await get_client_entry(call)
-        if not target:
+        targets = await get_client_entries(call)
+        if not targets:
             return
-        entry_id, data = target
-        client: SipClient = data["client"]
 
         from .sip_client.audio import WavRecorderSink
+        import os
 
-        recorder = WavRecorderSink(recording_file)
-        client.set_sink(recorder)
-        data["recorder"] = recorder
-        hass.bus.async_fire(
-            f"{DOMAIN}_{EVENT_SIP_RECORDING_STARTED}",
-            {"sip_account": data["config"].username, "recording_file": recording_file},
-        )
+        for entry_id, data in targets:
+            client: SipClient = data["client"]
+            target_file = recording_file
 
-    async def handle_stop_recording(call: ServiceCall) -> None:
-        target = await get_client_entry(call)
-        if not target:
-            return
-        entry_id, data = target
-        client: SipClient = data["client"]
+            # Render template per target so they can use target-specific variables like username
+            if target_file:
+                try:
+                    from homeassistant.helpers import template
+                    target_file = template.Template(target_file, hass).async_render(
+                        variables={"username": data["config"].username, "entry_id": entry_id}
+                    )
+                except Exception as err:
+                    LOGGER.error("Failed to render recording file path template: %s", err)
 
-        recorder = data.get("recorder")
-        if recorder:
-            recorder.close()
-            from .sip_client.audio import NullSink
+            # If there are multiple targets, append the username to avoid file clash
+            if len(targets) > 1 and target_file:
+                base, ext = os.path.splitext(target_file)
+                if data["config"].username not in target_file:
+                    target_file = f"{base}_{data['config'].username}{ext}"
 
-            client.set_sink(NullSink())
-            data.pop("recorder")
+            recorder = WavRecorderSink(target_file)
+            client.set_sink(recorder)
+            data["recorder"] = recorder
             hass.bus.async_fire(
-                f"{DOMAIN}_{EVENT_SIP_RECORDING_STOPPED}",
-                {"sip_account": data["config"].username},
+                EVENT_SIP_RECORDING_STARTED,
+                {"sip_account": data["config"].username, "recording_file": target_file},
             )
 
+    async def handle_stop_recording(call: ServiceCall) -> None:
+        targets = await get_client_entries(call)
+        for entry_id, data in targets:
+            client: SipClient = data["client"]
+            recorder = data.get("recorder")
+            if recorder:
+                recorder.close()
+                from .sip_client.audio import NullSink
+
+                client.set_sink(NullSink())
+                data.pop("recorder")
+                hass.bus.async_fire(
+                    EVENT_SIP_RECORDING_STOPPED,
+                    {"sip_account": data["config"].username},
+                )
+
     async def handle_start_assist(call: ServiceCall) -> None:
-        target = await get_client_entry(call)
-        if not target:
-            return
-        entry_id, data = target
-        await data["trigger_assist_fn"]()
+        targets = await get_client_entries(call)
+        for entry_id, data in targets:
+            await data["trigger_assist_fn"]()
 
     # Register all services
     hass.services.async_register(DOMAIN, "dial", handle_dial, schema=SERVICE_DIAL_SCHEMA)
