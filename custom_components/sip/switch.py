@@ -39,8 +39,8 @@ class SipDndSwitch(SwitchEntity):
 
     @property
     def icon(self) -> str:
-        """Reflect DND state with a valid MDI icon."""
-        return "mdi:do-not-disturb" if self._client.dnd else "mdi:do-not-disturb-off"
+        """DND on -> phone-off (calls blocked); DND off -> phone (normal)."""
+        return "mdi:phone-off" if self._client.dnd else "mdi:phone"
 
     @property
     def is_on(self) -> bool:
