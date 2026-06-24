@@ -158,11 +158,7 @@ class AssistBridge(AudioSink):
                 chunks.append(chunk)
             wav_data = b"".join(chunks)
 
-            if stream.extension != "wav":
-                LOGGER.error("Expected WAV stream from TTS, got %s", stream.extension)
-                return
-
-            # Play the TTS WAV bytes over the SIP RTP stream using FfmpegAudioSource
+            # Play the TTS bytes over the SIP RTP stream using FfmpegAudioSource
             source = FfmpegAudioSource(data=wav_data, ffmpeg_bin=get_ffmpeg_bin(self.hass))
             self.play_source(source)
         except Exception as err:
