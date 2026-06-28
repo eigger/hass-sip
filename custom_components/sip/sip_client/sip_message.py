@@ -36,6 +36,26 @@ class SdpInfo:
     telephone_event_pt: int = -1
 
 
+# Compact header mapping (RFC 3261 Section 7.3.3)
+_COMPACT_HEADERS = {
+    "a": "accept-contact",
+    "b": "referred-by",
+    "c": "content-type",
+    "e": "content-encoding",
+    "f": "from",
+    "i": "call-id",
+    "k": "supported",
+    "l": "content-length",
+    "m": "contact",
+    "o": "event",
+    "r": "refer-to",
+    "s": "subject",
+    "t": "to",
+    "u": "allow-events",
+    "v": "via",
+}
+
+
 def parse_sip_message(raw: str) -> SipMessage:
     msg = SipMessage()
     header_end = raw.find("\r\n\r\n")
@@ -70,6 +90,7 @@ def parse_sip_message(raw: str) -> SipMessage:
         if colon == -1:
             continue
         name = line[:colon].strip().lower()
+        name = _COMPACT_HEADERS.get(name, name)
         value = line[colon + 1:].strip()
         # Keep the first occurrence (topmost Via, etc.).
         if name not in msg.headers:

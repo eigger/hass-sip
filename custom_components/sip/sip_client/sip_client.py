@@ -520,6 +520,18 @@ class SipClient:
         if not self._outbound:
             return
 
+        try:
+            cseq_num = int(m.header("CSeq").split()[0])
+        except (ValueError, IndexError):
+            cseq_num = 0
+
+        if cseq_num != self._d_cseq:
+            # Ignore responses for old transactions, but re-ACK final failures (>=300)
+            # to stop server retransmissions.
+            if 300 <= m.status_code < 700:
+                self._send_raw(self._build_ack(m))
+            return
+
         # Any response means the INVITE was received: stop retransmitting it.
         self._cancel_invite_retx()
 
@@ -571,13 +583,17 @@ class SipClient:
                 self._d_remote_target = contact_uri
             self._apply_remote_sdp(sm.parse_sdp(m.body))
             self._send_raw(self._build_ack(m))
-            self._loop.create_task(self._start_media())
+
+            async def _start_and_play():
+                await self._start_media()
+                if self._pending_source is not None:
+                    self.play_source(self._pending_source)
+                    self._pending_source = None
+
+            self._loop.create_task(_start_and_play())
             self._set_state(SipState.IN_CALL)
             _LOGGER.info("Call connected")
             self._emit("on_call_connected")
-            if self._pending_source is not None:
-                self.play_source(self._pending_source)
-                self._pending_source = None
             return
 
         # >= 300 final failure
@@ -603,6 +619,11 @@ class SipClient:
         self._remote_rtp_port = sdp.audio_port
         self._chosen_pt = _choose_payload(sdp)
         self._remote_dtmf_pt = sdp.telephone_event_pt
+
+        # Update RTP session with negotiated values
+        self.rtp.payload_type = self._chosen_pt
+        if self._remote_dtmf_pt >= 0:
+            self.rtp.dtmf_pt = self._remote_dtmf_pt
 
     # -- inbound requests ----------------------------------------------
     @staticmethod
