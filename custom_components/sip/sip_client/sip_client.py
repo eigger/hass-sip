@@ -71,7 +71,9 @@ def _angle_uri(value: str) -> str:
     gt = value.find(">")
     if lt != -1 and gt != -1 and gt > lt:
         return value[lt + 1:gt]
-    return ""
+    # No angle brackets: treat the whole value as a bare URI (RFC 3261 §20.10)
+    stripped = value.strip()
+    return stripped if stripped.startswith("sip") else ""
 
 
 class _SipProtocol(asyncio.DatagramProtocol):
@@ -341,6 +343,15 @@ class SipClient:
             self._loop.create_task(self._reconnect())
 
     def _handle_register_response(self, m: sm.SipMessage) -> None:
+        try:
+            cseq_num = int(m.header("CSeq").split()[0])
+        except (ValueError, IndexError):
+            cseq_num = 0
+
+        if cseq_num != self._reg_cseq:
+            _LOGGER.debug("Ignoring REGISTER response for old CSeq %s", cseq_num)
+            return
+
         if m.status_code in (401, 407) and not self._register_auth_tried:
             self._register_auth_tried = True
             self._send_raw(self._authorized_register(m))
@@ -490,6 +501,10 @@ class SipClient:
     def _build_ack(self, resp: sm.SipMessage) -> str:
         to = resp.header("To")
         target = _angle_uri(resp.header("Contact")) or self._d_remote_target
+        try:
+            cseq = resp.header("CSeq").split()[0]
+        except (ValueError, IndexError):
+            cseq = str(self._d_cseq)
         return (
             f"ACK {target} SIP/2.0\r\n"
             f"Via: SIP/2.0/UDP {self._local_ip}:{self._local_port};branch={sm.gen_branch()};rport\r\n"
@@ -497,7 +512,7 @@ class SipClient:
             f"From: {self._d_local}\r\n"
             f"To: {to or self._d_remote}\r\n"
             f"Call-ID: {self._d_call_id}\r\n"
-            f"CSeq: {self._d_cseq} ACK\r\n"
+            f"CSeq: {cseq} ACK\r\n"
             "Content-Length: 0\r\n\r\n"
         )
 
