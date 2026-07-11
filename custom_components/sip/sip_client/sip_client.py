@@ -270,6 +270,18 @@ class SipClient:
     def _contact_uri(self) -> str:
         return f"<sip:{self.config.username}@{self._local_ip}:{self._local_port}>"
 
+    @staticmethod
+    def _parse_min_expires(m: sm.SipMessage) -> int | None:
+        """Return Min-Expires from a 423 response, or None if missing/invalid."""
+        raw = m.header("Min-Expires")
+        if not raw:
+            return None
+        try:
+            value = int(raw.strip().split(";")[0].strip())
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0 else None
+
     def _build_register(self) -> str:
         cfg = self.config
         aor = f"sip:{cfg.username}@{cfg.domain}"
@@ -355,6 +367,31 @@ class SipClient:
         if m.status_code in (401, 407) and not self._register_auth_tried:
             self._register_auth_tried = True
             self._send_raw(self._authorized_register(m))
+            return
+        if m.status_code == 423:
+            # RFC 3261 §10.2.8 / §21.4.17: retry with Expires >= Min-Expires.
+            min_expires = self._parse_min_expires(m)
+            if min_expires is not None and min_expires > self.config.register_expiration:
+                _LOGGER.info(
+                    "REGISTER 423 Interval Too Brief; raising Expires from %s to %s",
+                    self.config.register_expiration,
+                    min_expires,
+                )
+                self.config.register_expiration = min_expires
+                self._do_register()
+                return
+            _LOGGER.warning(
+                "REGISTER failed: 423 Interval Too Brief (Min-Expires=%s, current=%s)",
+                min_expires,
+                self.config.register_expiration,
+            )
+            self.registered = False
+            self._reg_attempts = 0
+            self._emit(
+                "on_register_failed",
+                f"423 Interval Too Brief (Min-Expires={min_expires})",
+            )
+            self._schedule_register(10)
             return
         if 200 <= m.status_code < 300:
             was = self.registered

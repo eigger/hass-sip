@@ -69,7 +69,11 @@ async def async_validate_sip_registration(
         password=user_input[CONF_PASSWORD],
         domain=user_input.get(CONF_DOMAIN, ""),
         caller_id=user_input.get(CONF_CALLER_ID, ""),
-        register_expiration=10,  # short expiration for test
+        # Use the configured expiration — a hardcoded short value (e.g. 10s)
+        # triggers SIP 423 Interval Too Brief on registrars with Min-Expires.
+        register_expiration=user_input.get(
+            CONF_REGISTER_EXPIRATION, DEFAULT_REGISTER_EXPIRATION
+        ),
         local_rtp_port=user_input.get(CONF_LOCAL_RTP_PORT, 7078),
     )
 
