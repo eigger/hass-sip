@@ -77,6 +77,8 @@ Sends DTMF digits to the active SIP call.
 - `entity_id` *(Required)*: The target SIP media player entity.
 - `digits` *(Required)*: DTMF string to send (e.g., `123#`).
 
+> **Inbound DTMF:** digits pressed by the remote party are accepted both as RFC 2833 / RFC 4733 telephone-event packets and as SIP INFO (`application/dtmf-relay`), which is what many ATA/VoIP adapters send. **In-band DTMF (audio tones) is not detected** — set your ATA or PBX to RFC 2833 or SIP INFO if key presses are not recognised.
+
 ### `sip.start_recording`
 Starts recording call audio to a local WAV file.
 - `entity_id` *(Required)*: The target SIP media player entity.

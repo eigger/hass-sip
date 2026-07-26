@@ -18,6 +18,34 @@ import g711  # noqa: E402
 import sip_auth  # noqa: E402
 import sip_message as sm  # noqa: E402
 
+# rtp_session / sip_client use relative imports, so expose the directory as a
+# throwaway package to load them without Home Assistant.
+import asyncio  # noqa: E402
+import importlib.util  # noqa: E402
+import types  # noqa: E402
+
+_PKG = "_sipcore"
+_pkg_mod = types.ModuleType(_PKG)
+_pkg_mod.__path__ = [os.path.abspath(_SIP)]
+sys.modules[_PKG] = _pkg_mod
+
+
+def _load_pkg_module(name):
+    spec = importlib.util.spec_from_file_location(
+        f"{_PKG}.{name}", os.path.join(os.path.abspath(_SIP), f"{name}.py")
+    )
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[f"{_PKG}.{name}"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+rtp_session = _load_pkg_module("rtp_session")
+try:
+    sip_client = _load_pkg_module("sip_client")
+except AttributeError:  # enum.StrEnum needs Python 3.11+ (CI runs 3.12+)
+    sip_client = None
+
 
 # ---------------------------------------------------------------- g711
 def test_g711_silence_constants():
@@ -122,6 +150,105 @@ def test_digest_response_legacy_no_qop():
     r1 = sip_auth.digest_response("u", "p", "r", "REGISTER", "sip:x", "n", "", "", "")
     r2 = sip_auth.digest_response("u", "p", "r", "REGISTER", "sip:x", "n", "", "", "")
     assert r1 == r2 and len(r1) == 32
+
+
+# ------------------------------------------------------- SIP INFO DTMF
+def test_info_dtmf_signal_forms():
+    if sip_client is None:
+        return
+    p = sip_client._parse_info_dtmf
+    assert p("application/dtmf-relay", "Signal=1\r\nDuration=160") == "1"
+    assert p("application/dtmf-relay", "signal=#") == "#"
+    assert p("application/dtmf-relay", "d=7") == "7"
+    assert p("application/dtmf", "5") == "5"
+
+
+def test_info_dtmf_numeric_event_codes():
+    if sip_client is None:
+        return
+    # RFC 4733 event numbers, as sent by some gateways.
+    p = sip_client._parse_info_dtmf
+    assert p("application/dtmf-relay", "Signal=10") == "*"
+    assert p("application/dtmf-relay", "Signal=11") == "#"
+    assert p("application/dtmf-relay", "Signal=12") == "A"
+
+
+def test_info_dtmf_ignores_other_content():
+    if sip_client is None:
+        return
+    p = sip_client._parse_info_dtmf
+    assert p("application/sdp", "Signal=1") is None
+    assert p("application/dtmf-relay", "") is None
+    assert p("application/dtmf-relay", "Duration=160") is None
+
+
+# ------------------------------------------------------- RFC 2833 RX
+def _te_packet(pt, marker, timestamp, event, seq=1):
+    """Build one telephone-event RTP packet."""
+    b1 = (0x80 if marker else 0) | pt
+    return bytes([0x80, b1]) + struct.pack("!HII", seq, timestamp, 0x1234) + bytes(
+        [event, 0x0A, 0x00, 0xA0]
+    )
+
+
+def _collect_dtmf(packets, dtmf_pt=101):
+    async def run():
+        session = rtp_session.RtpSession()
+        session.dtmf_pt = dtmf_pt
+        got = []
+        session.on_dtmf = got.append
+        for pkt in packets:
+            session._receive_impl(pkt)
+        return got
+
+    return asyncio.run(run())
+
+
+def test_rfc2833_rx_without_marker_bit():
+    # Some ATAs never set the marker bit; one keypress must still fire once.
+    got = _collect_dtmf([_te_packet(101, False, 1000, 1) for _ in range(5)])
+    assert got == ["1"]
+
+
+def test_rfc2833_rx_deduplicates_by_timestamp():
+    packets = [_te_packet(101, False, 1000, 1) for _ in range(3)]
+    packets += [_te_packet(101, False, 2000, 2) for _ in range(3)]
+    assert _collect_dtmf(packets) == ["1", "2"]
+
+
+def test_rfc2833_rx_marker_forces_new_event():
+    # Same digit twice in a row shares no timestamp gap; marker separates them.
+    packets = [_te_packet(101, True, 700, 3), _te_packet(101, True, 700, 3)]
+    assert _collect_dtmf(packets) == ["3", "3"]
+
+
+def test_rfc2833_rx_marker_style_unchanged():
+    # Zoiper-style: marker on the first packet, repeats after it.
+    packets = [_te_packet(101, True, 700, 3)]
+    packets += [_te_packet(101, False, 700, 3) for _ in range(4)]
+    assert _collect_dtmf(packets) == ["3"]
+
+
+def test_rfc2833_rx_unnegotiated_payload_type():
+    # telephone-event absent from the remote SDP: a 4-byte dynamic-PT payload
+    # is still accepted rather than dropped.
+    packets = [_te_packet(96, False, 500, 9) for _ in range(3)]
+    assert _collect_dtmf(packets, dtmf_pt=-1) == ["9"]
+
+
+def test_rfc2833_rx_does_not_swallow_audio():
+    async def run():
+        session = rtp_session.RtpSession()
+        session.dtmf_pt = 101
+        audio = []
+        session.on_audio = audio.append
+        pcmu = bytes([0x80, 0]) + struct.pack("!HII", 1, 100, 0x1234) + b"\xff" * 160
+        session._receive_impl(pcmu)
+        return audio
+
+    audio = asyncio.run(run())
+    # 160 bytes of G.711 decode to 160 16-bit samples.
+    assert len(audio) == 1 and len(audio[0]) == 320
 
 
 if __name__ == "__main__":

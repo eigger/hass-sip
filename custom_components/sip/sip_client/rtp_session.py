@@ -80,6 +80,12 @@ class RtpSession:
         self._dtmf_timestamp = 0
         self._dtmf_end_packets = 0
 
+        # RX de-duplication: a telephone-event is repeated across many packets
+        # that all share one RTP timestamp, so the timestamp identifies the
+        # keypress. -1 means "no event seen yet".
+        self._rx_dtmf_timestamp = -1
+        self._rx_dtmf_pt_warned = False
+
         self.on_audio: Callable[[bytes], None] | None = None
         self.on_dtmf: Callable[[str], None] | None = None
 
@@ -111,6 +117,7 @@ class RtpSession:
         self._tx_buffer.clear()
         self._dtmf_queue.clear()
         self._dtmf_active = False
+        self._rx_dtmf_timestamp = -1
         self._sender_task = self._loop.create_task(self._sender())
         _LOGGER.info(
             "RTP started on port %s (pt=%s, dtmf_pt=%s)",
@@ -118,6 +125,11 @@ class RtpSession:
             self.payload_type,
             self.dtmf_pt,
         )
+        if self.dtmf_pt < 0:
+            _LOGGER.warning(
+                "Remote did not negotiate telephone-event (RFC 2833); inbound DTMF "
+                "will only work if the device sends it via SIP INFO"
+            )
         return True
 
     async def stop(self) -> None:
@@ -134,6 +146,7 @@ class RtpSession:
         self._tx_buffer.clear()
         self._dtmf_queue.clear()
         self._dtmf_active = False
+        self._rx_dtmf_timestamp = -1
 
     # -- TX -------------------------------------------------------------
     def push_tx_audio(self, pcm_le: bytes) -> None:
@@ -251,20 +264,41 @@ class RtpSession:
         if len(data) <= header_len:
             return
 
-        if self.dtmf_pt >= 0 and pt == self.dtmf_pt:
-            if marker and self.on_dtmf is not None:
-                event = data[header_len]
-                if event <= 9:
-                    c = chr(ord("0") + event)
-                elif event == 10:
-                    c = "*"
-                elif event == 11:
-                    c = "#"
-                elif event <= 15:
-                    c = chr(ord("A") + (event - 12))
-                else:
-                    c = "?"
-                self.on_dtmf(c)
+        payload_len = len(data) - header_len
+        is_dtmf = pt == self.dtmf_pt if self.dtmf_pt >= 0 else False
+        if not is_dtmf and 96 <= pt <= 127 and payload_len == 4:
+            # Some ATAs send RFC 2833 without ever offering telephone-event in
+            # their SDP (or on a different dynamic PT than negotiated). A 4-byte
+            # payload on a dynamic PT is the telephone-event shape, so accept it
+            # rather than dropping the keypress.
+            if not self._rx_dtmf_pt_warned:
+                self._rx_dtmf_pt_warned = True
+                _LOGGER.info(
+                    "Accepting inbound DTMF on unnegotiated payload type %s", pt
+                )
+            is_dtmf = True
+
+        if is_dtmf:
+            # Not every device sets the marker bit on the first packet of an
+            # event, so key off the RTP timestamp instead: all packets of one
+            # keypress repeat the same timestamp. The marker bit, when present,
+            # still forces a new event (two identical digits back to back).
+            timestamp = int.from_bytes(data[4:8], "big")
+            if marker or timestamp != self._rx_dtmf_timestamp:
+                self._rx_dtmf_timestamp = timestamp
+                if self.on_dtmf is not None:
+                    event = data[header_len]
+                    if event <= 9:
+                        c = chr(ord("0") + event)
+                    elif event == 10:
+                        c = "*"
+                    elif event == 11:
+                        c = "#"
+                    elif event <= 15:
+                        c = chr(ord("A") + (event - 12))
+                    else:
+                        c = "?"
+                    self.on_dtmf(c)
             return
 
         if pt not in (0, 8):

@@ -68,6 +68,52 @@ def _choose_payload(sdp: sm.SdpInfo) -> int:
     return 0
 
 
+_INFO_DTMF_TYPES = ("application/dtmf-relay", "application/dtmf", "audio/telephone-event")
+
+
+def _dtmf_from_token(token: str) -> str | None:
+    """Map a DTMF signal token (``1``, ``10``, ``*``, ``#``, ``A``…) to a character."""
+    token = token.strip()
+    if not token:
+        return None
+    if len(token) == 1 and (token.isdigit() or token in "*#ABCD"):
+        return token.upper()
+    # Numeric event codes (RFC 4733): 10 -> '*', 11 -> '#', 12..15 -> A..D
+    if token.isdigit():
+        event = int(token)
+        if event <= 9:
+            return str(event)
+        if event == 10:
+            return "*"
+        if event == 11:
+            return "#"
+        if event <= 15:
+            return chr(ord("A") + (event - 12))
+    return None
+
+
+def _parse_info_dtmf(content_type: str, body: str) -> str | None:
+    """Extract a DTMF digit from a SIP INFO body.
+
+    Handles the ``Signal=1`` / ``d=1`` key-value form used by most ATAs and
+    gateways, as well as a body that is just the bare digit.
+    """
+    if content_type and not any(t in content_type.lower() for t in _INFO_DTMF_TYPES):
+        return None
+    if not body:
+        return None
+
+    for line in body.splitlines():
+        key, sep, value = line.partition("=")
+        if not sep:
+            continue
+        if key.strip().lower() in ("signal", "d", "dtmf"):
+            return _dtmf_from_token(value)
+
+    # No key/value pair: some devices send just the digit as the whole body.
+    return _dtmf_from_token(body)
+
+
 def _angle_uri(value: str) -> str:
     lt = value.find("<")
     gt = value.find(">")
@@ -837,6 +883,16 @@ class SipClient:
                     self._build_response(self._incoming_invite, 487, "Request Terminated", False)
                 )
                 self._end_call()
+            return
+
+        if method == "INFO":
+            # Many ATAs / gateways signal DTMF out-of-band via SIP INFO instead
+            # of RFC 2833 telephone-event packets.
+            self._send_raw(self._build_response(m, 200, "OK", False))
+            digit = _parse_info_dtmf(m.header("Content-Type"), m.body)
+            if digit is not None:
+                _LOGGER.debug("DTMF '%s' received via SIP INFO", digit)
+                self._on_rx_dtmf(digit)
             return
 
         # OPTIONS / unknown in-dialog request: acknowledge.
