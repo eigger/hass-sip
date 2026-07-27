@@ -1,1 +1,191 @@
-
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "SIP-Client konfigurieren",
+        "description": "Bitte gib deine SIP-Nebenstellendaten und Serverdetails ein.",
+        "data": {
+          "server": "SIP-Server / Host",
+          "port": "Port",
+          "username": "Benutzername / Nebenstelle",
+          "password": "Passwort",
+          "authentication_username": "Authentifizierungs-Benutzername (Optional)",
+          "domain": "Domain (Optional)",
+          "caller_id": "Anrufer-ID (Optional)",
+          "outbound_proxy": "Outbound-Proxy (Optional)",
+          "register_expiration": "Registrierungs-Ablaufzeit (Sekunden)",
+          "local_rtp_port": "Lokaler RTP-Port (Optional)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zum SIP-Server fehlgeschlagen. Bitte überprüfe Host und Port.",
+      "invalid_auth": "Ungültiger Benutzername oder Passwort. Bitte überprüfe deine Zugangsdaten."
+    },
+    "abort": {
+      "already_configured": "Diese Kombination aus Benutzername und Server ist bereits konfiguriert."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "registration_status": {
+        "name": "Registrierungsstatus",
+        "state": {
+          "registered": "Registriert",
+          "registering": "Wird registriert",
+          "unregistered": "Nicht registriert"
+        }
+      },
+      "last_call": {
+        "name": "Letzter Anruf",
+        "state": {
+          "none": "Keiner",
+          "incoming": "Eingehend",
+          "outgoing": "Ausgehend"
+        }
+      }
+    },
+    "binary_sensor": {
+      "call_active": {
+        "name": "Anruf aktiv"
+      }
+    },
+    "switch": {
+      "dnd": {
+        "name": "Bitte nicht stören"
+      }
+    },
+    "button": {
+      "answer": {
+        "name": "Annehmen"
+      },
+      "hangup": {
+        "name": "Auflegen"
+      }
+    },
+    "media_player": {
+      "phone_line": {
+        "name": "Telefonleitung"
+      }
+    },
+    "event": {
+      "telephony": {
+        "name": "Anruf-Ereignisse",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "incoming": "Eingehender Anruf",
+              "connected": "Anruf verbunden",
+              "playback_done": "Wiedergabe beendet",
+              "dtmf": "DTMF-Tastendruck",
+              "ended": "Anruf beendet",
+              "recording_started": "Aufnahme gestartet",
+              "recording_stopped": "Aufnahme gestoppt",
+              "registered": "Registriert"
+            }
+          }
+        }
+      }
+    }
+  },
+  "services": {
+    "dial": {
+      "name": "Wählen",
+      "description": "Startet einen ausgehenden SIP-Anruf.",
+      "fields": {
+        "number": {
+          "name": "Nummer",
+          "description": "SIP-Zielnummer oder -URI zum Wählen (z. B. 100 oder sip:100@freepbx)."
+        },
+        "menu": {
+          "name": "IVR-Menü",
+          "description": "Optionale IVR-Menükonfiguration, die während des Anrufs ausgeführt werden soll."
+        },
+        "ring_timeout": {
+          "name": "Klingel-Timeout",
+          "description": "Sekunden, die der Anruf klingeln soll, bevor er abgebrochen wird."
+        },
+        "message": {
+          "name": "Nachricht",
+          "description": "Optionale Textnachricht, die bei Verbindung per Sprachausgabe (TTS) vorgelesen wird."
+        },
+        "tts_engine": {
+          "name": "TTS-Engine",
+          "description": "Optionale TTS-Engine zum Vorlesen der Nachricht."
+        },
+        "language": {
+          "name": "Sprache",
+          "description": "Optionaler Sprachcode für TTS."
+        },
+        "tts_options": {
+          "name": "TTS-Optionen",
+          "description": "Optionale zusätzliche Spracheinstellungen."
+        }
+      }
+    },
+    "hangup": {
+      "name": "Auflegen",
+      "description": "Beendet den aktiven SIP-Anruf oder lehnt einen eingehenden Anruf ab.",
+      "fields": {
+        "sip_code": {
+          "name": "SIP-Statuscode",
+          "description": "Optionaler Statuscode, der beim Abweisen eines klingelnden Anrufs gesendet wird (z. B. 486 Busy Here)."
+        }
+      }
+    },
+    "answer": {
+      "name": "Annehmen",
+      "description": "Nimmt einen eingehenden SIP-Anruf an.",
+      "fields": {
+        "menu": {
+          "name": "IVR-Menü",
+          "description": "Optionale IVR-Menükonfiguration, die beim Annehmen gestartet werden soll."
+        },
+        "message": {
+          "name": "Nachricht",
+          "description": "Optionale Textnachricht, die beim Annehmen per Sprachausgabe (TTS) vorgelesen wird."
+        },
+        "tts_engine": {
+          "name": "TTS-Engine",
+          "description": "Optionale TTS-Engine zum Vorlesen der Nachricht."
+        },
+        "language": {
+          "name": "Sprache",
+          "description": "Optionaler Sprachcode für TTS."
+        },
+        "tts_options": {
+          "name": "TTS-Optionen",
+          "description": "Optionale zusätzliche Spracheinstellungen."
+        }
+      }
+    },
+    "send_dtmf": {
+      "name": "DTMF senden",
+      "description": "Sendet DTMF-Töne an den aktiven SIP-Anruf.",
+      "fields": {
+        "digits": {
+          "name": "Ziffern",
+          "description": "Zu sendende DTMF-Ziffern (z. B. 123#)."
+        }
+      }
+    },
+    "start_recording": {
+      "name": "Aufnahme starten",
+      "description": "Startet die Aufzeichnung des Anrufaudios in eine lokale WAV-Datei.",
+      "fields": {
+        "recording_file": {
+          "name": "Aufnahmedateipfad",
+          "description": "Absoluter Pfad der zu speichernden WAV-Datei (z.B. /media/recording.wav)."
+        }
+      }
+    },
+    "stop_recording": {
+      "name": "Aufnahme stoppen",
+      "description": "Stoppt die aktive Anrufaufzeichnung."
+    },
+    "start_assist": {
+      "name": "Assist starten",
+      "description": "Verbindet den aktiven Anruf mit der Voice-Assist-Pipeline von Home Assistant."
+    }
+  }
+}
