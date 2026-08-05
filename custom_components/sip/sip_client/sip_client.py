@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
+from . import codecs
 from . import sip_message as sm
 from .audio import AudioSink, AudioSource, NullSink
 from .rtp_session import RtpSession
@@ -58,14 +59,6 @@ class SipCallbacks:
     on_call_ended: Callable[[], None] | None = None
     on_dtmf: Callable[[str], None] | None = None
     on_playback_done: Callable[[], None] | None = None
-
-
-def _choose_payload(sdp: sm.SdpInfo) -> int:
-    if sdp.pcmu_pt >= 0:
-        return sdp.pcmu_pt
-    if sdp.pcma_pt >= 0:
-        return sdp.pcma_pt
-    return 0
 
 
 _INFO_DTMF_TYPES = ("application/dtmf-relay", "application/dtmf", "audio/telephone-event")
@@ -177,7 +170,8 @@ class SipClient:
         # negotiated media
         self._remote_rtp_ip = ""
         self._remote_rtp_port = 0
-        self._chosen_pt = 0
+        self._codec: codecs.Codec = codecs.DEFAULT
+        self._chosen_pt = self._codec.payload_type
         self._remote_dtmf_pt = -1
         self._media_active = False
 
@@ -194,6 +188,11 @@ class SipClient:
         self.auto_answer_checker: Callable[[str], bool] | None = None
 
     # ------------------------------------------------------------------
+    @property
+    def codec(self) -> codecs.Codec:
+        """Negotiated audio codec for the current / last dialog."""
+        return self._codec
+
     @property
     def in_call(self) -> bool:
         return self.state == SipState.IN_CALL
@@ -555,7 +554,13 @@ class SipClient:
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Ring timeout handler error")
 
-    def _local_sdp(self) -> str:
+    def _local_sdp(self, only: codecs.Codec | None = None) -> str:
+        """Build a local SDP body.
+
+        With ``only=None`` this is a full offer (all supported codecs). Pass the
+        negotiated codec for an answer so we do not re-advertise codecs the
+        remote never offered (RFC 3264).
+        """
         sid = str(int(time.time()))
         return (
             "v=0\r\n"
@@ -563,10 +568,8 @@ class SipClient:
             "s=homeassistant\r\n"
             f"c=IN IP4 {self._local_ip}\r\n"
             "t=0 0\r\n"
-            f"m=audio {self.config.local_rtp_port} RTP/AVP 0 8 101\r\n"
-            "a=rtpmap:0 PCMU/8000\r\n"
-            "a=rtpmap:8 PCMA/8000\r\n"
-            "a=rtpmap:101 telephone-event/8000\r\n"
+            f"{codecs.sdp_media_line(self.config.local_rtp_port, only=only)}"
+            f"{codecs.sdp_rtpmaps(only=only)}"
             "a=fmtp:101 0-15\r\n"
             "a=ptime:20\r\n"
             "a=sendrecv\r\n"
@@ -731,11 +734,12 @@ class SipClient:
         if sdp.connection_ip:
             self._remote_rtp_ip = sdp.connection_ip
         self._remote_rtp_port = sdp.audio_port
-        self._chosen_pt = _choose_payload(sdp)
+        self._codec = codecs.choose(sdp)
+        self._chosen_pt = self._codec.payload_type
         self._remote_dtmf_pt = sdp.telephone_event_pt
 
         # Update RTP session with negotiated values
-        self.rtp.payload_type = self._chosen_pt
+        self.rtp.set_codec(self._codec)
         if self._remote_dtmf_pt >= 0:
             self.rtp.dtmf_pt = self._remote_dtmf_pt
 
@@ -761,7 +765,8 @@ class SipClient:
         to = req.header("To")
         if "tag=" not in to:
             to += f";tag={self._d_local_tag}"
-        sdp = self._local_sdp() if with_sdp else ""
+        # Answers carry only the negotiated codec (RFC 3264); offers use the full set.
+        sdp = self._local_sdp(only=self._codec) if with_sdp else ""
         msg = (
             f"SIP/2.0 {code} {reason}\r\n"
             f"Via: {req.header('Via')}\r\n"
@@ -976,7 +981,7 @@ class SipClient:
         if not self._remote_rtp_ip or not self._remote_rtp_port:
             _LOGGER.warning("No remote RTP endpoint; media not started")
             return
-        self.rtp.payload_type = self._chosen_pt
+        self.rtp.set_codec(self._codec)
         self.rtp.dtmf_pt = self._remote_dtmf_pt
         self.rtp.set_remote(self._remote_rtp_ip, self._remote_rtp_port)
         self.rtp.on_audio = self._on_rx_audio
@@ -1025,6 +1030,9 @@ class SipClient:
 
     async def _run_source(self, source: AudioSource) -> None:
         try:
+            configure = getattr(source, "configure", None)
+            if callable(configure):
+                configure(self._codec.sample_rate, self._codec.pcm_frame_bytes)
             await source.run(self.rtp.push_tx_audio, lambda: self.in_call)
             # Wait for queued audio to actually leave the RTP buffer before
             # signalling completion, so a caller that hangs up on playback-done

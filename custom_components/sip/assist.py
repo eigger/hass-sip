@@ -35,17 +35,25 @@ class AssistAudioStream(AsyncIterable[bytes]):
         """Initialize the audio stream."""
         self.queue: asyncio.Queue[bytes] = asyncio.Queue()
 
-    def feed_audio_8khz(self, pcm_8khz: bytes) -> None:
-        """Receive 8kHz s16le mono PCM, resample to 16kHz, and queue.
+    def feed_audio(self, pcm_le: bytes, sample_rate: int) -> None:
+        """Queue PCM for Assist, upsampling 8 kHz → 16 kHz when needed.
 
-        Uses simple sample duplication (duplicating each 2-byte sample).
+        When the SIP codec is already 16 kHz (G.722), PCM is passed through.
+        For 8 kHz (G.711), each 2-byte sample is duplicated.
         """
-        resampled = bytearray(len(pcm_8khz) * 2)
-        for i in range(0, len(pcm_8khz), 2):
-            sample = pcm_8khz[i : i + 2]
+        if sample_rate == 16000:
+            self.queue.put_nowait(pcm_le)
+            return
+        resampled = bytearray(len(pcm_le) * 2)
+        for i in range(0, len(pcm_le), 2):
+            sample = pcm_le[i : i + 2]
             resampled[i * 2 : i * 2 + 2] = sample
             resampled[i * 2 + 2 : i * 2 + 4] = sample
         self.queue.put_nowait(bytes(resampled))
+
+    def feed_audio_8khz(self, pcm_8khz: bytes) -> None:
+        """Backward-compatible wrapper around :meth:`feed_audio`."""
+        self.feed_audio(pcm_8khz, 8000)
 
     def __aiter__(self) -> AssistAudioStream:
         """Return the iterator."""
@@ -65,12 +73,14 @@ class AssistBridge(AudioSink):
         play_source_fn: Callable[[AudioSource], None],
         on_done_fn: Callable[[], None],
         pipeline_id: str | None = None,
+        sample_rate: int = 8000,
     ) -> None:
         """Initialize the Assist bridge."""
         self.hass = hass
         self.play_source = play_source_fn
         self.on_done = on_done_fn
         self.pipeline_id = pipeline_id
+        self.sample_rate = sample_rate
 
         self.audio_stream = AssistAudioStream()
         self.pipeline_task: asyncio.Task | None = None
@@ -82,9 +92,9 @@ class AssistBridge(AudioSink):
         self.pipeline_task = asyncio.create_task(self._run_pipeline())
 
     def write(self, pcm_le: bytes) -> None:
-        """Receive incoming 8kHz PCM from SIP client and feed it to Assist."""
+        """Receive incoming PCM from SIP client and feed it to Assist."""
         if self.is_active:
-            self.audio_stream.feed_audio_8khz(pcm_le)
+            self.audio_stream.feed_audio(pcm_le, self.sample_rate)
 
     def close(self) -> None:
         """Stop the bridge and cancel running tasks."""

@@ -17,8 +17,6 @@ import wave
 from abc import ABC, abstractmethod
 from typing import Callable
 
-from .rtp_session import FRAME_BYTES
-
 _LOGGER = logging.getLogger(__name__)
 
 PushFn = Callable[[bytes], None]
@@ -26,7 +24,7 @@ ActiveFn = Callable[[], bool]
 
 
 class AudioSource(ABC):
-    """Produces 8 kHz / s16le / mono PCM and pushes it into the RTP TX path."""
+    """Produces s16le / mono PCM at the negotiated sample rate for RTP TX."""
 
     @abstractmethod
     async def run(self, push: PushFn, is_active: ActiveFn) -> None:
@@ -34,7 +32,7 @@ class AudioSource(ABC):
 
 
 class AudioSink(ABC):
-    """Consumes 8 kHz / s16le / mono PCM coming off the RTP RX path."""
+    """Consumes s16le / mono PCM coming off the RTP RX path."""
 
     @abstractmethod
     def write(self, pcm_le: bytes) -> None:
@@ -60,11 +58,11 @@ class NullSink(AudioSink):
 class WavRecorderSink(AudioSink):
     """Records received audio to a WAV file (handy for verifying the RX path)."""
 
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str, sample_rate: int = 8000) -> None:
         self._wav = wave.open(path, "wb")
         self._wav.setnchannels(1)
         self._wav.setsampwidth(2)
-        self._wav.setframerate(8000)
+        self._wav.setframerate(sample_rate)
 
     def write(self, pcm_le: bytes) -> None:
         self._wav.writeframes(pcm_le)
@@ -77,12 +75,15 @@ class WavRecorderSink(AudioSink):
 
 
 class FfmpegAudioSource(AudioSource):
-    """Decode any media (file path, URL, or raw bytes) to 8 kHz mono via ffmpeg.
+    """Decode any media (file path, URL, or raw bytes) to mono PCM via ffmpeg.
 
     ffmpeg transparently handles WAV/MP3/etc. and produces the exact format the
-    G.711 encoder expects, so this single source covers audio files, HTTP URLs
-    and TTS output. It paces itself at ~real time so the RTP TX buffer stays
+    active codec encoder expects, so this single source covers audio files, HTTP
+    URLs and TTS output. It paces itself at ~real time so the RTP TX buffer stays
     small (no dropped audio).
+
+    ``sample_rate`` / ``pcm_frame_bytes`` default to G.711 (8 kHz / 320 B). Call
+    :meth:`configure` after negotiation when a different rate is active.
     """
 
     def __init__(
@@ -91,12 +92,23 @@ class FfmpegAudioSource(AudioSource):
         *,
         url: str | None = None,
         data: bytes | None = None,
+        sample_rate: int = 8000,
+        pcm_frame_bytes: int | None = None,
     ) -> None:
         if (url is None) == (data is None):
             raise ValueError("Provide exactly one of url/data")
         self._bin = ffmpeg_bin
         self._url = url
         self._data = data
+        self._sample_rate = sample_rate
+        self._pcm_frame_bytes = (
+            pcm_frame_bytes if pcm_frame_bytes is not None else sample_rate // 50 * 2
+        )
+
+    def configure(self, sample_rate: int, pcm_frame_bytes: int) -> None:
+        """Update output rate to match the negotiated codec."""
+        self._sample_rate = sample_rate
+        self._pcm_frame_bytes = pcm_frame_bytes
 
     async def run(self, push: PushFn, is_active: ActiveFn) -> None:
         src = self._url if self._url is not None else "pipe:0"
@@ -110,7 +122,7 @@ class FfmpegAudioSource(AudioSource):
             "-ac",
             "1",
             "-ar",
-            "8000",
+            str(self._sample_rate),
             "-f",
             "s16le",
             "pipe:1",
@@ -127,7 +139,7 @@ class FfmpegAudioSource(AudioSource):
             # Read ~20 ms at a time and pace to real time so the RTP buffer
             # never overflows and drops audio.
             while is_active():
-                chunk = await proc.stdout.read(FRAME_BYTES)
+                chunk = await proc.stdout.read(self._pcm_frame_bytes)
                 if not chunk:
                     break
                 push(chunk)

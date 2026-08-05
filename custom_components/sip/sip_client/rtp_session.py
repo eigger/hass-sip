@@ -1,8 +1,9 @@
-"""Asyncio RTP audio session for a single G.711 call.
+"""Asyncio RTP audio session for a single negotiated codec.
 
-Owns one UDP socket, paces transmission at 20 ms (160 samples @ 8 kHz), decodes
-received audio and emits / receives RFC 2833 telephone-event (DTMF). All PCM
-exchanged with callers is signed-16-bit-LE, 8 kHz, mono.
+Owns one UDP socket, paces transmission at 20 ms, encodes/decodes via the
+active :class:`codecs.Codec`, and emits / receives RFC 2833 telephone-event
+(DTMF). All PCM exchanged with callers is signed-16-bit-LE mono at the codec's
+sample rate.
 
 Port of rtp_session.cpp. The audio I/O is fully decoupled:
 
@@ -20,16 +21,17 @@ import os
 import struct
 from typing import Callable
 
-from . import g711
+from . import codecs
+from .codecs import Codec
 
 _LOGGER = logging.getLogger(__name__)
 
-SAMPLES_PER_FRAME = 160  # 20 ms @ 8 kHz
-FRAME_BYTES = SAMPLES_PER_FRAME * 2  # s16le
+# G.711 defaults kept as module names for callers that still import them.
+SAMPLES_PER_FRAME = 160  # 20 ms @ 8 kHz clock
+FRAME_BYTES = SAMPLES_PER_FRAME * 2  # s16le @ 8 kHz
 FRAME_SEC = 0.02
-_DTMF_TONE_SAMPLES = 8 * SAMPLES_PER_FRAME  # ~160 ms
+_DTMF_TONE_SAMPLES = 8 * SAMPLES_PER_FRAME  # ~160 ms, in CLOCK ticks
 _DTMF_END_PACKETS = 3
-_TX_BUFFER_MAX = 8000 * 2  # ~1 s of audio (bytes), drop oldest beyond this
 
 
 def _dtmf_char_to_event(c: str) -> int:
@@ -63,7 +65,6 @@ class RtpSession:
         self._sender_task: asyncio.Task | None = None
 
         self._remote: tuple[str, int] | None = None
-        self.payload_type = 0
         self.dtmf_pt = 101
         self.send_silence = True
 
@@ -89,9 +90,44 @@ class RtpSession:
         self.on_audio: Callable[[bytes], None] | None = None
         self.on_dtmf: Callable[[str], None] | None = None
 
+        # Codec-derived pacing / encode state (defaults = G.711 PCMU).
+        self._codec: Codec = codecs.DEFAULT
+        self.payload_type = self._codec.payload_type
+        self._pcm_frame_bytes = self._codec.pcm_frame_bytes
+        self._ts_increment = self._codec.ts_increment
+        self._tx_buffer_max = self._codec.sample_rate * 2
+        self._encode = self._codec.new_encoder()
+        self._decode = self._codec.new_decoder()
+        # Per-PT decoder cache so off-PT (or late) packets keep ADPCM state.
+        self._decoders: dict[int, Callable[[bytes], bytes]] = {
+            self.payload_type: self._decode
+        }
+
     # -- configuration --------------------------------------------------
     def set_remote(self, ip: str, port: int) -> None:
         self._remote = (ip, port)
+
+    def set_codec(self, codec: Codec) -> None:
+        """Bind the negotiated codec and (re)create encoder/decoder state."""
+        self._codec = codec
+        self.payload_type = codec.payload_type
+        self._pcm_frame_bytes = codec.pcm_frame_bytes
+        self._ts_increment = codec.ts_increment
+        self._tx_buffer_max = codec.sample_rate * 2
+        self._encode = codec.new_encoder()
+        self._decode = codec.new_decoder()
+        self._decoders = {codec.payload_type: self._decode}
+
+    def _decoder_for(self, pt: int) -> Callable[[bytes], bytes] | None:
+        cached = self._decoders.get(pt)
+        if cached is not None:
+            return cached
+        codec = codecs.BY_PT.get(pt)
+        if codec is None:
+            return None
+        decode = codec.new_decoder()
+        self._decoders[pt] = decode
+        return decode
 
     @property
     def running(self) -> bool:
@@ -118,6 +154,8 @@ class RtpSession:
         self._dtmf_queue.clear()
         self._dtmf_active = False
         self._rx_dtmf_timestamp = -1
+        # Fresh codec state for this call (important for stateful codecs).
+        self.set_codec(self._codec)
         self._sender_task = self._loop.create_task(self._sender())
         _LOGGER.info(
             "RTP started on port %s (pt=%s, dtmf_pt=%s)",
@@ -150,12 +188,12 @@ class RtpSession:
 
     # -- TX -------------------------------------------------------------
     def push_tx_audio(self, pcm_le: bytes) -> None:
-        """Queue captured PCM (s16le, 8 kHz, mono) for transmission."""
+        """Queue captured PCM (s16le, mono, codec sample rate) for transmission."""
         if self._transport is None:
             return
         self._tx_buffer.extend(pcm_le)
-        if len(self._tx_buffer) > _TX_BUFFER_MAX:
-            overflow = len(self._tx_buffer) - _TX_BUFFER_MAX
+        if len(self._tx_buffer) > self._tx_buffer_max:
+            overflow = len(self._tx_buffer) - self._tx_buffer_max
             del self._tx_buffer[:overflow]
 
     def queue_dtmf(self, digits: str) -> None:
@@ -165,7 +203,11 @@ class RtpSession:
         self._dtmf_queue.extend(digits)
 
     def tx_idle(self) -> bool:
-        return len(self._tx_buffer) < FRAME_BYTES and not self._dtmf_queue and not self._dtmf_active
+        return (
+            len(self._tx_buffer) < self._pcm_frame_bytes
+            and not self._dtmf_queue
+            and not self._dtmf_active
+        )
 
     # -- packet building ------------------------------------------------
     def _rtp_header(self, marker: bool, pt: int, timestamp: int) -> bytes:
@@ -184,9 +226,9 @@ class RtpSession:
 
     def _send_audio_packet(self, frame: bytes) -> None:
         header = self._rtp_header(self._first_packet, self.payload_type, self._timestamp)
-        self._send(header + g711.encode(frame, self.payload_type))
+        self._send(header + self._encode(frame))
         self._seq += 1
-        self._timestamp += SAMPLES_PER_FRAME
+        self._timestamp += self._ts_increment
         self._first_packet = False
 
     def _send_dtmf_packet(self) -> None:
@@ -217,13 +259,14 @@ class RtpSession:
             self._dtmf_end_packets += 1
             if self._dtmf_end_packets >= _DTMF_END_PACKETS:
                 self._dtmf_active = False
+                # DTMF durations are in 8 kHz clock ticks for both codecs.
                 self._timestamp = self._dtmf_timestamp + self._dtmf_duration + SAMPLES_PER_FRAME
                 self._first_packet = True  # re-mark audio after DTMF
         else:
             self._dtmf_duration += SAMPLES_PER_FRAME
 
     def _silence_frame(self) -> bytes:
-        return b"\x00" * FRAME_BYTES
+        return b"\x00" * self._pcm_frame_bytes
 
     # -- sender loop ----------------------------------------------------
     async def _sender(self) -> None:
@@ -234,9 +277,9 @@ class RtpSession:
                 if self._remote is not None:
                     if self._dtmf_active or self._dtmf_queue:
                         self._send_dtmf_packet()
-                    elif len(self._tx_buffer) >= FRAME_BYTES:
-                        frame = bytes(self._tx_buffer[:FRAME_BYTES])
-                        del self._tx_buffer[:FRAME_BYTES]
+                    elif len(self._tx_buffer) >= self._pcm_frame_bytes:
+                        frame = bytes(self._tx_buffer[: self._pcm_frame_bytes])
+                        del self._tx_buffer[: self._pcm_frame_bytes]
                         self._send_audio_packet(frame)
                     elif self.send_silence:
                         self._send_audio_packet(self._silence_frame())
@@ -246,7 +289,8 @@ class RtpSession:
             if delay > 0:
                 await asyncio.sleep(delay)
             else:
-                next_t = self._loop.time()  # we fell behind; resync pacing
+                # Running behind; resync so we don't spin.
+                next_t = self._loop.time()
 
     # -- RX -------------------------------------------------------------
     def _receive(self, data: bytes) -> None:
@@ -301,7 +345,11 @@ class RtpSession:
                     self.on_dtmf(c)
             return
 
-        if pt not in (0, 8):
+        # DTMF (including the unnegotiated dynamic-PT fallback above) already
+        # returned. Only decode payload types we know as audio codecs, and keep
+        # a per-PT decoder so stateful codecs (G.722) are not reset every packet.
+        decode = self._decoder_for(pt)
+        if decode is None:
             return
         if self.on_audio is not None:
-            self.on_audio(g711.decode(data[header_len:], pt))
+            self.on_audio(decode(data[header_len:]))

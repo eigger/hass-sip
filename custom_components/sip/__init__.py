@@ -391,6 +391,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass,
             play_source_fn=client.play_source,
             on_done_fn=on_assist_done,
+            sample_rate=client.codec.sample_rate,
         )
         client.set_sink(assist_bridge)
         assist_bridge.start()
@@ -669,7 +670,9 @@ async def async_register_services(hass: HomeAssistant) -> None:
                 if data["config"].username not in target_file:
                     target_file = f"{base}_{data['config'].username}{ext}"
 
-            recorder = WavRecorderSink(target_file)
+            recorder = WavRecorderSink(
+                target_file, sample_rate=client.codec.sample_rate
+            )
             client.set_sink(recorder)
             data["recorder"] = recorder
             rec_data = {"sip_account": data["config"].username, "recording_file": target_file}
