@@ -40,6 +40,8 @@ def _load_pkg_module(name):
     return mod
 
 
+g722 = _load_pkg_module("g722")
+codecs = _load_pkg_module("codecs")
 rtp_session = _load_pkg_module("rtp_session")
 try:
     sip_client = _load_pkg_module("sip_client")
@@ -117,6 +119,93 @@ def test_parse_sdp():
     assert sdp.pcmu_pt == 0
     assert sdp.pcma_pt == 8
     assert sdp.telephone_event_pt == 101
+    assert sdp.offered_pts == {0, 8, 101}
+
+
+def test_parse_sdp_offered_pts_from_rtpmap_only():
+    # Dynamic PT advertised only via rtpmap still lands in offered_pts.
+    body = (
+        "m=audio 4002 RTP/AVP 96 97\r\n"
+        "a=rtpmap:96 PCMU/8000\r\n"
+        "a=rtpmap:97 telephone-event/8000\r\n"
+    )
+    sdp = sm.parse_sdp(body)
+    assert sdp.offered_pts == {96, 97}
+    assert sdp.pcmu_pt == 96
+    assert sdp.telephone_event_pt == 97
+
+
+# -------------------------------------------------------------- codecs
+def _sdp(pts, *, pcmu=-1, pcma=-1, g722=-1):
+    info = sm.SdpInfo(offered_pts=set(pts), pcmu_pt=pcmu, pcma_pt=pcma, g722_pt=g722)
+    return info
+
+
+def test_codecs_choose_preference():
+    assert codecs.choose(_sdp({9, 0, 8}, pcmu=0, pcma=8, g722=9)).payload_type == 9
+    assert codecs.choose(_sdp({0, 8}, pcmu=0, pcma=8)).payload_type == 0
+    assert codecs.choose(_sdp({8}, pcma=8)).payload_type == 8
+    assert codecs.choose(_sdp({101})).payload_type == 0  # default PCMU
+    assert codecs.choose(_sdp(set())).payload_type == 0
+
+
+def test_codecs_choose_dynamic_pt_by_name():
+    # a=rtpmap:96 PCMU/8000 — static PT 0 absent; must bind PCMU to 96.
+    chosen = codecs.choose(_sdp({96, 97}, pcmu=96))
+    assert chosen.name == "PCMU"
+    assert chosen.payload_type == 96
+    chosen = codecs.choose(_sdp({98}, pcma=98))
+    assert chosen.name == "PCMA" and chosen.payload_type == 98
+    chosen = codecs.choose(_sdp({110}, g722=110))
+    assert chosen.name == "G722" and chosen.payload_type == 110
+
+
+def test_codecs_sdp_offer_includes_g722():
+    assert codecs.sdp_media_line(7078) == "m=audio 7078 RTP/AVP 9 0 8 101\r\n"
+    assert codecs.sdp_rtpmaps() == (
+        "a=rtpmap:9 G722/8000\r\n"
+        "a=rtpmap:0 PCMU/8000\r\n"
+        "a=rtpmap:8 PCMA/8000\r\n"
+        "a=rtpmap:101 telephone-event/8000\r\n"
+    )
+    # RFC 3551: G.722 rtpmap clock is 8000, not 16000.
+    assert codecs.G722.clock_rate == 8000
+    assert codecs.G722.sample_rate == 16000
+    assert codecs.G722.pcm_frame_bytes == 640
+    assert codecs.G722.ts_increment == 160
+
+
+def test_codecs_sdp_answer_only_negotiated():
+    only = codecs.PCMU
+    assert codecs.sdp_media_line(7078, only=only) == "m=audio 7078 RTP/AVP 0 101\r\n"
+    assert codecs.sdp_rtpmaps(only=only) == (
+        "a=rtpmap:0 PCMU/8000\r\n"
+        "a=rtpmap:101 telephone-event/8000\r\n"
+    )
+    dyn = codecs.PCMU.with_payload_type(96)
+    assert "96" in codecs.sdp_media_line(7078, only=dyn)
+    assert "PCMU/8000" in codecs.sdp_rtpmaps(only=dyn)
+
+
+def test_local_sdp_offer_and_answer():
+    if sip_client is None:
+        return
+
+    async def run():
+        cfg = sip_client.SipConfig(server="pbx.example", local_rtp_port=7078)
+        client = sip_client.SipClient(cfg)
+        client._local_ip = "192.0.2.1"
+        offer = client._local_sdp()
+        client._codec = codecs.PCMU
+        answer = client._local_sdp(only=client.codec)
+        return offer, answer
+
+    offer, answer = asyncio.run(run())
+    assert "RTP/AVP 9 0 8 101" in offer
+    assert "a=rtpmap:9 G722/8000" in offer
+    assert "RTP/AVP 0 101" in answer
+    assert "G722" not in answer
+    assert "PCMA" not in answer
 
 
 def test_auth_param():
@@ -249,6 +338,219 @@ def test_rfc2833_rx_does_not_swallow_audio():
     audio = asyncio.run(run())
     # 160 bytes of G.711 decode to 160 16-bit samples.
     assert len(audio) == 1 and len(audio[0]) == 320
+
+
+# ---------------------------------------------- rate-aware RTP (Stage 2)
+class _FakeTransport:
+    def __init__(self):
+        self.packets = []
+
+    def sendto(self, packet, addr):
+        self.packets.append(packet)
+
+
+def test_rtp_pcmu_frame_size_and_timestamp():
+    async def run():
+        session = rtp_session.RtpSession()
+        session.set_codec(codecs.PCMU)
+        session._transport = _FakeTransport()
+        session.set_remote("127.0.0.1", 4000)
+        session._timestamp = 1000
+        session._seq = 1
+        session._first_packet = False
+        assert session._pcm_frame_bytes == 320
+        assert session._ts_increment == 160
+        assert len(session._silence_frame()) == 320
+
+        frame = struct.pack("<160h", *([0] * 160))
+        session._send_audio_packet(frame)
+        session._send_audio_packet(frame)
+        return session._transport.packets, session._timestamp
+
+    packets, ts = asyncio.run(run())
+    assert len(packets) == 2
+    # 12-byte RTP header + 160-byte G.711 payload
+    assert all(len(p) == 172 for p in packets)
+    assert packets[0][1] & 0x7F == 0  # PCMU
+    ts0 = int.from_bytes(packets[0][4:8], "big")
+    ts1 = int.from_bytes(packets[1][4:8], "big")
+    assert ts1 - ts0 == 160
+    assert ts == 1000 + 320
+
+
+def test_rtp_set_codec_resets_encoder():
+    async def run():
+        session = rtp_session.RtpSession()
+        session.set_codec(codecs.PCMA)
+        assert session.payload_type == 8
+        assert session._pcm_frame_bytes == 320
+        assert session._ts_increment == 160
+        # Encode path uses the session encoder (PCMA).
+        session._transport = _FakeTransport()
+        session.set_remote("127.0.0.1", 4000)
+        session._timestamp = 0
+        session._first_packet = False
+        session._send_audio_packet(b"\x00" * 320)
+        return session._transport.packets[0]
+
+    pkt = asyncio.run(run())
+    assert pkt[1] & 0x7F == 8
+
+
+def test_rtp_decoder_cache_reuses_stateful_decoder():
+    async def run():
+        session = rtp_session.RtpSession()
+        session.set_codec(codecs.G722)
+        # Off-PT G.711 packet still gets a cached decoder (not recreated).
+        d1 = session._decoder_for(0)
+        d2 = session._decoder_for(0)
+        assert d1 is d2
+        assert session._decoder_for(9) is session._decode
+        return True
+
+    assert asyncio.run(run())
+
+
+def test_rtp_g722_frame_size_and_timestamp():
+    async def run():
+        session = rtp_session.RtpSession()
+        session.set_codec(codecs.G722)
+        session._transport = _FakeTransport()
+        session.set_remote("127.0.0.1", 4000)
+        session._timestamp = 5000
+        session._first_packet = False
+        assert session._pcm_frame_bytes == 640
+        assert session._ts_increment == 160
+        assert len(session._silence_frame()) == 640
+
+        frame = b"\x00" * 640
+        session._send_audio_packet(frame)
+        session._send_audio_packet(frame)
+        return session._transport.packets
+
+    packets = asyncio.run(run())
+    assert all(len(p) == 172 for p in packets)  # 12 + 160 payload
+    assert packets[0][1] & 0x7F == 9
+    ts0 = int.from_bytes(packets[0][4:8], "big")
+    ts1 = int.from_bytes(packets[1][4:8], "big")
+    assert ts1 - ts0 == 160  # RFC 3551 clock quirk
+
+
+# --------------------------------------------------------------- g722
+def test_g722_frame_lengths():
+    pcm = struct.pack("<320h", *([1000] * 320))
+    enc = g722.G722Encoder()
+    dec = g722.G722Decoder()
+    payload = enc.encode(pcm)
+    assert len(payload) == 160
+    out = dec.decode(payload)
+    assert len(out) == 640
+
+
+def test_g722_bitexact_reference_vectors():
+    """Pin encode output against sippy/libg722 (ITU-verified) reference frames.
+
+    Fixtures were cross-checked with the PyPI ``G722`` C extension on the same
+    PCM inputs (silence → 440 Hz tone → full-scale square), stateful across
+    frames. A table typo will fail this test even if correlation still looks ok.
+    """
+    import math
+
+    sr = 16000
+    n = 320
+    silence = struct.pack("<320h", *([0] * n))
+    tone = struct.pack(
+        "<320h",
+        *[int(10000 * math.sin(2 * math.pi * 440 * i / sr)) for i in range(n)],
+    )
+    square = struct.pack(
+        "<320h",
+        *[32000 if (i // 40) % 2 == 0 else -32000 for i in range(n)],
+    )
+    # Full 160-byte reference payloads (hex), stateful encode of silence→tone→square.
+    ref = [
+        bytes.fromhex(
+            "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa"
+            "fafafafafafafafafafafafaf7f7f7f7f7f7f7f8f7faf7f8f8fafaf7f7f8f7fa"
+            "f8f7faf8f7faf7f8f8fadbf0f8f8f8f8fadbf1f8f8fafaf8def3faf8f8fafa"
+            "def0fafaf8f8fadbf1fafaf8f8fadcf2faf8f8fafadef0fafaf8f8fad8f3fa"
+            "f8f8fadef3faf8f8fadef3faf8f8fadef2faf8f8fadef2faf8f8fadef2faf8"
+            "f8fade"
+        ),
+        bytes.fromhex(
+            "f2992688228ca0a060a8d8d6d99454dbb17ed59d5effbdecea7af9f9dfdbdeb8"
+            "5bd75a95559bf5f5b6f3f674f5b576fffed7d9d3d9d6d9ddde77bcf0aff9eeb6"
+            "77fedddfd7985298d5d8debb78f3b46ef4f0f2dff7d7fe53d895d49addfdfab6"
+            "73f4edb4f2fbdff9d75bd696d79adc9a75b6f8eef5f0f27bfcbbd7dd5493fed1"
+            "5bbadef6b6f2f46fb9f4f65abdd85496d9d6dbfddff5b7f772b2f4f3dc7fdfdc"
+        ),
+        bytes.fromhex(
+            "923f89248420a0049f2ab7fd76777ef973fff6f73db43094228404a0268bd339"
+            "df5edcdd5dd8da7cdd1b98308520a004caab6d745ef75c5ef2fbfa7b7db83191"
+            "228404e0e5538d5976597dfbd8dbff5c5b3898328520a04449f268ed587dfcfb"
+            "fb7a74f87b9e3094228404e0e6548c567bd87a7adadc577adb3a96308720a0c5"
+            "4ef96c6c78f8fedbf475777d78b83494228404e1a95f50515f5efbdf7cddd77f"
+        ),
+    ]
+    enc = g722.G722Encoder()
+    for pcm, expected in zip((silence, tone, square), ref):
+        assert enc.encode(pcm) == expected
+
+    # Decode path: same payloads through a fresh decoder must match reference PCM
+    # prefixes (first 16 samples of each frame) from the C implementation.
+    dec_ref_prefix = [
+        bytes.fromhex("0000ffffffff00000000ffff00000000ffffffff000001000200020001000100"),
+        bytes.fromhex("0100010001000000ffffffff000002000100fdfffeff0300fdfff2fffbff1600"),
+        bytes.fromhex("dc24932628278926c324eb21101e3d19da130b0e4d07baff05fa42f5d5ecdee3"),
+    ]
+    dec = g722.G722Decoder()
+    for payload, prefix in zip(ref, dec_ref_prefix):
+        out = dec.decode(payload)
+        assert out[:32] == prefix
+
+
+def test_g722_roundtrip_correlates():
+    import math
+
+    sr = 16000
+    n = 320 * 20  # 400 ms
+    samples = [int(8000 * math.sin(2 * math.pi * 440 * i / sr)) for i in range(n)]
+    pcm = struct.pack("<%dh" % n, *samples)
+    enc = g722.G722Encoder()
+    dec = g722.G722Decoder()
+    # Encode/decode in 20 ms frames to exercise state continuity.
+    out = bytearray()
+    for off in range(0, len(pcm), 640):
+        out.extend(dec.decode(enc.encode(pcm[off : off + 640])))
+    out_s = struct.unpack("<%dh" % (len(out) // 2), out)
+    # The transmit+receive QMF pair delays by ~22 samples; align before correlating.
+    qmf_delay = 22
+    a = samples[640 : 640 + 4000]
+    b = out_s[640 + qmf_delay : 640 + qmf_delay + 4000]
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    corr = dot / (na * nb)
+    assert corr > 0.95, corr
+
+
+def test_g722_perf_under_budget():
+    import math
+    import time
+
+    samples = [int(8000 * math.sin(2 * math.pi * 440 * i / 16000)) for i in range(320)]
+    pcm = struct.pack("<320h", *samples)
+    enc = g722.G722Encoder()
+    dec = g722.G722Decoder()
+    for _ in range(5):
+        dec.decode(enc.encode(pcm))
+    t0 = time.perf_counter()
+    n = 50
+    for _ in range(n):
+        dec.decode(enc.encode(pcm))
+    us = (time.perf_counter() - t0) / n * 1e6
+    # Soft budget: must stay well inside the 20 ms frame (headroom for Pi).
+    assert us < 15000, f"encode+decode took {us:.0f} µs/frame"
 
 
 if __name__ == "__main__":

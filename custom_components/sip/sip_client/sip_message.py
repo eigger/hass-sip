@@ -33,7 +33,10 @@ class SdpInfo:
     audio_port: int = 0
     pcmu_pt: int = -1
     pcma_pt: int = -1
+    g722_pt: int = -1
     telephone_event_pt: int = -1
+    # All payload types seen on m=audio or a=rtpmap (audio + telephone-event).
+    offered_pts: set[int] = field(default_factory=set)
 
 
 # Compact header mapping (RFC 3261 Section 7.3.3)
@@ -126,15 +129,23 @@ def parse_sdp(body: str) -> SdpInfo:
                 except ValueError:
                     info.audio_port = 0
             pts = tokens[2:] if len(tokens) > 2 else []
+            for tok in pts:
+                try:
+                    info.offered_pts.add(int(tok))
+                except ValueError:
+                    continue
             if "0" in pts:
                 info.pcmu_pt = 0
             if "8" in pts:
                 info.pcma_pt = 8
+            if "9" in pts:
+                info.g722_pt = 9
         elif line.startswith("a=rtpmap:"):
             m = re.match(r"a=rtpmap:(\d+)", line)
             if not m:
                 continue
             pt = int(m.group(1))
+            info.offered_pts.add(pt)
             lower = line.lower()
             if "telephone-event" in lower:
                 info.telephone_event_pt = pt
@@ -142,6 +153,8 @@ def parse_sdp(body: str) -> SdpInfo:
                 info.pcmu_pt = pt
             elif "pcma" in lower:
                 info.pcma_pt = pt
+            elif "g722" in lower:
+                info.g722_pt = pt
     return info
 
 

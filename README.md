@@ -17,7 +17,7 @@ A native custom integration for Home Assistant to connect directly to a SIP serv
 - **Native Media Player Entity**: Exposes the SIP line as a `media_player` entity. Stream standard TTS messages (e.g. Google Translate, Piper, Nabu Casa) or audio URLs directly into the active SIP call.
 - **Custom Telephony Services**: Complete set of services to control SIP calls (`sip.dial`, `sip.hangup`, `sip.answer`, `sip.send_dtmf`, `sip.start_recording`, `sip.stop_recording`, `sip.start_assist`).
 - **Interactive Voice Response (IVR) Engine**: Construct nested DTMF automated phone trees with TTS prompt templates, custom PIN authentication, and native Home Assistant service triggers.
-- **Voice Assist Integration**: Bidirectional audio streaming between the SIP call and Home Assistant's Voice Assist pipeline, utilizing active 8kHz to 16kHz resampling.
+- **Wideband Audio (G.722)**: Negotiates G.722 (16 kHz) when the remote party supports it, falling back to G.711 µ-law / A-law. Voice Assist receives true 16 kHz PCM on G.722 calls instead of upsampled narrowband.
 - **Sensors**: Exposes real-time registration status, call state (line active), and last caller ID.
 
 ## Installation
