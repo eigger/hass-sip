@@ -28,22 +28,46 @@ from .const import (
     DEFAULT_LOCAL_RTP_PORT,
 )
 
-def _build_schema(rtp_port_default: int) -> vol.Schema:
-    """Build the user form schema with a per-account default RTP port."""
+def _build_schema(
+    rtp_port_default: int, defaults: dict[str, Any] | None = None
+) -> vol.Schema:
+    """Build the account form schema.
+
+    When `defaults` is given (editing an existing entry), every field is
+    pre-filled with its current value instead of the fresh-entry defaults.
+    """
+
+    def _default(key: str, fallback: Any = vol.UNDEFINED) -> Any:
+        return defaults.get(key, fallback) if defaults is not None else fallback
+
     return vol.Schema(
         {
-            vol.Required(CONF_SERVER): cv.string,
-            vol.Optional(CONF_PORT, default=DEFAULT_PORT): cv.port,
-            vol.Required(CONF_USERNAME): cv.string,
-            vol.Required(CONF_PASSWORD): cv.string,
-            vol.Optional(CONF_AUTH_USERNAME): cv.string,
-            vol.Optional(CONF_DOMAIN): cv.string,
-            vol.Optional(CONF_CALLER_ID): cv.string,
-            vol.Optional(CONF_OUTBOUND_PROXY): cv.string,
+            vol.Required(CONF_SERVER, default=_default(CONF_SERVER)): cv.string,
             vol.Optional(
-                CONF_REGISTER_EXPIRATION, default=DEFAULT_REGISTER_EXPIRATION
+                CONF_PORT, default=_default(CONF_PORT, DEFAULT_PORT)
+            ): cv.port,
+            vol.Required(CONF_USERNAME, default=_default(CONF_USERNAME)): cv.string,
+            vol.Required(CONF_PASSWORD, default=_default(CONF_PASSWORD)): cv.string,
+            vol.Optional(
+                CONF_AUTH_USERNAME, default=_default(CONF_AUTH_USERNAME)
+            ): cv.string,
+            vol.Optional(CONF_DOMAIN, default=_default(CONF_DOMAIN)): cv.string,
+            vol.Optional(
+                CONF_CALLER_ID, default=_default(CONF_CALLER_ID)
+            ): cv.string,
+            vol.Optional(
+                CONF_OUTBOUND_PROXY, default=_default(CONF_OUTBOUND_PROXY)
+            ): cv.string,
+            vol.Optional(
+                CONF_REGISTER_EXPIRATION,
+                default=_default(
+                    CONF_REGISTER_EXPIRATION, DEFAULT_REGISTER_EXPIRATION
+                ),
             ): cv.positive_int,
-            vol.Optional(CONF_LOCAL_RTP_PORT, default=rtp_port_default): cv.port,
+            vol.Optional(
+                CONF_LOCAL_RTP_PORT,
+                default=_default(CONF_LOCAL_RTP_PORT, rtp_port_default),
+            ): cv.port,
         }
     )
 
@@ -152,5 +176,44 @@ class SipConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user",
             data_schema=_build_schema(_suggested_rtp_port(self.hass)),
+            errors=errors,
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle editing an already configured SIP account."""
+        errors: dict[str, str] = {}
+        reconfigure_entry = self._get_reconfigure_entry()
+
+        if user_input is not None:
+            # Changing the account identity here would silently repurpose
+            # this entry for a different SIP account; block that instead.
+            await self.async_set_unique_id(
+                f"{user_input[CONF_USERNAME]}@{user_input[CONF_SERVER]}"
+            )
+            self._abort_if_unique_id_mismatch(reason="unique_id_mismatch")
+
+            success, error_msg = await async_validate_sip_registration(
+                self.hass, user_input
+            )
+            if not success:
+                if any(x in error_msg for x in ("401", "403", "407")):
+                    errors["base"] = "invalid_auth"
+                else:
+                    errors["base"] = "cannot_connect"
+            else:
+                return self.async_update_reload_and_abort(
+                    reconfigure_entry, data=user_input
+                )
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=_build_schema(
+                reconfigure_entry.data.get(
+                    CONF_LOCAL_RTP_PORT, DEFAULT_LOCAL_RTP_PORT
+                ),
+                defaults=user_input or reconfigure_entry.data,
+            ),
             errors=errors,
         )

@@ -16,6 +16,22 @@
           "register_expiration": "Register Expiration (seconds)",
           "local_rtp_port": "Local RTP Port (Optional)"
         }
+      },
+      "reconfigure": {
+        "title": "Edit SIP Client",
+        "description": "Update your SIP extension credentials and server details.",
+        "data": {
+          "server": "SIP Server / Host",
+          "port": "Port",
+          "username": "Username / Extension",
+          "password": "Password",
+          "authentication_username": "Authentication Username (Optional)",
+          "domain": "Domain (Optional)",
+          "caller_id": "Caller ID (Optional)",
+          "outbound_proxy": "Outbound Proxy (Optional)",
+          "register_expiration": "Register Expiration (seconds)",
+          "local_rtp_port": "Local RTP Port (Optional)"
+        }
       }
     },
     "error": {
@@ -23,7 +39,9 @@
       "invalid_auth": "Invalid username or password. Please verify your credentials."
     },
     "abort": {
-      "already_configured": "This username and server combination is already configured."
+      "already_configured": "This username and server combination is already configured.",
+      "reconfigure_successful": "The SIP account was updated successfully.",
+      "unique_id_mismatch": "The username and server can't be changed here. Remove this account and add a new one instead."
     }
   },
   "entity": {

@@ -16,6 +16,22 @@
           "register_expiration": "등록 유효 기간 (초 단위)",
           "local_rtp_port": "로컬 RTP 포트 (선택사항)"
         }
+      },
+      "reconfigure": {
+        "title": "SIP 클라이언트 편집",
+        "description": "SIP 내선 정보 및 서버 설정을 수정해 주세요.",
+        "data": {
+          "server": "SIP 서버 주소 / 호스트",
+          "port": "포트",
+          "username": "사용자명 / 내선번호",
+          "password": "비밀번호",
+          "authentication_username": "인증 사용자명 (선택사항)",
+          "domain": "도메인 (선택사항)",
+          "caller_id": "발신자 ID (선택사항)",
+          "outbound_proxy": "아웃바운드 프록시 (선택사항)",
+          "register_expiration": "등록 유효 기간 (초 단위)",
+          "local_rtp_port": "로컬 RTP 포트 (선택사항)"
+        }
       }
     },
     "error": {
@@ -23,7 +39,9 @@
       "invalid_auth": "사용자명 또는 비밀번호가 잘못되었습니다. 인증 정보를 다시 확인해 주세요."
     },
     "abort": {
-      "already_configured": "해당 사용자명과 서버 설정은 이미 등록되어 있습니다."
+      "already_configured": "해당 사용자명과 서버 설정은 이미 등록되어 있습니다.",
+      "reconfigure_successful": "SIP 계정이 성공적으로 업데이트되었습니다.",
+      "unique_id_mismatch": "이곳에서는 사용자명과 서버를 변경할 수 없습니다. 이 계정을 삭제하고 새로 추가해 주세요."
     }
   },
   "entity": {
