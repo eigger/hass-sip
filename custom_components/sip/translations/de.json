@@ -16,6 +16,22 @@
           "register_expiration": "Registrierungs-Ablaufzeit (Sekunden)",
           "local_rtp_port": "Lokaler RTP-Port (Optional)"
         }
+      },
+      "reconfigure": {
+        "title": "SIP-Client bearbeiten",
+        "description": "Aktualisiere deine SIP-Nebenstellendaten und Serverdetails.",
+        "data": {
+          "server": "SIP-Server / Host",
+          "port": "Port",
+          "username": "Benutzername / Nebenstelle",
+          "password": "Passwort",
+          "authentication_username": "Authentifizierungs-Benutzername (Optional)",
+          "domain": "Domain (Optional)",
+          "caller_id": "Anrufer-ID (Optional)",
+          "outbound_proxy": "Outbound-Proxy (Optional)",
+          "register_expiration": "Registrierungs-Ablaufzeit (Sekunden)",
+          "local_rtp_port": "Lokaler RTP-Port (Optional)"
+        }
       }
     },
     "error": {
@@ -23,7 +39,9 @@
       "invalid_auth": "Ungültiger Benutzername oder Passwort. Bitte überprüfe deine Zugangsdaten."
     },
     "abort": {
-      "already_configured": "Diese Kombination aus Benutzername und Server ist bereits konfiguriert."
+      "already_configured": "Diese Kombination aus Benutzername und Server ist bereits konfiguriert.",
+      "reconfigure_successful": "Das SIP-Konto wurde erfolgreich aktualisiert.",
+      "unique_id_mismatch": "Benutzername und Server können hier nicht geändert werden. Bitte entferne dieses Konto und füge stattdessen ein neues hinzu."
     }
   },
   "entity": {

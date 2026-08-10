@@ -48,6 +48,46 @@ try:
 except AttributeError:  # enum.StrEnum needs Python 3.11+ (CI runs 3.12+)
     sip_client = None
 
+# config_flow.py only needs voluptuous plus a couple of HA symbols it never
+# calls (FlowResult, cv.*). Stub those directly with setdefault so this works
+# standalone too — not just under pytest, where conftest.py already mocks
+# `homeassistant`/`homeassistant.core`/`homeassistant.config_entries`.
+from unittest.mock import MagicMock  # noqa: E402
+import voluptuous as vol  # noqa: E402
+
+for _mod_name in (
+    "homeassistant",
+    "homeassistant.core",
+    "homeassistant.config_entries",
+    "homeassistant.helpers",
+):
+    sys.modules.setdefault(_mod_name, MagicMock())
+sys.modules.setdefault("homeassistant.data_entry_flow", MagicMock(FlowResult=dict))
+sys.modules.setdefault("homeassistant.helpers.config_validation", MagicMock())
+
+_COMPONENT = os.path.join(os.path.dirname(__file__), "..", "custom_components", "sip")
+_CC_PKG = "custom_components.sip"
+sys.modules.setdefault(
+    "custom_components", types.ModuleType("custom_components")
+)
+_cc_sip_pkg = types.ModuleType(_CC_PKG)
+_cc_sip_pkg.__path__ = [os.path.abspath(_COMPONENT)]
+sys.modules[_CC_PKG] = _cc_sip_pkg
+
+
+def _load_component_module(name):
+    spec = importlib.util.spec_from_file_location(
+        f"{_CC_PKG}.{name}", os.path.join(os.path.abspath(_COMPONENT), f"{name}.py")
+    )
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[f"{_CC_PKG}.{name}"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_load_component_module("const")
+config_flow = _load_component_module("config_flow")
+
 
 # ---------------------------------------------------------------- g711
 def test_g711_silence_constants():
@@ -551,6 +591,49 @@ def test_g722_perf_under_budget():
     us = (time.perf_counter() - t0) / n * 1e6
     # Soft budget: must stay well inside the 20 ms frame (headroom for Pi).
     assert us < 15000, f"encode+decode took {us:.0f} µs/frame"
+
+
+# ------------------------------------------------------- config_flow schema
+def test_build_schema_new_entry_has_no_prefilled_values():
+    # Matches the original (pre-reconfigure) schema exactly: required fields
+    # start blank, only the fields that always had defaults keep them.
+    schema = config_flow._build_schema(7078)
+    markers = {str(k): k for k in schema.schema}
+    assert markers["server"].default is vol.UNDEFINED
+    assert markers["username"].default is vol.UNDEFINED
+    assert markers["password"].default is vol.UNDEFINED
+    assert markers["authentication_username"].default is vol.UNDEFINED
+    assert markers["port"].default() == config_flow.DEFAULT_PORT
+    assert markers["local_rtp_port"].default() == 7078
+    assert (
+        markers["register_expiration"].default()
+        == config_flow.DEFAULT_REGISTER_EXPIRATION
+    )
+
+
+def test_build_schema_reconfigure_prefills_current_entry_values():
+    current = {
+        "server": "pbx.example.com",
+        "port": 5061,
+        "username": "1001",
+        "password": "s3cret",
+        "caller_id": "Front Desk",
+        "register_expiration": 600,
+        "local_rtp_port": 7080,
+    }
+    schema = config_flow._build_schema(7078, defaults=current)
+    markers = {str(k): k for k in schema.schema}
+    assert markers["server"].default() == "pbx.example.com"
+    assert markers["username"].default() == "1001"
+    assert markers["password"].default() == "s3cret"
+    assert markers["port"].default() == 5061
+    assert markers["caller_id"].default() == "Front Desk"
+    assert markers["register_expiration"].default() == 600
+    assert markers["local_rtp_port"].default() == 7080
+    # Fields never set on the original entry stay untouched (no forced "").
+    assert markers["domain"].default is vol.UNDEFINED
+    assert markers["authentication_username"].default is vol.UNDEFINED
+    assert markers["outbound_proxy"].default is vol.UNDEFINED
 
 
 if __name__ == "__main__":
