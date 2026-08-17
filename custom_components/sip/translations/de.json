@@ -217,10 +217,6 @@
           "name": "Max. stille Runden",
           "description": "Sitzung beenden nach so vielen aufeinanderfolgenden Runden ohne erkannte Sprache."
         },
-        "barge_in": {
-          "name": "Unterbrechen",
-          "description": "TTS-Antworten unterbrechen erlauben (experimentell; kann bei Freisprecheinrichtungen ohne Echokompensation selbst auslösen)."
-        },
         "hangup_on_end": {
           "name": "Bei Ende auflegen",
           "description": "Anruf beenden, wenn die Assist-Sitzung endet."

@@ -135,7 +135,6 @@ SERVICE_ASSIST_SCHEMA = cv.make_entity_service_schema(
         vol.Optional("pipeline_id"): cv.string,
         vol.Optional("max_turns"): vol.All(vol.Coerce(int), vol.Range(min=0)),
         vol.Optional("max_silent_turns"): vol.All(vol.Coerce(int), vol.Range(min=1)),
-        vol.Optional("barge_in"): cv.boolean,
         vol.Optional("hangup_on_end"): cv.boolean,
     }
 )
@@ -395,32 +394,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         pipeline_id: str | None = None,
         max_turns: int = 0,
         max_silent_turns: int = 2,
-        barge_in: bool = False,
         hangup_on_end: bool = False,
     ) -> None:
         nonlocal assist_bridge
         if assist_bridge is not None:
             assist_bridge.close()
 
+        bridge = AssistBridge(
+            hass,
+            play_source_fn=client.play_source,
+            on_done_fn=lambda: None,  # set below once bridge exists
+            pipeline_id=pipeline_id,
+            sample_rate=client.codec.sample_rate,
+            max_turns=max_turns,
+            max_silent_turns=max_silent_turns,
+            stop_audio_fn=client.stop_audio,
+        )
+
         def on_assist_done() -> None:
             nonlocal assist_bridge
+            if assist_bridge is not bridge:
+                return
             LOGGER.info("Assist pipeline bridge finished")
             client.set_sink(NullSink())
             assist_bridge = None
             if hangup_on_end:
                 client.hangup()
 
-        assist_bridge = AssistBridge(
-            hass,
-            play_source_fn=client.play_source,
-            on_done_fn=on_assist_done,
-            pipeline_id=pipeline_id,
-            sample_rate=client.codec.sample_rate,
-            max_turns=max_turns,
-            max_silent_turns=max_silent_turns,
-            barge_in=barge_in,
-            stop_audio_fn=client.stop_audio,
-        )
+        bridge.on_done = on_assist_done
+        assist_bridge = bridge
         client.set_sink(assist_bridge)
         assist_bridge.start()
 
@@ -746,7 +748,6 @@ async def async_register_services(hass: HomeAssistant) -> None:
                 "pipeline_id",
                 "max_turns",
                 "max_silent_turns",
-                "barge_in",
                 "hangup_on_end",
             )
             if k in call.data

@@ -863,6 +863,89 @@ def test_assist_close_during_session():
     assert len(done_calls) == 1
 
 
+def test_assist_consecutive_errors_end_session():
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    turn_count = 0
+
+    async def mock_pipeline(hass, **kwargs):
+        nonlocal turn_count
+        turn_count += 1
+        kwargs["event_callback"](PE(PET.ERROR, {"code": "cloud-auth-failed"}))
+
+    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
+
+    original_backoff = assist_mod._ERROR_TURN_BACKOFF_SECONDS
+    assist_mod._ERROR_TURN_BACKOFF_SECONDS = 0
+    try:
+        bridge = assist_mod.AssistBridge(
+            MagicMock(),
+            play_source_fn=MagicMock(),
+            on_done_fn=MagicMock(),
+        )
+        _run_bridge_session(bridge)
+        assert turn_count == assist_mod._MAX_CONSECUTIVE_ERRORS
+    finally:
+        assist_mod._ERROR_TURN_BACKOFF_SECONDS = original_backoff
+
+
+def test_assist_continue_conversation_resets_silent_streak():
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    turn_count = 0
+
+    async def mock_pipeline(hass, **kwargs):
+        nonlocal turn_count
+        turn_count += 1
+        cb = kwargs["event_callback"]
+        if turn_count == 1:
+            cb(PE(PET.INTENT_END, {"intent_output": {"continue_conversation": True}}))
+        cb(PE(PET.ERROR, {"code": "stt-no-text-recognized"}))
+
+    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
+
+    bridge = assist_mod.AssistBridge(
+        MagicMock(),
+        play_source_fn=MagicMock(),
+        on_done_fn=MagicMock(),
+        max_silent_turns=2,
+    )
+    _run_bridge_session(bridge)
+    assert turn_count == 3
+
+
+def test_assist_max_turns_waits_for_final_playback():
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    mock_tts = sys.modules["homeassistant.components.tts"]
+    mock_tts.async_get_stream.return_value = MagicMock()
+
+    async def mock_pipeline(hass, **kwargs):
+        cb = kwargs["event_callback"]
+        cb(PE(PET.RUN_START, {"conversation_id": "c1"}))
+        cb(PE(PET.TTS_END, {"tts_output": {"token": "tok"}}))
+
+    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
+
+    bridge = assist_mod.AssistBridge(
+        MagicMock(),
+        play_source_fn=MagicMock(),
+        on_done_fn=MagicMock(),
+        max_turns=1,
+    )
+
+    async def run():
+        bridge.start()
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            if bridge._speaking and bridge.session_task and not bridge.session_task.done():
+                break
+        assert bridge._speaking
+        assert bridge.session_task is not None
+        assert not bridge.session_task.done()
+        bridge.on_playback_done()
+        await bridge.session_task
+
+    asyncio.run(run())
+
+
 # ------------------------------------------------------- config_flow schema
 def test_build_schema_new_entry_has_no_prefilled_values():
     # Matches the original (pre-reconfigure) schema exactly: required fields

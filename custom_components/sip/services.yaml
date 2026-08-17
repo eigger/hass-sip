@@ -221,13 +221,6 @@ start_assist:
           min: 1
           max: 10
           mode: box
-    barge_in:
-      name: Barge-in
-      description: Allow interrupting TTS responses (experimental; may self-trigger on speakerphones without echo cancellation).
-      required: false
-      default: false
-      selector:
-        boolean:
     hangup_on_end:
       name: Hang up on end
       description: Hang up the call when the Assist session ends.

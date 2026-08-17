@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterable, Callable
-from typing import Any
 
 from homeassistant.components import tts
 from homeassistant.components.assist_pipeline import (
@@ -26,6 +25,10 @@ from homeassistant.core import Context, HomeAssistant
 from .const import LOGGER
 from .helpers import get_ffmpeg_bin
 from .sip_client.audio import AudioSink, AudioSource, FfmpegAudioSource
+
+_SILENT_TURN_ERRORS = frozenset({"stt-no-text-recognized", "wake-word-timeout"})
+_MAX_CONSECUTIVE_ERRORS = 3
+_ERROR_TURN_BACKOFF_SECONDS = 1.0
 
 
 class AssistAudioStream(AsyncIterable[bytes]):
@@ -77,7 +80,6 @@ class AssistBridge(AudioSink):
         sample_rate: int = 8000,
         max_turns: int = 0,
         max_silent_turns: int = 2,
-        barge_in: bool = False,
         stop_audio_fn: Callable[[], None] | None = None,
     ) -> None:
         """Initialize the Assist bridge."""
@@ -88,7 +90,6 @@ class AssistBridge(AudioSink):
         self.sample_rate = sample_rate
         self.max_turns = max_turns
         self.max_silent_turns = max_silent_turns
-        self.barge_in = barge_in
         self.stop_audio_fn = stop_audio_fn
 
         self.audio_stream = AssistAudioStream()
@@ -130,6 +131,7 @@ class AssistBridge(AudioSink):
     async def _run_session(self) -> None:
         """Run consecutive Assist pipeline turns until a stop condition."""
         silent_streak = 0
+        error_streak = 0
         turns = 0
         try:
             pipeline = async_get_pipeline(self.hass, self.pipeline_id)
@@ -167,13 +169,18 @@ class AssistBridge(AudioSink):
                 turns += 1
                 if self._continue_conversation:
                     silent_streak = 0
-                elif self._turn_error in (
-                    "stt-no-text-recognized",
-                    "wake-word-timeout",
-                ):
+                    error_streak = 0
+                elif self._turn_error in _SILENT_TURN_ERRORS:
                     silent_streak += 1
+                    error_streak = 0
+                elif self._turn_error:
+                    silent_streak = 0
+                    error_streak += 1
                 else:
                     silent_streak = 0
+                    error_streak = 0
+
+                await self._wait_playback_done()
 
                 if not self._running:
                     break
@@ -185,8 +192,15 @@ class AssistBridge(AudioSink):
                 if self.max_turns and turns >= self.max_turns:
                     LOGGER.info("Assist session ending after %d turns", turns)
                     break
+                if error_streak >= _MAX_CONSECUTIVE_ERRORS:
+                    LOGGER.info(
+                        "Assist session ending after %d consecutive pipeline errors",
+                        error_streak,
+                    )
+                    break
 
-                await self._wait_playback_done()
+                if self._turn_error and self._turn_error not in _SILENT_TURN_ERRORS:
+                    await asyncio.sleep(_ERROR_TURN_BACKOFF_SECONDS)
         except asyncio.CancelledError:
             pass
         except Exception as err:
@@ -222,8 +236,9 @@ class AssistBridge(AudioSink):
                 self._conversation_id = event.data.get("conversation_id")
         elif event.type == PipelineEventType.INTENT_END:
             if event.data:
+                intent_output = event.data.get("intent_output") or {}
                 self._continue_conversation = bool(
-                    event.data.get("continue_conversation")
+                    intent_output.get("continue_conversation")
                 )
         elif event.type == PipelineEventType.TTS_END:
             if (

@@ -217,10 +217,6 @@
           "name": "최대 무음 턴 수",
           "description": "연속으로 음성이 인식되지 않은 턴이 이 수에 도달하면 세션을 종료합니다."
         },
-        "barge_in": {
-          "name": "끼어들기",
-          "description": "TTS 응답 중 끼어들기 허용 (실험적; 에코 제거 없는 스피커폰에서 자기 트리거 위험)."
-        },
         "hangup_on_end": {
           "name": "종료 시 끊기",
           "description": "Assist 세션 종료 시 통화를 끊습니다."

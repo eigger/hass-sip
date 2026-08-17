@@ -217,10 +217,6 @@
           "name": "Max silent turns",
           "description": "End the session after this many consecutive turns with no speech recognized."
         },
-        "barge_in": {
-          "name": "Barge-in",
-          "description": "Allow interrupting TTS responses (experimental; may self-trigger on speakerphones without echo cancellation)."
-        },
         "hangup_on_end": {
           "name": "Hang up on end",
           "description": "Hang up the call when the Assist session ends."
