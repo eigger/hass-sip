@@ -189,8 +189,49 @@ stop_recording:
 
 start_assist:
   name: Start Assist
-  description: Connect the active call directly to Home Assistant's Voice Assist pipeline.
+  description: Connect the active call to Home Assistant's Voice Assist pipeline for multi-turn conversation.
   target:
     entity:
       integration: sip
       domain: media_player
+  fields:
+    pipeline_id:
+      name: Assist pipeline
+      description: Optional Assist pipeline ID. Uses the default pipeline when omitted.
+      required: false
+      selector:
+        assist_pipeline:
+    max_turns:
+      name: Max turns
+      description: Maximum conversation turns before the session ends. 0 means unlimited.
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 100
+          mode: box
+    max_silent_turns:
+      name: Max silent turns
+      description: End the session after this many consecutive turns with no speech recognized.
+      required: false
+      default: 2
+      selector:
+        number:
+          min: 1
+          max: 10
+          mode: box
+    barge_in:
+      name: Barge-in
+      description: Allow interrupting TTS responses (experimental; may self-trigger on speakerphones without echo cancellation).
+      required: false
+      default: false
+      selector:
+        boolean:
+    hangup_on_end:
+      name: Hang up on end
+      description: Hang up the call when the Assist session ends.
+      required: false
+      default: false
+      selector:
+        boolean:

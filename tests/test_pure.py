@@ -593,6 +593,276 @@ def test_g722_perf_under_budget():
     assert us < 15000, f"encode+decode took {us:.0f} µs/frame"
 
 
+# ------------------------------------------------------- assist bridge
+def _setup_assist_deps():
+    """Install minimal HA mocks so assist.py can be loaded."""
+    from unittest.mock import AsyncMock
+
+    class _PipelineEventType:
+        RUN_START = "run-start"
+        INTENT_END = "intent-end"
+        TTS_END = "tts-end"
+        ERROR = "error"
+
+    class _PipelineStage:
+        STT = "stt"
+        TTS = "tts"
+
+    class _PipelineEvent:
+        def __init__(self, event_type, data=None):
+            self.type = event_type
+            self.data = data if data is not None else {}
+
+    mock_ap = MagicMock()
+    mock_ap.PipelineEventType = _PipelineEventType
+    mock_ap.PipelineStage = _PipelineStage
+    mock_ap.PipelineEvent = _PipelineEvent
+
+    pipeline_obj = MagicMock()
+    pipeline_obj.id = "default"
+
+    def _get_pipeline(hass, pipeline_id):
+        return pipeline_obj
+
+    mock_ap.async_get_pipeline = _get_pipeline
+    mock_ap.async_pipeline_from_audio_stream = AsyncMock()
+
+    mock_components = sys.modules.get("homeassistant.components")
+    if not isinstance(mock_components, MagicMock):
+        mock_components = MagicMock()
+        sys.modules["homeassistant.components"] = mock_components
+    mock_components.assist_pipeline = mock_ap
+    sys.modules["homeassistant.components.assist_pipeline"] = mock_ap
+
+    mock_stt = MagicMock()
+
+    class _SpeechMetadata:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    mock_stt.SpeechMetadata = _SpeechMetadata
+    mock_stt.AudioFormats = MagicMock(WAV="wav")
+    mock_stt.AudioCodecs = MagicMock(PCM="pcm")
+    mock_stt.AudioBitRates = MagicMock(BITRATE_16=16)
+    mock_stt.AudioSampleRates = MagicMock(SAMPLERATE_16000=16000)
+    mock_stt.AudioChannels = MagicMock(CHANNEL_MONO=1)
+    mock_components.stt = mock_stt
+    sys.modules["homeassistant.components.stt"] = mock_stt
+
+    mock_tts = MagicMock()
+    mock_tts.async_get_stream = MagicMock(return_value=None)
+    mock_components.tts = mock_tts
+    sys.modules["homeassistant.components.tts"] = mock_tts
+
+    mock_ffmpeg = MagicMock()
+    mock_ffmpeg.get_ffmpeg_manager = MagicMock(
+        return_value=MagicMock(binary="/usr/bin/ffmpeg")
+    )
+    mock_components.ffmpeg = mock_ffmpeg
+    sys.modules["homeassistant.components.ffmpeg"] = mock_ffmpeg
+
+    _sip_client_pkg = f"{_CC_PKG}.sip_client"
+    if _sip_client_pkg not in sys.modules:
+        sc_pkg = types.ModuleType(_sip_client_pkg)
+        sc_pkg.__path__ = [os.path.join(os.path.abspath(_COMPONENT), "sip_client")]
+        sys.modules[_sip_client_pkg] = sc_pkg
+
+    _load_component_module("helpers")
+    assist = _load_component_module("assist")
+    return assist, mock_ap, _PipelineEventType, _PipelineEvent
+
+
+_ASSIST_CTX = None
+
+
+def _assist_ctx():
+    global _ASSIST_CTX
+    if _ASSIST_CTX is None:
+        _ASSIST_CTX = _setup_assist_deps()
+    return _ASSIST_CTX
+
+
+def _run_bridge_session(bridge):
+    async def _wait():
+        bridge.start()
+        if bridge.session_task:
+            await bridge.session_task
+
+    asyncio.run(_wait())
+
+
+def test_assist_listening_gate():
+    assist_mod, _, _, _ = _assist_ctx()
+    bridge = assist_mod.AssistBridge(
+        MagicMock(),
+        play_source_fn=MagicMock(),
+        on_done_fn=MagicMock(),
+    )
+    bridge._listening = False
+    bridge.audio_stream = assist_mod.AssistAudioStream()
+    bridge.write(b"\x00\x00")
+    assert bridge.audio_stream.queue.empty()
+
+    bridge._listening = True
+    bridge.write(b"\x00\x00")
+    assert not bridge.audio_stream.queue.empty()
+
+
+def test_assist_queue_isolation_per_turn():
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    streams = []
+
+    async def mock_pipeline(hass, **kwargs):
+        streams.append(kwargs["stt_stream"])
+        kwargs["event_callback"](PE(PET.ERROR, {"code": "stt-no-text-recognized"}))
+
+    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
+
+    bridge = assist_mod.AssistBridge(
+        MagicMock(),
+        play_source_fn=MagicMock(),
+        on_done_fn=MagicMock(),
+        max_silent_turns=2,
+    )
+    _run_bridge_session(bridge)
+    assert len(streams) == 2
+    assert streams[0] is not streams[1]
+
+
+def test_assist_silent_turns_end_session():
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    turn_count = 0
+    done_calls = []
+
+    async def mock_pipeline(hass, **kwargs):
+        nonlocal turn_count
+        turn_count += 1
+        kwargs["event_callback"](PE(PET.ERROR, {"code": "stt-no-text-recognized"}))
+
+    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
+
+    bridge = assist_mod.AssistBridge(
+        MagicMock(),
+        play_source_fn=MagicMock(),
+        on_done_fn=lambda: done_calls.append(1),
+        max_silent_turns=2,
+    )
+    _run_bridge_session(bridge)
+    assert turn_count == 2
+    assert len(done_calls) == 1
+
+
+def test_assist_conversation_id_carried_across_turns():
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    conv_ids = []
+
+    async def mock_pipeline(hass, **kwargs):
+        conv_ids.append(kwargs.get("conversation_id"))
+        cb = kwargs["event_callback"]
+        if len(conv_ids) == 1:
+            cb(PE(PET.RUN_START, {"conversation_id": "conv-abc"}))
+        cb(PE(PET.ERROR, {"code": "stt-no-text-recognized"}))
+
+    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
+
+    bridge = assist_mod.AssistBridge(
+        MagicMock(),
+        play_source_fn=MagicMock(),
+        on_done_fn=MagicMock(),
+        max_silent_turns=2,
+    )
+    _run_bridge_session(bridge)
+    assert conv_ids[1] == "conv-abc"
+
+
+def test_assist_playback_done_unblocks_next_turn():
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    turn_count = 0
+
+    async def mock_pipeline(hass, **kwargs):
+        nonlocal turn_count
+        turn_count += 1
+        cb = kwargs["event_callback"]
+        if turn_count == 1:
+            cb(PE(PET.RUN_START, {"conversation_id": "c1"}))
+        else:
+            cb(PE(PET.ERROR, {"code": "stt-no-text-recognized"}))
+
+    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
+
+    bridge = assist_mod.AssistBridge(
+        MagicMock(),
+        play_source_fn=MagicMock(),
+        on_done_fn=MagicMock(),
+        max_silent_turns=2,
+    )
+
+    async def run():
+        bridge.start()
+        await asyncio.sleep(0.05)
+        bridge._speaking = True
+        bridge._playback_done.clear()
+        bridge.on_playback_done()
+        if bridge.session_task:
+            await bridge.session_task
+
+    asyncio.run(run())
+    assert turn_count >= 2
+
+
+def test_assist_playback_timeout_continues():
+    assist_mod, _, _, _ = _assist_ctx()
+
+    async def run():
+        bridge = assist_mod.AssistBridge(
+            MagicMock(),
+            play_source_fn=MagicMock(),
+            on_done_fn=MagicMock(),
+        )
+        bridge._speaking = True
+        real_timeout = asyncio.timeout
+
+        def short_timeout(delay):
+            return real_timeout(0.05)
+
+        import unittest.mock as um
+
+        with um.patch("asyncio.timeout", short_timeout):
+            await bridge._wait_playback_done()
+        assert bridge._speaking is False
+
+    asyncio.run(run())
+
+
+def test_assist_close_during_session():
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    done_calls = []
+
+    async def mock_pipeline(hass, **kwargs):
+        await asyncio.sleep(1)
+        kwargs["event_callback"](PE(PET.ERROR, {"code": "stt-no-text-recognized"}))
+
+    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
+
+    bridge = assist_mod.AssistBridge(
+        MagicMock(),
+        play_source_fn=MagicMock(),
+        on_done_fn=lambda: done_calls.append(1),
+        max_silent_turns=99,
+    )
+
+    async def run():
+        bridge.start()
+        await asyncio.sleep(0.02)
+        bridge.close()
+        if bridge.session_task:
+            with __import__("contextlib").suppress(asyncio.CancelledError):
+                await bridge.session_task
+
+    asyncio.run(run())
+    assert len(done_calls) == 1
+
+
 # ------------------------------------------------------- config_flow schema
 def test_build_schema_new_entry_has_no_prefilled_values():
     # Matches the original (pre-reconfigure) schema exactly: required fields

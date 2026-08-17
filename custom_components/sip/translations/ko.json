@@ -203,7 +203,29 @@
     },
     "start_assist": {
       "name": "Assist 시작",
-      "description": "활성 통화를 Home Assistant 음성 어시스트 파이프라인에 연결합니다."
+      "description": "활성 통화를 Home Assistant 음성 어시스트 파이프라인에 연결하여 연속 대화를 지원합니다.",
+      "fields": {
+        "pipeline_id": {
+          "name": "Assist 파이프라인",
+          "description": "선택적 Assist 파이프라인 ID. 생략 시 기본 파이프라인을 사용합니다."
+        },
+        "max_turns": {
+          "name": "최대 턴 수",
+          "description": "세션 종료 전 최대 대화 턴 수. 0은 무제한입니다."
+        },
+        "max_silent_turns": {
+          "name": "최대 무음 턴 수",
+          "description": "연속으로 음성이 인식되지 않은 턴이 이 수에 도달하면 세션을 종료합니다."
+        },
+        "barge_in": {
+          "name": "끼어들기",
+          "description": "TTS 응답 중 끼어들기 허용 (실험적; 에코 제거 없는 스피커폰에서 자기 트리거 위험)."
+        },
+        "hangup_on_end": {
+          "name": "종료 시 끊기",
+          "description": "Assist 세션 종료 시 통화를 끊습니다."
+        }
+      }
     }
   }
 }

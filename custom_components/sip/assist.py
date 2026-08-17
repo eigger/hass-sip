@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterable, Callable, Coroutine
+from collections.abc import AsyncIterable, Callable
 from typing import Any
 
-from homeassistant.components import assist_pipeline, tts
+from homeassistant.components import tts
 from homeassistant.components.assist_pipeline import (
     PipelineEvent,
     PipelineEventType,
@@ -72,8 +72,13 @@ class AssistBridge(AudioSink):
         hass: HomeAssistant,
         play_source_fn: Callable[[AudioSource], None],
         on_done_fn: Callable[[], None],
+        *,
         pipeline_id: str | None = None,
         sample_rate: int = 8000,
+        max_turns: int = 0,
+        max_silent_turns: int = 2,
+        barge_in: bool = False,
+        stop_audio_fn: Callable[[], None] | None = None,
     ) -> None:
         """Initialize the Assist bridge."""
         self.hass = hass
@@ -81,83 +86,159 @@ class AssistBridge(AudioSink):
         self.on_done = on_done_fn
         self.pipeline_id = pipeline_id
         self.sample_rate = sample_rate
+        self.max_turns = max_turns
+        self.max_silent_turns = max_silent_turns
+        self.barge_in = barge_in
+        self.stop_audio_fn = stop_audio_fn
 
         self.audio_stream = AssistAudioStream()
-        self.pipeline_task: asyncio.Task | None = None
-        self.is_active = True
+        self.session_task: asyncio.Task | None = None
+        self._running = True
+        self._listening = False
+        self._speaking = False
+        self._playback_done = asyncio.Event()
+        self._conversation_id: str | None = None
+        self._turn_error: str | None = None
+        self._continue_conversation = False
         self._background_tasks: set[asyncio.Task] = set()
 
     def start(self) -> None:
-        """Start the Assist pipeline execution in the background."""
-        self.pipeline_task = asyncio.create_task(self._run_pipeline())
+        """Start the Assist session loop in the background."""
+        self.session_task = asyncio.create_task(self._run_session())
 
     def write(self, pcm_le: bytes) -> None:
         """Receive incoming PCM from SIP client and feed it to Assist."""
-        if self.is_active:
+        if self._listening:
             self.audio_stream.feed_audio(pcm_le, self.sample_rate)
+
+    def on_playback_done(self) -> None:
+        """Signal that TX playback has finished (see IvrSession for the same pattern)."""
+        self._playback_done.set()
 
     def close(self) -> None:
         """Stop the bridge and cancel running tasks."""
-        self.is_active = False
-        if self.pipeline_task:
-            self.pipeline_task.cancel()
-            self.pipeline_task = None
+        self._running = False
+        self._listening = False
+        self._playback_done.set()
+        if self.session_task:
+            self.session_task.cancel()
+            self.session_task = None
         for task in list(self._background_tasks):
             task.cancel()
         self._background_tasks.clear()
 
-    async def _run_pipeline(self) -> None:
-        """Execute the pipeline stream in Home Assistant."""
+    async def _run_session(self) -> None:
+        """Run consecutive Assist pipeline turns until a stop condition."""
+        silent_streak = 0
+        turns = 0
         try:
-            pref_pipeline = async_get_pipeline(self.hass, self.pipeline_id)
+            pipeline = async_get_pipeline(self.hass, self.pipeline_id)
+            stt_metadata = SpeechMetadata(
+                language="",  # set by pipeline
+                format=AudioFormats.WAV,
+                codec=AudioCodecs.PCM,
+                bit_rate=AudioBitRates.BITRATE_16,
+                sample_rate=AudioSampleRates.SAMPLERATE_16000,
+                channel=AudioChannels.CHANNEL_MONO,
+            )
             LOGGER.info(
-                "Starting Voice Assist pipeline session (pipeline_id=%s)",
-                pref_pipeline.id,
+                "Starting Voice Assist session (pipeline_id=%s)", pipeline.id
             )
+            while self._running:
+                self.audio_stream = AssistAudioStream()
+                self._turn_error = None
+                self._continue_conversation = False
+                self._listening = True
+                try:
+                    await async_pipeline_from_audio_stream(
+                        self.hass,
+                        context=Context(),
+                        event_callback=self._on_pipeline_event,
+                        stt_metadata=stt_metadata,
+                        stt_stream=self.audio_stream,
+                        pipeline_id=pipeline.id,
+                        conversation_id=self._conversation_id,
+                        start_stage=PipelineStage.STT,
+                        end_stage=PipelineStage.TTS,
+                    )
+                finally:
+                    self._listening = False
 
-            await async_pipeline_from_audio_stream(
-                self.hass,
-                context=Context(),
-                event_callback=self._on_pipeline_event,
-                stt_metadata=SpeechMetadata(
-                    language="",  # set by pipeline
-                    format=AudioFormats.WAV,
-                    codec=AudioCodecs.PCM,
-                    bit_rate=AudioBitRates.BITRATE_16,
-                    sample_rate=AudioSampleRates.SAMPLERATE_16000,
-                    channel=AudioChannels.CHANNEL_MONO,
-                ),
-                stt_stream=self.audio_stream,
-                pipeline_id=pref_pipeline.id,
-                start_stage=PipelineStage.STT,
-                end_stage=PipelineStage.TTS,
-            )
+                turns += 1
+                if self._continue_conversation:
+                    silent_streak = 0
+                elif self._turn_error in (
+                    "stt-no-text-recognized",
+                    "wake-word-timeout",
+                ):
+                    silent_streak += 1
+                else:
+                    silent_streak = 0
+
+                if not self._running:
+                    break
+                if silent_streak >= self.max_silent_turns:
+                    LOGGER.info(
+                        "Assist session ending after %d silent turns", silent_streak
+                    )
+                    break
+                if self.max_turns and turns >= self.max_turns:
+                    LOGGER.info("Assist session ending after %d turns", turns)
+                    break
+
+                await self._wait_playback_done()
         except asyncio.CancelledError:
             pass
         except Exception as err:
-            LOGGER.exception("Error running Assist pipeline bridge: %s", err)
+            LOGGER.exception("Assist session error: %s", err)
         finally:
-            self.is_active = False
+            self._running = False
+            self._listening = False
             LOGGER.info("Voice Assist pipeline session ended")
             self.on_done()
 
+    async def _wait_playback_done(self) -> None:
+        """Wait for TTS playback to finish before starting the next turn."""
+        if not self._speaking:
+            return
+        try:
+            async with asyncio.timeout(30):
+                await self._playback_done.wait()
+        except TimeoutError:
+            LOGGER.warning("Assist: playback-done timeout; continuing")
+        self._playback_done.clear()
+        self._speaking = False
+        await asyncio.sleep(0.2)
+
     def _on_pipeline_event(self, event: PipelineEvent) -> None:
         """Handle events emitted by the Assist pipeline."""
-        if not self.is_active:
+        if not self._running:
             return
 
         LOGGER.debug("Assist pipeline event: %s", event.type)
 
-        if event.type == PipelineEventType.TTS_END:
+        if event.type == PipelineEventType.RUN_START:
+            if event.data:
+                self._conversation_id = event.data.get("conversation_id")
+        elif event.type == PipelineEventType.INTENT_END:
+            if event.data:
+                self._continue_conversation = bool(
+                    event.data.get("continue_conversation")
+                )
+        elif event.type == PipelineEventType.TTS_END:
             if (
                 event.data
                 and (tts_output := event.data.get("tts_output"))
                 and (stream := tts.async_get_stream(self.hass, tts_output["token"]))
             ):
+                self._speaking = True
+                self._playback_done.clear()
                 task = asyncio.create_task(self._play_tts_stream(stream))
                 self._background_tasks.add(task)
                 task.add_done_callback(self._background_tasks.discard)
         elif event.type == PipelineEventType.ERROR:
+            if event.data:
+                self._turn_error = event.data.get("code")
             LOGGER.error("Assist pipeline error: %s", event.data)
 
     async def _play_tts_stream(self, stream: tts.ResultStream) -> None:
@@ -168,7 +249,6 @@ class AssistBridge(AudioSink):
                 chunks.append(chunk)
             wav_data = b"".join(chunks)
 
-            # Play the TTS bytes over the SIP RTP stream using FfmpegAudioSource
             source = FfmpegAudioSource(data=wav_data, ffmpeg_bin=get_ffmpeg_bin(self.hass))
             self.play_source(source)
         except Exception as err:

@@ -49,7 +49,7 @@ def _sip_device_id(hass: HomeAssistant, entry_id: str) -> str | None:
     device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, entry_id)})
     return device.id if device else None
 
-from .sip_client.audio import FfmpegAudioSource
+from .sip_client.audio import FfmpegAudioSource, NullSink
 from .sip_client.sip_client import SipCallbacks, SipClient, SipConfig, SipState
 
 PLATFORMS = [
@@ -129,6 +129,16 @@ SERVICE_RECORDING_SCHEMA = cv.make_entity_service_schema(
 )
 
 SERVICE_GENERIC_SCHEMA = cv.make_entity_service_schema({})
+
+SERVICE_ASSIST_SCHEMA = cv.make_entity_service_schema(
+    {
+        vol.Optional("pipeline_id"): cv.string,
+        vol.Optional("max_turns"): vol.All(vol.Coerce(int), vol.Range(min=0)),
+        vol.Optional("max_silent_turns"): vol.All(vol.Coerce(int), vol.Range(min=1)),
+        vol.Optional("barge_in"): cv.boolean,
+        vol.Optional("hangup_on_end"): cv.boolean,
+    }
+)
 
 
 
@@ -308,9 +318,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     def on_playback_done() -> None:
         LOGGER.debug("[%s] Audio playback done", sip_config.username)
         fire_sip_event(EVENT_SIP_PLAYBACK_DONE)
-        nonlocal ivr_session
+        nonlocal ivr_session, assist_bridge
         if ivr_session is not None:
             ivr_session.on_playback_done()
+        if assist_bridge is not None:
+            assist_bridge.on_playback_done()
 
     callbacks = SipCallbacks(
         on_state_change=on_state_change,
@@ -379,19 +391,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             LOGGER.error("Failed to play audio file: %s", err)
 
     # Helper function to trigger Assist bridge
-    async def trigger_assist_internal() -> None:
+    async def trigger_assist_internal(
+        pipeline_id: str | None = None,
+        max_turns: int = 0,
+        max_silent_turns: int = 2,
+        barge_in: bool = False,
+        hangup_on_end: bool = False,
+    ) -> None:
         nonlocal assist_bridge
         if assist_bridge is not None:
             assist_bridge.close()
 
-        def on_assist_done():
+        def on_assist_done() -> None:
+            nonlocal assist_bridge
             LOGGER.info("Assist pipeline bridge finished")
+            client.set_sink(NullSink())
+            assist_bridge = None
+            if hangup_on_end:
+                client.hangup()
 
         assist_bridge = AssistBridge(
             hass,
             play_source_fn=client.play_source,
             on_done_fn=on_assist_done,
+            pipeline_id=pipeline_id,
             sample_rate=client.codec.sample_rate,
+            max_turns=max_turns,
+            max_silent_turns=max_silent_turns,
+            barge_in=barge_in,
+            stop_audio_fn=client.stop_audio,
         )
         client.set_sink(assist_bridge)
         assist_bridge.start()
@@ -712,8 +740,19 @@ async def async_register_services(hass: HomeAssistant) -> None:
 
     async def handle_start_assist(call: ServiceCall) -> None:
         targets = await get_client_entries(call)
+        opts = {
+            k: call.data[k]
+            for k in (
+                "pipeline_id",
+                "max_turns",
+                "max_silent_turns",
+                "barge_in",
+                "hangup_on_end",
+            )
+            if k in call.data
+        }
         for entry_id, data in targets:
-            await data["trigger_assist_fn"]()
+            await data["trigger_assist_fn"](**opts)
 
     # Register all services
     hass.services.async_register(DOMAIN, "dial", handle_dial, schema=SERVICE_DIAL_SCHEMA)
@@ -725,4 +764,6 @@ async def async_register_services(hass: HomeAssistant) -> None:
         DOMAIN, "start_recording", handle_start_recording, schema=SERVICE_RECORDING_SCHEMA
     )
     hass.services.async_register(DOMAIN, "stop_recording", handle_stop_recording, schema=SERVICE_GENERIC_SCHEMA)
-    hass.services.async_register(DOMAIN, "start_assist", handle_start_assist, schema=SERVICE_GENERIC_SCHEMA)
+    hass.services.async_register(
+        DOMAIN, "start_assist", handle_start_assist, schema=SERVICE_ASSIST_SCHEMA
+    )
