@@ -203,7 +203,29 @@
     },
     "start_assist": {
       "name": "Start Assist",
-      "description": "Bridges the active call to Home Assistant's Voice Assist pipeline."
+      "description": "Bridges the active call to Home Assistant's Voice Assist pipeline for multi-turn conversation.",
+      "fields": {
+        "pipeline_id": {
+          "name": "Assist pipeline",
+          "description": "Optional Assist pipeline ID. Uses the default pipeline when omitted."
+        },
+        "max_turns": {
+          "name": "Max turns",
+          "description": "Maximum conversation turns before the session ends. 0 means unlimited."
+        },
+        "max_silent_turns": {
+          "name": "Max silent turns",
+          "description": "End the session after this many consecutive turns with no speech recognized."
+        },
+        "barge_in": {
+          "name": "Barge-in",
+          "description": "Allow interrupting TTS responses by speaking (default false; may self-trigger on speakerphones without echo cancellation)."
+        },
+        "hangup_on_end": {
+          "name": "Hang up on end",
+          "description": "Hang up the call when the Assist session ends."
+        }
+      }
     }
   }
 }

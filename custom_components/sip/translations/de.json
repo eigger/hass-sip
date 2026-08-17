@@ -203,7 +203,29 @@
     },
     "start_assist": {
       "name": "Assist starten",
-      "description": "Verbindet den aktiven Anruf mit der Voice-Assist-Pipeline von Home Assistant."
+      "description": "Verbindet den aktiven Anruf mit der Voice-Assist-Pipeline von Home Assistant für Mehrfach-Gespräche.",
+      "fields": {
+        "pipeline_id": {
+          "name": "Assist-Pipeline",
+          "description": "Optionale Assist-Pipeline-ID. Ohne Angabe wird die Standard-Pipeline verwendet."
+        },
+        "max_turns": {
+          "name": "Max. Runden",
+          "description": "Maximale Gesprächsrunden vor Sitzungsende. 0 bedeutet unbegrenzt."
+        },
+        "max_silent_turns": {
+          "name": "Max. stille Runden",
+          "description": "Sitzung beenden nach so vielen aufeinanderfolgenden Runden ohne erkannte Sprache."
+        },
+        "barge_in": {
+          "name": "Unterbrechen",
+          "description": "TTS-Antworten durch Sprechen unterbrechen (Standard false; kann bei Freisprecheinrichtungen ohne Echokompensation selbst auslösen)."
+        },
+        "hangup_on_end": {
+          "name": "Bei Ende auflegen",
+          "description": "Anruf beenden, wenn die Assist-Sitzung endet."
+        }
+      }
     }
   }
 }

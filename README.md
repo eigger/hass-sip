@@ -15,9 +15,10 @@ A native custom integration for Home Assistant to connect directly to a SIP serv
 ## Features & Platforms
 
 - **Native Media Player Entity**: Exposes the SIP line as a `media_player` entity. Stream standard TTS messages (e.g. Google Translate, Piper, Nabu Casa) or audio URLs directly into the active SIP call.
-- **Custom Telephony Services**: Complete set of services to control SIP calls (`sip.dial`, `sip.hangup`, `sip.answer`, `sip.send_dtmf`, `sip.start_recording`, `sip.stop_recording`, `sip.start_assist`).
+- **Custom Telephony Services**: Complete set of services to control SIP calls (`sip.dial`, `sip.hangup`, `sip.answer`, `sip.send_dtmf`, `sip.start_recording`, `sip.stop_recording`, `sip.start_assist`). Voice Assist sessions support **multi-turn conversation** within a single call.
 - **Interactive Voice Response (IVR) Engine**: Construct nested DTMF automated phone trees with TTS prompt templates, custom PIN authentication, and native Home Assistant service triggers.
 - **Wideband Audio (G.722)**: Negotiates G.722 (16 kHz) when the remote party supports it, falling back to G.711 µ-law / A-law. Voice Assist receives true 16 kHz PCM on G.722 calls instead of upsampled narrowband.
+- **Continuous Voice Assist**: During an active call, `sip.start_assist` keeps listening for follow-up commands until silence, a turn limit, or hangup — no need to redial between commands.
 - **Sensors**: Exposes real-time registration status, call state (line active), and last caller ID.
 
 ## Installation
@@ -89,8 +90,19 @@ Stops active call recording.
 - `entity_id` *(Required)*: The target SIP media player entity.
 
 ### `sip.start_assist`
-Bridges the active call directly to Home Assistant's Voice Assist.
+Bridges the active call to Home Assistant's Voice Assist pipeline for **multi-turn conversation**. After each command and TTS response, the integration listens for the next command without hanging up. Conversation context is preserved across turns (e.g. "turn on the kitchen light" → "set it to 50%").
+
+The session ends when:
+- The caller says nothing for `max_silent_turns` consecutive turns (default: 2, ~30 s of silence)
+- `max_turns` is reached (default: 0 = unlimited)
+- The call is hung up, or `close()` is triggered
+
 - `entity_id` *(Required)*: The target SIP media player entity.
+- `pipeline_id` *(Optional)*: Assist pipeline ID. Uses the Home Assistant default when omitted.
+- `max_turns` *(Optional)*: Maximum conversation turns before ending (default: `0` = unlimited).
+- `max_silent_turns` *(Optional)*: Consecutive no-speech turns before ending (default: `2`).
+- `barge_in` *(Optional)*: Allow interrupting TTS mid-response by speaking (default: `false`; may self-trigger on speakerphones without echo cancellation).
+- `hangup_on_end` *(Optional)*: Hang up the call when the Assist session ends (default: `false`).
 
 ---
 
@@ -406,7 +418,7 @@ When triggered, the integration answers immediately, opens the audio channel, an
 
 ## Voice Assist Automation Example
 
-You can automatically bridge incoming calls directly to Home Assistant's Voice Assist pipeline:
+You can automatically bridge incoming calls directly to Home Assistant's Voice Assist pipeline. The caller can issue **multiple commands in one call** — for example, "turn on the kitchen light" followed by "turn it off" — without hanging up between them.
 
 ```yaml
 alias: "SIP: Auto-Answer with Voice Assist"
@@ -421,6 +433,8 @@ action:
   - service: sip.start_assist
     target:
       entity_id: media_player.phone_line
+    data:
+      max_silent_turns: 2
 ```
 
 ---
