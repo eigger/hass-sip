@@ -223,7 +223,7 @@ start_assist:
           mode: box
     barge_in:
       name: Barge-in
-      description: Allow interrupting TTS responses by speaking (default false; may self-trigger on speakerphones without echo cancellation).
+      description: Allow interrupting TTS by speaking (requires pymicro_vad from Assist pipeline; default false).
       required: false
       default: false
       selector:

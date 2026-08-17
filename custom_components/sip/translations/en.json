@@ -219,7 +219,7 @@
         },
         "barge_in": {
           "name": "Barge-in",
-          "description": "Allow interrupting TTS responses by speaking (default false; may self-trigger on speakerphones without echo cancellation)."
+          "description": "Allow interrupting TTS responses by speaking (requires pymicro_vad; default false)."
         },
         "hangup_on_end": {
           "name": "Hang up on end",

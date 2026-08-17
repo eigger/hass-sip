@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import math
-import struct
 from collections.abc import AsyncIterable, Callable
 
 from homeassistant.components import tts
@@ -39,7 +37,6 @@ _ERROR_TURN_BACKOFF_SECONDS = 1.0
 _VAD_FRAME_BYTES = 320  # 10 ms @ 16 kHz s16le mono
 _VAD_SPEECH_THRESHOLD = 0.5
 _VAD_MIN_SPEECH_FRAMES = 30  # 300 ms consecutive speech
-_RMS_SPEECH_THRESHOLD = 500
 _PREROLL_MAX_BYTES = 16000  # 500 ms @ 16 kHz s16le mono
 
 
@@ -114,6 +111,12 @@ class AssistBridge(AudioSink):
         self.barge_in = barge_in
         self.stop_audio_fn = stop_audio_fn
 
+        if barge_in and MicroVad is None:
+            LOGGER.warning(
+                "pymicro_vad unavailable; barge-in disabled for this session"
+            )
+            self.barge_in = False
+
         self.audio_stream = AssistAudioStream()
         self.session_task: asyncio.Task | None = None
         self._running = True
@@ -128,11 +131,9 @@ class AssistBridge(AudioSink):
         self._ring_buffer = bytearray()
         self._vad_pending = bytearray()
         self._vad_speech_frames = 0
-        self._micro_vad = MicroVad() if barge_in and MicroVad is not None else None
-        if barge_in and self._micro_vad is None:
-            LOGGER.warning(
-                "pymicro_vad unavailable; barge-in falls back to RMS energy detection"
-            )
+        self._post_barge_in_capture = False
+        self._tts_epoch = 0
+        self._micro_vad = MicroVad() if self.barge_in else None
 
     def start(self) -> None:
         """Start the Assist session loop in the background."""
@@ -142,6 +143,8 @@ class AssistBridge(AudioSink):
         """Receive incoming PCM from SIP client and feed it to Assist."""
         if self._listening:
             self.audio_stream.feed_audio(pcm_le, self.sample_rate)
+        elif self._post_barge_in_capture:
+            self._append_rx_to_ring(_upsample_pcm(pcm_le, self.sample_rate))
         elif self.barge_in and self._speaking:
             self._monitor_barge_in(pcm_le)
 
@@ -154,6 +157,8 @@ class AssistBridge(AudioSink):
         self._running = False
         self._listening = False
         self._speaking = False
+        self._post_barge_in_capture = False
+        self._tts_epoch += 1
         self._playback_done.set()
         if self.session_task:
             self.session_task.cancel()
@@ -162,18 +167,21 @@ class AssistBridge(AudioSink):
             task.cancel()
         self._background_tasks.clear()
 
-    def _monitor_barge_in(self, pcm_le: bytes) -> None:
-        """Detect caller speech during TTS playback and trigger barge-in."""
-        pcm_16k = _upsample_pcm(pcm_le, self.sample_rate)
+    def _append_rx_to_ring(self, pcm_16k: bytes) -> None:
         self._ring_buffer.extend(pcm_16k)
         if len(self._ring_buffer) > _PREROLL_MAX_BYTES:
             del self._ring_buffer[: len(self._ring_buffer) - _PREROLL_MAX_BYTES]
+
+    def _monitor_barge_in(self, pcm_le: bytes) -> None:
+        """Detect caller speech during TTS playback and trigger barge-in."""
+        pcm_16k = _upsample_pcm(pcm_le, self.sample_rate)
+        self._append_rx_to_ring(pcm_16k)
 
         self._vad_pending.extend(pcm_16k)
         while len(self._vad_pending) >= _VAD_FRAME_BYTES:
             frame = bytes(self._vad_pending[:_VAD_FRAME_BYTES])
             del self._vad_pending[:_VAD_FRAME_BYTES]
-            if self._is_speech_frame(frame):
+            if self._micro_vad.Process10ms(frame) >= _VAD_SPEECH_THRESHOLD:
                 self._vad_speech_frames += 1
                 if self._vad_speech_frames >= _VAD_MIN_SPEECH_FRAMES:
                     self._on_barge_in()
@@ -181,20 +189,15 @@ class AssistBridge(AudioSink):
             else:
                 self._vad_speech_frames = 0
 
-    def _is_speech_frame(self, frame: bytes) -> bool:
-        if self._micro_vad is not None:
-            return self._micro_vad.Process10ms(frame) >= _VAD_SPEECH_THRESHOLD
-        samples = struct.unpack(f"<{len(frame) // 2}h", frame)
-        rms = math.sqrt(sum(s * s for s in samples) / len(samples))
-        return rms >= _RMS_SPEECH_THRESHOLD
-
     def _on_barge_in(self) -> None:
         """Interrupt TTS playback and preserve preroll for the next STT turn."""
         LOGGER.info("Assist barge-in detected")
+        self._tts_epoch += 1
         self._barge_in_preroll = bytes(self._ring_buffer)
         self._vad_pending.clear()
         self._vad_speech_frames = 0
         self._ring_buffer.clear()
+        self._post_barge_in_capture = True
         if self.stop_audio_fn:
             self.stop_audio_fn()
         self._playback_done.set()
@@ -228,6 +231,10 @@ class AssistBridge(AudioSink):
                 self.audio_stream = AssistAudioStream()
                 preroll = self._barge_in_preroll
                 self._barge_in_preroll = b""
+                if self._post_barge_in_capture:
+                    if self._ring_buffer:
+                        preroll = preroll + bytes(self._ring_buffer)
+                    self._post_barge_in_capture = False
                 if preroll:
                     self.audio_stream.inject_preroll(preroll)
                 self._turn_error = None
@@ -292,6 +299,7 @@ class AssistBridge(AudioSink):
             self._running = False
             self._listening = False
             self._speaking = False
+            self._post_barge_in_capture = False
             LOGGER.info("Voice Assist pipeline session ended")
             self.on_done()
 
@@ -304,10 +312,12 @@ class AssistBridge(AudioSink):
                 await self._playback_done.wait()
         except TimeoutError:
             LOGGER.warning("Assist: playback-done timeout; continuing")
+        ended_by_barge_in = self._post_barge_in_capture
         self._playback_done.clear()
         self._speaking = False
-        self._reset_barge_in_state()
-        await asyncio.sleep(0.2)
+        if not ended_by_barge_in:
+            self._reset_barge_in_state()
+            await asyncio.sleep(0.2)
 
     def _on_pipeline_event(self, event: PipelineEvent) -> None:
         """Handle events emitted by the Assist pipeline."""
@@ -334,7 +344,9 @@ class AssistBridge(AudioSink):
                 self._speaking = True
                 self._playback_done.clear()
                 self._reset_barge_in_state()
-                task = asyncio.create_task(self._play_tts_stream(stream))
+                self._tts_epoch += 1
+                epoch = self._tts_epoch
+                task = asyncio.create_task(self._play_tts_stream(stream, epoch))
                 self._background_tasks.add(task)
                 task.add_done_callback(self._background_tasks.discard)
         elif event.type == PipelineEventType.ERROR:
@@ -342,16 +354,21 @@ class AssistBridge(AudioSink):
                 self._turn_error = event.data.get("code")
             LOGGER.error("Assist pipeline error: %s", event.data)
 
-    async def _play_tts_stream(self, stream: tts.ResultStream) -> None:
+    async def _play_tts_stream(self, stream: tts.ResultStream, epoch: int) -> None:
         """Fetch TTS stream WAV output and play it to the SIP caller."""
         try:
             chunks = []
             async for chunk in stream.async_stream_result():
+                if epoch != self._tts_epoch:
+                    return
                 chunks.append(chunk)
-            wav_data = b"".join(chunks)
+            if epoch != self._tts_epoch:
+                return
 
+            wav_data = b"".join(chunks)
             source = FfmpegAudioSource(data=wav_data, ffmpeg_bin=get_ffmpeg_bin(self.hass))
             self.play_source(source)
         except Exception as err:
             LOGGER.exception("Error playing Assist TTS response: %s", err)
-            self._playback_done.set()
+            if epoch == self._tts_epoch:
+                self._playback_done.set()

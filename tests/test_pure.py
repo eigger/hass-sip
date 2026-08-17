@@ -999,7 +999,14 @@ def test_assist_tts_failure_signals_playback_done():
 def test_assist_barge_in_triggers_stop_and_preroll():
     assist_mod, _, _, _ = _assist_ctx()
     original_min = assist_mod._VAD_MIN_SPEECH_FRAMES
+    original_micro_vad = assist_mod.MicroVad
     assist_mod._VAD_MIN_SPEECH_FRAMES = 2
+
+    class _StubVad:
+        def Process10ms(self, frame: bytes) -> float:
+            return 0.9
+
+    assist_mod.MicroVad = lambda: _StubVad()
     try:
         stop_calls = []
         bridge = assist_mod.AssistBridge(
@@ -1010,14 +1017,129 @@ def test_assist_barge_in_triggers_stop_and_preroll():
             stop_audio_fn=lambda: stop_calls.append(1),
         )
         bridge._speaking = True
-        loud = struct.pack("<160h", *([8000] * 160))
+        frame = b"\x00\x01" * (assist_mod._VAD_FRAME_BYTES // 2)
         for _ in range(5):
-            bridge.write(loud)
+            bridge.write(frame)
         assert stop_calls
         assert bridge._barge_in_preroll
         assert bridge._playback_done.is_set()
+        assert bridge._post_barge_in_capture
     finally:
         assist_mod._VAD_MIN_SPEECH_FRAMES = original_min
+        assist_mod.MicroVad = original_micro_vad
+
+
+def test_assist_barge_in_disabled_without_micro_vad():
+    assist_mod, _, _, _ = _assist_ctx()
+    original_micro_vad = assist_mod.MicroVad
+    assist_mod.MicroVad = None
+    try:
+        stop_calls = []
+        bridge = assist_mod.AssistBridge(
+            MagicMock(),
+            play_source_fn=MagicMock(),
+            on_done_fn=MagicMock(),
+            barge_in=True,
+            stop_audio_fn=lambda: stop_calls.append(1),
+        )
+        assert bridge.barge_in is False
+        bridge._speaking = True
+        loud = struct.pack("<160h", *([8000] * 160))
+        for _ in range(5):
+            bridge.write(loud)
+        assert not stop_calls
+    finally:
+        assist_mod.MicroVad = original_micro_vad
+
+
+def test_assist_barge_in_cancels_inflight_tts():
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    mock_tts = sys.modules["homeassistant.components.tts"]
+    original_get_stream = mock_tts.async_get_stream.return_value
+    original_min = assist_mod._VAD_MIN_SPEECH_FRAMES
+    original_micro_vad = assist_mod.MicroVad
+    play_calls = []
+
+    class _StubVad:
+        def Process10ms(self, frame: bytes) -> float:
+            return 0.9
+
+    assist_mod.MicroVad = lambda: _StubVad()
+    assist_mod._VAD_MIN_SPEECH_FRAMES = 2
+
+    async def slow_stream():
+        await asyncio.sleep(0.15)
+        yield b"RIFF...."
+
+    stream = MagicMock()
+    stream.async_stream_result = slow_stream
+    mock_tts.async_get_stream.return_value = stream
+
+    try:
+
+        async def mock_pipeline(hass, **kwargs):
+            cb = kwargs["event_callback"]
+            cb(PE(PET.TTS_END, {"tts_output": {"token": "tok"}}))
+
+        mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
+
+        bridge = assist_mod.AssistBridge(
+            MagicMock(),
+            play_source_fn=lambda src: play_calls.append(1),
+            on_done_fn=MagicMock(),
+            barge_in=True,
+            stop_audio_fn=MagicMock(),
+            max_turns=1,
+            max_silent_turns=99,
+        )
+
+        async def run():
+            bridge.start()
+            await asyncio.sleep(0.02)
+            frame = b"\x00\x01" * (assist_mod._VAD_FRAME_BYTES // 2)
+            for _ in range(5):
+                bridge.write(frame)
+            if bridge.session_task:
+                await asyncio.wait_for(bridge.session_task, timeout=2)
+
+        asyncio.run(run())
+        assert not play_calls
+    finally:
+        assist_mod._VAD_MIN_SPEECH_FRAMES = original_min
+        assist_mod.MicroVad = original_micro_vad
+        mock_tts.async_get_stream.return_value = original_get_stream
+
+
+def test_assist_post_barge_in_capture_extends_preroll():
+    assist_mod, _, _, _ = _assist_ctx()
+    original_min = assist_mod._VAD_MIN_SPEECH_FRAMES
+    original_micro_vad = assist_mod.MicroVad
+
+    class _StubVad:
+        def Process10ms(self, frame: bytes) -> float:
+            return 0.9
+
+    assist_mod.MicroVad = lambda: _StubVad()
+    assist_mod._VAD_MIN_SPEECH_FRAMES = 2
+    try:
+        bridge = assist_mod.AssistBridge(
+            MagicMock(),
+            play_source_fn=MagicMock(),
+            on_done_fn=MagicMock(),
+            barge_in=True,
+            stop_audio_fn=MagicMock(),
+        )
+        bridge._speaking = True
+        frame = b"\x00\x01" * (assist_mod._VAD_FRAME_BYTES // 2)
+        for _ in range(5):
+            bridge.write(frame)
+        assert bridge._post_barge_in_capture
+        extra = b"\x02\x03" * 320
+        bridge.write(extra)
+        assert bridge._ring_buffer
+    finally:
+        assist_mod._VAD_MIN_SPEECH_FRAMES = original_min
+        assist_mod.MicroVad = original_micro_vad
 
 
 def test_assist_preroll_injected_into_stream():

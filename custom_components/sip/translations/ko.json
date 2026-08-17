@@ -219,7 +219,7 @@
         },
         "barge_in": {
           "name": "끼어들기",
-          "description": "TTS 응답 중 말하여 끼어들기 허용 (기본 false; 에코 제거 없는 스피커폰에서 자기 트리거 위험)."
+          "description": "TTS 응답 중 말하여 끼어들기 허용 (pymicro_vad 필요; 기본 false)."
         },
         "hangup_on_end": {
           "name": "종료 시 끊기",
