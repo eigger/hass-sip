@@ -135,6 +135,7 @@ SERVICE_ASSIST_SCHEMA = cv.make_entity_service_schema(
         vol.Optional("pipeline_id"): cv.string,
         vol.Optional("max_turns"): vol.All(vol.Coerce(int), vol.Range(min=0)),
         vol.Optional("max_silent_turns"): vol.All(vol.Coerce(int), vol.Range(min=1)),
+        vol.Optional("barge_in"): cv.boolean,
         vol.Optional("hangup_on_end"): cv.boolean,
     }
 )
@@ -303,6 +304,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if assist_bridge is not None:
             assist_bridge.close()
             assist_bridge = None
+            client.set_sink(NullSink())
         async_dispatcher_send(hass, f"{DOMAIN}_state_update_{entry.entry_id}")
 
     @callback
@@ -394,6 +396,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         pipeline_id: str | None = None,
         max_turns: int = 0,
         max_silent_turns: int = 2,
+        barge_in: bool = False,
         hangup_on_end: bool = False,
     ) -> None:
         nonlocal assist_bridge
@@ -408,6 +411,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             sample_rate=client.codec.sample_rate,
             max_turns=max_turns,
             max_silent_turns=max_silent_turns,
+            barge_in=barge_in,
             stop_audio_fn=client.stop_audio,
         )
 
@@ -748,6 +752,7 @@ async def async_register_services(hass: HomeAssistant) -> None:
                 "pipeline_id",
                 "max_turns",
                 "max_silent_turns",
+                "barge_in",
                 "hangup_on_end",
             )
             if k in call.data

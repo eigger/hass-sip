@@ -915,11 +915,62 @@ def test_assist_continue_conversation_resets_silent_streak():
 def test_assist_max_turns_waits_for_final_playback():
     assist_mod, mock_ap, PET, PE = _assist_ctx()
     mock_tts = sys.modules["homeassistant.components.tts"]
+    original_get_stream = mock_tts.async_get_stream.return_value
     mock_tts.async_get_stream.return_value = MagicMock()
+    try:
+        async def mock_pipeline(hass, **kwargs):
+            cb = kwargs["event_callback"]
+            cb(PE(PET.RUN_START, {"conversation_id": "c1"}))
+            cb(PE(PET.TTS_END, {"tts_output": {"token": "tok"}}))
+
+        mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
+
+        bridge = assist_mod.AssistBridge(
+            MagicMock(),
+            play_source_fn=MagicMock(),
+            on_done_fn=MagicMock(),
+            max_turns=1,
+        )
+
+        async def run():
+            bridge.start()
+            for _ in range(50):
+                await asyncio.sleep(0.01)
+                if (
+                    bridge._speaking
+                    and bridge.session_task
+                    and not bridge.session_task.done()
+                ):
+                    break
+            assert bridge._speaking
+            assert bridge.session_task is not None
+            assert not bridge.session_task.done()
+            bridge.on_playback_done()
+            await bridge.session_task
+
+        asyncio.run(run())
+    finally:
+        mock_tts.async_get_stream.return_value = original_get_stream
+
+
+def test_assist_tts_failure_signals_playback_done():
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    mock_tts = sys.modules["homeassistant.components.tts"]
+    original_get_stream = mock_tts.async_get_stream.return_value
+
+    failing_stream = MagicMock()
+
+    async def failing_result():
+        raise RuntimeError("TTS fetch failed")
+        yield b""  # pragma: no cover
+
+    failing_stream.async_stream_result = failing_result
+    mock_tts.async_get_stream.return_value = failing_stream
+
+    playback_done = asyncio.Event()
 
     async def mock_pipeline(hass, **kwargs):
         cb = kwargs["event_callback"]
-        cb(PE(PET.RUN_START, {"conversation_id": "c1"}))
         cb(PE(PET.TTS_END, {"tts_output": {"token": "tok"}}))
 
     mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
@@ -930,20 +981,50 @@ def test_assist_max_turns_waits_for_final_playback():
         on_done_fn=MagicMock(),
         max_turns=1,
     )
+    bridge._playback_done = playback_done
 
     async def run():
         bridge.start()
-        for _ in range(50):
-            await asyncio.sleep(0.01)
-            if bridge._speaking and bridge.session_task and not bridge.session_task.done():
-                break
-        assert bridge._speaking
-        assert bridge.session_task is not None
-        assert not bridge.session_task.done()
-        bridge.on_playback_done()
-        await bridge.session_task
+        await asyncio.wait_for(playback_done.wait(), timeout=2)
+        assert playback_done.is_set()
+        if bridge.session_task:
+            await bridge.session_task
 
-    asyncio.run(run())
+    try:
+        asyncio.run(run())
+    finally:
+        mock_tts.async_get_stream.return_value = original_get_stream
+
+
+def test_assist_barge_in_triggers_stop_and_preroll():
+    assist_mod, _, _, _ = _assist_ctx()
+    original_min = assist_mod._VAD_MIN_SPEECH_FRAMES
+    assist_mod._VAD_MIN_SPEECH_FRAMES = 2
+    try:
+        stop_calls = []
+        bridge = assist_mod.AssistBridge(
+            MagicMock(),
+            play_source_fn=MagicMock(),
+            on_done_fn=MagicMock(),
+            barge_in=True,
+            stop_audio_fn=lambda: stop_calls.append(1),
+        )
+        bridge._speaking = True
+        loud = struct.pack("<160h", *([8000] * 160))
+        for _ in range(5):
+            bridge.write(loud)
+        assert stop_calls
+        assert bridge._barge_in_preroll
+        assert bridge._playback_done.is_set()
+    finally:
+        assist_mod._VAD_MIN_SPEECH_FRAMES = original_min
+
+
+def test_assist_preroll_injected_into_stream():
+    assist_mod, _, _, _ = _assist_ctx()
+    stream = assist_mod.AssistAudioStream()
+    stream.inject_preroll(b"\x00" * 640)
+    assert stream.queue.qsize() == 1
 
 
 # ------------------------------------------------------- config_flow schema
