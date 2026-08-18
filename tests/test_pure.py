@@ -1162,6 +1162,42 @@ def test_assist_preroll_injected_into_stream():
     assert stream.queue.qsize() == 1
 
 
+def test_assist_done_guard_skips_superseded_bridge():
+    """Regression: superseded bridge on_done must not clobber the active sink."""
+    state = {"assist_bridge": None, "sink": None}
+
+    def make_on_done(bridge):
+        def on_assist_done() -> None:
+            if state["assist_bridge"] is not bridge:
+                return
+            state["sink"] = "null"
+            state["assist_bridge"] = None
+
+        return on_assist_done
+
+    bridge_a = object()
+    bridge_b = object()
+    state["assist_bridge"] = bridge_b
+    state["sink"] = "bridge_b"
+    make_on_done(bridge_a)()
+    assert state["assist_bridge"] is bridge_b
+    assert state["sink"] == "bridge_b"
+
+
+def test_call_ended_restores_sink_when_assist_bridge_cleared():
+    """Regression: call end must restore sink even if on_assist_done guard no-ops."""
+    state = {"assist_bridge": object(), "sink": "bridge"}
+
+    def on_call_ended() -> None:
+        if state["assist_bridge"] is not None:
+            state["assist_bridge"] = None
+            state["sink"] = "null"
+
+    on_call_ended()
+    assert state["assist_bridge"] is None
+    assert state["sink"] == "null"
+
+
 # ------------------------------------------------------- config_flow schema
 def test_build_schema_new_entry_has_no_prefilled_values():
     # Matches the original (pre-reconfigure) schema exactly: required fields
