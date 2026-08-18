@@ -196,6 +196,10 @@ class RtpSession:
             overflow = len(self._tx_buffer) - self._tx_buffer_max
             del self._tx_buffer[:overflow]
 
+    def flush_tx_buffer(self) -> None:
+        """Drop queued PCM not yet sent (e.g. after barge-in)."""
+        self._tx_buffer.clear()
+
     def queue_dtmf(self, digits: str) -> None:
         if self.dtmf_pt < 0:
             _LOGGER.warning("Remote did not offer telephone-event; DTMF dropped")

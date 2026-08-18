@@ -451,6 +451,19 @@ def test_rtp_decoder_cache_reuses_stateful_decoder():
     assert asyncio.run(run())
 
 
+def test_rtp_flush_tx_buffer():
+    async def run():
+        session = rtp_session.RtpSession()
+        session.set_codec(codecs.PCMU)
+        session._transport = MagicMock()
+        session.push_tx_audio(b"\x00" * 640)
+        assert session._tx_buffer
+        session.flush_tx_buffer()
+        assert not session._tx_buffer
+
+    asyncio.run(run())
+
+
 def test_rtp_g722_frame_size_and_timestamp():
     async def run():
         session = rtp_session.RtpSession()
@@ -1014,13 +1027,13 @@ def test_assist_barge_in_triggers_stop_and_preroll():
             play_source_fn=MagicMock(),
             on_done_fn=MagicMock(),
             barge_in=True,
-            stop_audio_fn=lambda: stop_calls.append(1),
+            stop_audio_fn=lambda *, flush=False: stop_calls.append(flush),
         )
         bridge._speaking = True
         frame = b"\x00\x01" * (assist_mod._VAD_FRAME_BYTES // 2)
         for _ in range(5):
             bridge.write(frame)
-        assert stop_calls
+        assert stop_calls == [True]
         assert bridge._barge_in_preroll
         assert bridge._playback_done.is_set()
         assert bridge._post_barge_in_capture

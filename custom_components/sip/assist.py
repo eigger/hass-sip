@@ -98,7 +98,7 @@ class AssistBridge(AudioSink):
         max_turns: int = 0,
         max_silent_turns: int = 2,
         barge_in: bool = False,
-        stop_audio_fn: Callable[[], None] | None = None,
+        stop_audio_fn: Callable[..., None] | None = None,
     ) -> None:
         """Initialize the Assist bridge."""
         self.hass = hass
@@ -199,7 +199,7 @@ class AssistBridge(AudioSink):
         self._ring_buffer.clear()
         self._post_barge_in_capture = True
         if self.stop_audio_fn:
-            self.stop_audio_fn()
+            self.stop_audio_fn(flush=True)
         self._playback_done.set()
 
     def _reset_barge_in_state(self) -> None:
