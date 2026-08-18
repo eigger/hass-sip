@@ -101,7 +101,7 @@ The session ends when:
 - `pipeline_id` *(Optional)*: Assist pipeline ID. Uses the Home Assistant default when omitted.
 - `max_turns` *(Optional)*: Maximum conversation turns before ending (default: `0` = unlimited).
 - `max_silent_turns` *(Optional)*: Consecutive no-speech turns before ending (default: `2`).
-- `barge_in` *(Optional)*: Allow interrupting TTS mid-response by speaking (default: `false`; may self-trigger on speakerphones without echo cancellation).
+- `barge_in` *(Optional)*: Allow interrupting TTS mid-response by speaking (default: `false`; requires `pymicro_vad` from the Assist pipeline integration; may self-trigger on speakerphones without echo cancellation).
 - `hangup_on_end` *(Optional)*: Hang up the call when the Assist session ends (default: `false`).
 
 ---

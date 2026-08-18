@@ -1020,8 +1020,11 @@ class SipClient:
         self._cancel_source()
         self._tx_source_task = self._loop.create_task(self._run_source(source))
 
-    def stop_audio(self) -> None:
+    def stop_audio(self, *, flush: bool = False) -> None:
+        """Stop the current TX audio source; optionally discard queued RTP PCM."""
         self._cancel_source()
+        if flush:
+            self.rtp.flush_tx_buffer()
 
     def _cancel_source(self) -> None:
         if self._tx_source_task is not None:

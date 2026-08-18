@@ -219,7 +219,7 @@
         },
         "barge_in": {
           "name": "Unterbrechen",
-          "description": "TTS-Antworten durch Sprechen unterbrechen (Standard false; kann bei Freisprecheinrichtungen ohne Echokompensation selbst auslösen)."
+          "description": "TTS-Antworten durch Sprechen unterbrechen (benötigt pymicro_vad; Standard false; kann bei Freisprecheinrichtungen ohne Echokompensation selbst auslösen)."
         },
         "hangup_on_end": {
           "name": "Bei Ende auflegen",
