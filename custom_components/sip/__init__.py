@@ -42,15 +42,14 @@ from .const import (
 )
 from .helpers import get_ffmpeg_bin
 from .ivr import IvrSession
+from .sip_client.audio import FfmpegAudioSource, NullSink
+from .sip_client.sip_client import SipCallbacks, SipClient, SipConfig, SipState
 
 
 def _sip_device_id(hass: HomeAssistant, entry_id: str) -> str | None:
     """Return the device registry id for a SIP config entry, if created yet."""
     device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, entry_id)})
     return device.id if device else None
-
-from .sip_client.audio import FfmpegAudioSource, NullSink
-from .sip_client.sip_client import SipCallbacks, SipClient, SipConfig, SipState
 
 PLATFORMS = [
     Platform.SENSOR,

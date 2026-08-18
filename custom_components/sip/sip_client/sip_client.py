@@ -11,7 +11,7 @@ import enum
 import logging
 import socket
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable
 
 from . import codecs

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from typing import Any
 import asyncio
-import socket
 import voluptuous as vol
 
 from homeassistant import config_entries

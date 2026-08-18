@@ -10,20 +10,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Lint
+        run: python -m ruff check custom_components/
+
   test:
     runs-on: ubuntu-latest
+    needs: lint
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v6
-      
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-          
+
       - name: Install dependencies
         run: |
           pip install --upgrade pip
@@ -34,7 +51,7 @@ jobs:
               pip install -r requirements.txt
             fi
           fi
-          
+
       - name: Run tests
         run: |
           python -m pytest tests/
