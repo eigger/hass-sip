@@ -250,6 +250,13 @@ start_assist:
           min: 0
           max: 4
           mode: box
+    turn_tone:
+      name: Turn start tone
+      description: Play a short beep when it is the caller's turn to speak (default false). Helps callers know when the microphone is open after TTS. Skipped when barge-in already captured speech.
+      required: false
+      default: false
+      selector:
+        boolean:
     hangup_on_end:
       name: Hang up on end
       description: Hang up the call when the Assist session ends.

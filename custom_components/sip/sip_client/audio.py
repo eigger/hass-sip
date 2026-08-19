@@ -11,8 +11,10 @@ later by implementing the same tiny interfaces, without touching the SIP core.
 """
 from __future__ import annotations
 
+import array
 import asyncio
 import logging
+import math
 import wave
 from abc import ABC, abstractmethod
 from typing import Callable
@@ -151,3 +153,66 @@ class FfmpegAudioSource(AudioSource):
                 except ProcessLookupError:
                     pass
             await proc.wait()
+
+
+class ToneAudioSource(AudioSource):
+    """Generate a short sine burst for RTP TX without ffmpeg.
+
+    A fade in/out is applied so the burst does not click on codecs that
+    dislike an abrupt sine cutoff. Frames are paced like
+    :class:`FfmpegAudioSource` (~18 ms sleep per 20 ms frame).
+    """
+
+    def __init__(
+        self,
+        freq_hz: int = 880,
+        duration_ms: int = 120,
+        amplitude: float = 0.25,
+        fade_ms: int = 10,
+        sample_rate: int = 8000,
+        pcm_frame_bytes: int | None = None,
+    ) -> None:
+        self._freq_hz = freq_hz
+        self._duration_ms = duration_ms
+        self._amplitude = amplitude
+        self._fade_ms = fade_ms
+        self._sample_rate = sample_rate
+        self._pcm_frame_bytes = (
+            pcm_frame_bytes if pcm_frame_bytes is not None else sample_rate // 50 * 2
+        )
+
+    def configure(self, sample_rate: int, pcm_frame_bytes: int) -> None:
+        """Update output rate to match the negotiated codec."""
+        self._sample_rate = sample_rate
+        self._pcm_frame_bytes = pcm_frame_bytes
+
+    def _render_pcm(self) -> bytes:
+        n_samples = int(self._sample_rate * self._duration_ms / 1000)
+        if n_samples <= 0:
+            return b""
+        fade_samples = min(
+            int(self._sample_rate * self._fade_ms / 1000),
+            n_samples // 2,
+        )
+        peak = int(self._amplitude * 32767)
+        omega = 2.0 * math.pi * self._freq_hz / self._sample_rate
+        samples = array.array("h")
+        last = n_samples - 1
+        for i in range(n_samples):
+            env = 1.0
+            if fade_samples > 0:
+                if i < fade_samples:
+                    env = i / fade_samples
+                elif i > last - fade_samples:
+                    env = (last - i) / fade_samples
+            samples.append(int(peak * env * math.sin(omega * i)))
+        return samples.tobytes()
+
+    async def run(self, push: PushFn, is_active: ActiveFn) -> None:
+        pcm = self._render_pcm()
+        offset = 0
+        frame = self._pcm_frame_bytes
+        while is_active() and offset < len(pcm):
+            push(pcm[offset : offset + frame])
+            offset += frame
+            await asyncio.sleep(0.018)

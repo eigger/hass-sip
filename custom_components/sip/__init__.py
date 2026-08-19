@@ -141,6 +141,7 @@ SERVICE_ASSIST_SCHEMA = cv.make_entity_service_schema(
         vol.Optional("noise_suppression"): vol.All(
             vol.Coerce(int), vol.Range(min=0, max=4)
         ),
+        vol.Optional("turn_tone"): cv.boolean,
         vol.Optional("hangup_on_end"): cv.boolean,
     }
 )
@@ -404,6 +405,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         barge_in: bool = False,
         silence_seconds: float | None = None,
         noise_suppression: int = 0,
+        turn_tone: bool = False,
         hangup_on_end: bool = False,
     ) -> None:
         nonlocal assist_bridge
@@ -421,6 +423,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             barge_in=barge_in,
             silence_seconds=silence_seconds,
             noise_suppression=noise_suppression,
+            turn_tone=turn_tone,
             stop_audio_fn=client.stop_audio,
         )
 
@@ -764,6 +767,7 @@ async def async_register_services(hass: HomeAssistant) -> None:
                 "barge_in",
                 "silence_seconds",
                 "noise_suppression",
+                "turn_tone",
                 "hangup_on_end",
             )
             if k in call.data
