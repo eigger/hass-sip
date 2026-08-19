@@ -931,6 +931,31 @@ def test_assist_playback_timeout_stale_tts_does_not_play():
     assert not play_calls
 
 
+def test_assist_playback_timeout_does_not_stop_long_playback():
+    assist_mod, _, _, _ = _assist_ctx()
+    stop_calls = []
+
+    async def run():
+        bridge = assist_mod.AssistBridge(
+            MagicMock(),
+            play_source_fn=MagicMock(),
+            on_done_fn=MagicMock(),
+            stop_audio_fn=lambda **kw: stop_calls.append(kw),
+        )
+        bridge._speaking = True
+        real_timeout = asyncio.timeout
+
+        def short_timeout(delay):
+            return real_timeout(0.05)
+
+        with patch("asyncio.timeout", short_timeout):
+            await bridge._wait_playback_done()
+        assert not stop_calls
+        assert bridge._speaking is False
+
+    asyncio.run(run())
+
+
 def test_assist_close_during_session():
     assist_mod, mock_ap, PET, PE = _assist_ctx()
     done_calls = []

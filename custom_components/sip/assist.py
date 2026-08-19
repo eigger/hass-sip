@@ -449,7 +449,11 @@ class AssistBridge(AudioSink):
                 await self._playback_done.wait()
         except TimeoutError:
             LOGGER.warning("Assist: playback-done timeout; continuing")
-            self._cancel_inflight_tts(stop_audio=True)
+            # Only cancel/stop when a TTS fetch task is still in flight. Once
+            # play_source() has been scheduled the background task exits while
+            # RTP keeps playing — flushing there would cut long responses.
+            if self._background_tasks:
+                self._cancel_inflight_tts(stop_audio=True)
         ended_by_barge_in = self._post_barge_in_capture
         self._playback_done.clear()
         self._speaking = False
