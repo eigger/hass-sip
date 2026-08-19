@@ -25,7 +25,7 @@ from homeassistant.core import Context, HomeAssistant
 
 from .const import LOGGER
 from .helpers import get_ffmpeg_bin
-from .sip_client.audio import AudioSink, AudioSource, FfmpegAudioSource
+from .sip_client.audio import AudioSink, AudioSource, FfmpegAudioSource, ToneAudioSource
 
 try:
     from pymicro_vad import MicroVad
@@ -115,6 +115,7 @@ class AssistBridge(AudioSink):
         barge_in: bool = False,
         silence_seconds: float | None = None,
         noise_suppression: int = 0,
+        turn_tone: bool = False,
         stop_audio_fn: Callable[..., None] | None = None,
     ) -> None:
         """Initialize the Assist bridge."""
@@ -128,6 +129,7 @@ class AssistBridge(AudioSink):
         self.barge_in = barge_in
         self.silence_seconds = silence_seconds
         self.noise_suppression = noise_suppression
+        self.turn_tone = turn_tone
         self.stop_audio_fn = stop_audio_fn
 
         if barge_in and MicroVad is None:
@@ -142,6 +144,8 @@ class AssistBridge(AudioSink):
         self._listening = False
         self._speaking = False
         self._playback_done = asyncio.Event()
+        self._tone_done: asyncio.Event | None = None
+        self._awaiting_tone = False
         self._conversation_id: str | None = None
         self._turn_error: str | None = None
         self._turn_index = 0
@@ -169,7 +173,14 @@ class AssistBridge(AudioSink):
             self._monitor_barge_in(pcm_le)
 
     def on_playback_done(self) -> None:
-        """Signal that TX playback has finished (see IvrSession for the same pattern)."""
+        """Signal that TX playback has finished (see IvrSession for the same pattern).
+
+        Turn-start tone completion must not set ``_playback_done``: that event
+        is reserved for TTS wait and would otherwise open the mic mid-response.
+        """
+        if self._awaiting_tone and self._tone_done is not None:
+            self._tone_done.set()
+            return
         self._playback_done.set()
 
     def close(self) -> None:
@@ -180,6 +191,8 @@ class AssistBridge(AudioSink):
         self._post_barge_in_capture = False
         self._tts_epoch += 1
         self._playback_done.set()
+        if self._tone_done is not None:
+            self._tone_done.set()
         if self.session_task:
             self.session_task.cancel()
             self.session_task = None
@@ -264,12 +277,13 @@ class AssistBridge(AudioSink):
             audio_settings = self._build_audio_settings()
             LOGGER.info(
                 "Starting Voice Assist session (pipeline_id=%s, sample_rate=%d, "
-                "barge_in=%s, silence_seconds=%s, noise_suppression=%d)",
+                "barge_in=%s, silence_seconds=%s, noise_suppression=%d, turn_tone=%s)",
                 pipeline.id,
                 self.sample_rate,
                 self.barge_in,
                 self.silence_seconds if self.silence_seconds is not None else "default",
                 self.noise_suppression,
+                self.turn_tone,
             )
             while self._running:
                 self.audio_stream = AssistAudioStream()
@@ -285,6 +299,10 @@ class AssistBridge(AudioSink):
                 self._continue_conversation = False
                 self._turn_index = turns + 1
                 self._reset_barge_in_state()
+                if not preroll:
+                    await self._play_turn_tone()
+                    if not self._running:
+                        break
                 LOGGER.debug(
                     "Assist turn %d listening (conversation_id=%s, preroll=%d B)",
                     self._turn_index,
@@ -370,6 +388,30 @@ class AssistBridge(AudioSink):
                 error_turns,
             )
             self.on_done()
+
+    async def _play_turn_tone(self) -> None:
+        """Play the turn-start beep and wait until it finishes.
+
+        Failures and timeouts must not block the listening turn. The wait uses
+        a dedicated event so tone completion cannot unblock TTS playback wait.
+        """
+        if not self.turn_tone or self.play_source is None:
+            return
+        self._tone_done = asyncio.Event()
+        self._awaiting_tone = True
+        try:
+            self.play_source(ToneAudioSource())
+            try:
+                async with asyncio.timeout(3):
+                    await self._tone_done.wait()
+            except TimeoutError:
+                LOGGER.debug("Assist: turn tone playback-done timeout")
+                if self.stop_audio_fn:
+                    self.stop_audio_fn(flush=True)
+        except Exception:
+            LOGGER.exception("Assist: failed to play turn tone")
+        finally:
+            self._awaiting_tone = False
 
     async def _wait_playback_done(self) -> None:
         """Wait for TTS playback to finish before starting the next turn."""

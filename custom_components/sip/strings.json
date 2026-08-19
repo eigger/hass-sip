@@ -229,6 +229,10 @@
           "name": "Noise suppression",
           "description": "Noise suppression level applied to caller audio (0 = off, 4 = max). Helps on noisy narrowband G.711 lines."
         },
+        "turn_tone": {
+          "name": "Turn start tone",
+          "description": "Play a short beep when it is the caller's turn to speak (default false). Helps callers know when the microphone is open after TTS. Skipped when barge-in already captured speech."
+        },
         "hangup_on_end": {
           "name": "Hang up on end",
           "description": "Hang up the call when the Assist session ends."

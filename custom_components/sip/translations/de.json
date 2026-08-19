@@ -229,6 +229,10 @@
           "name": "Rauschunterdrückung",
           "description": "Stärke der Rauschunterdrückung für Anruferaudio (0 = aus, 4 = max). Hilft bei verrauschten Schmalband-G.711-Leitungen."
         },
+        "turn_tone": {
+          "name": "Rundenstart-Ton",
+          "description": "Kurzen Hinweisston abspielen, wenn der Anrufer sprechen darf (Standard false). So ist hörbar, wann das Mikrofon nach TTS geöffnet ist. Wird übersprungen, wenn Barge-in bereits Sprache erfasst hat."
+        },
         "hangup_on_end": {
           "name": "Bei Ende auflegen",
           "description": "Anruf beenden, wenn die Assist-Sitzung endet."
