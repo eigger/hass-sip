@@ -11,10 +11,10 @@ later by implementing the same tiny interfaces, without touching the SIP core.
 """
 from __future__ import annotations
 
-import array
 import asyncio
 import logging
 import math
+import struct
 import wave
 from abc import ABC, abstractmethod
 from typing import Callable
@@ -23,6 +23,13 @@ _LOGGER = logging.getLogger(__name__)
 
 PushFn = Callable[[bytes], None]
 ActiveFn = Callable[[], bool]
+
+_PCM_FRAME_SLEEP = 0.018
+
+
+def default_pcm_frame_bytes(sample_rate: int) -> int:
+    """Return 20 ms of s16le mono PCM at ``sample_rate``."""
+    return sample_rate // 50 * 2
 
 
 class AudioSource(ABC):
@@ -76,7 +83,39 @@ class WavRecorderSink(AudioSink):
             pass
 
 
-class FfmpegAudioSource(AudioSource):
+class _ConfiguredPcmSource(AudioSource):
+    """Shared negotiated-rate / paced-frame helpers for in-process PCM sources."""
+
+    def __init__(
+        self,
+        *,
+        sample_rate: int = 8000,
+        pcm_frame_bytes: int | None = None,
+    ) -> None:
+        self._sample_rate = sample_rate
+        self._pcm_frame_bytes = (
+            pcm_frame_bytes
+            if pcm_frame_bytes is not None
+            else default_pcm_frame_bytes(sample_rate)
+        )
+
+    def configure(self, sample_rate: int, pcm_frame_bytes: int) -> None:
+        """Update output rate to match the negotiated codec."""
+        self._sample_rate = sample_rate
+        self._pcm_frame_bytes = pcm_frame_bytes
+
+    async def _push_paced_pcm(
+        self, push: PushFn, is_active: ActiveFn, pcm: bytes
+    ) -> None:
+        offset = 0
+        frame = self._pcm_frame_bytes
+        while is_active() and offset < len(pcm):
+            push(pcm[offset : offset + frame])
+            offset += frame
+            await asyncio.sleep(_PCM_FRAME_SLEEP)
+
+
+class FfmpegAudioSource(_ConfiguredPcmSource):
     """Decode any media (file path, URL, or raw bytes) to mono PCM via ffmpeg.
 
     ffmpeg transparently handles WAV/MP3/etc. and produces the exact format the
@@ -97,20 +136,12 @@ class FfmpegAudioSource(AudioSource):
         sample_rate: int = 8000,
         pcm_frame_bytes: int | None = None,
     ) -> None:
+        super().__init__(sample_rate=sample_rate, pcm_frame_bytes=pcm_frame_bytes)
         if (url is None) == (data is None):
             raise ValueError("Provide exactly one of url/data")
         self._bin = ffmpeg_bin
         self._url = url
         self._data = data
-        self._sample_rate = sample_rate
-        self._pcm_frame_bytes = (
-            pcm_frame_bytes if pcm_frame_bytes is not None else sample_rate // 50 * 2
-        )
-
-    def configure(self, sample_rate: int, pcm_frame_bytes: int) -> None:
-        """Update output rate to match the negotiated codec."""
-        self._sample_rate = sample_rate
-        self._pcm_frame_bytes = pcm_frame_bytes
 
     async def run(self, push: PushFn, is_active: ActiveFn) -> None:
         src = self._url if self._url is not None else "pipe:0"
@@ -145,7 +176,7 @@ class FfmpegAudioSource(AudioSource):
                 if not chunk:
                     break
                 push(chunk)
-                await asyncio.sleep(0.018)
+                await asyncio.sleep(_PCM_FRAME_SLEEP)
         finally:
             if proc.returncode is None:
                 try:
@@ -155,7 +186,46 @@ class FfmpegAudioSource(AudioSource):
             await proc.wait()
 
 
-class ToneAudioSource(AudioSource):
+_TONE_PCM_CACHE: dict[tuple[int, int, int, float, int], bytes] = {}
+
+
+def _render_tone_pcm(
+    *,
+    sample_rate: int,
+    freq_hz: int,
+    duration_ms: int,
+    amplitude: float,
+    fade_ms: int,
+) -> bytes:
+    key = (sample_rate, freq_hz, duration_ms, amplitude, fade_ms)
+    cached = _TONE_PCM_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    n_samples = int(sample_rate * duration_ms / 1000)
+    if n_samples <= 0:
+        return b""
+
+    fade_samples = min(int(sample_rate * fade_ms / 1000), n_samples // 2)
+    peak = int(amplitude * 32767)
+    omega = 2.0 * math.pi * freq_hz / sample_rate
+    buf = bytearray(n_samples * 2)
+    last = n_samples - 1
+    for i in range(n_samples):
+        env = 1.0
+        if fade_samples > 0:
+            if i < fade_samples:
+                env = i / fade_samples
+            elif i > last - fade_samples:
+                env = (last - i) / fade_samples
+        struct.pack_into("<h", buf, i * 2, int(peak * env * math.sin(omega * i)))
+
+    pcm = bytes(buf)
+    _TONE_PCM_CACHE[key] = pcm
+    return pcm
+
+
+class ToneAudioSource(_ConfiguredPcmSource):
     """Generate a short sine burst for RTP TX without ffmpeg.
 
     A fade in/out is applied so the burst does not click on codecs that
@@ -172,47 +242,20 @@ class ToneAudioSource(AudioSource):
         sample_rate: int = 8000,
         pcm_frame_bytes: int | None = None,
     ) -> None:
+        super().__init__(sample_rate=sample_rate, pcm_frame_bytes=pcm_frame_bytes)
         self._freq_hz = freq_hz
         self._duration_ms = duration_ms
         self._amplitude = amplitude
         self._fade_ms = fade_ms
-        self._sample_rate = sample_rate
-        self._pcm_frame_bytes = (
-            pcm_frame_bytes if pcm_frame_bytes is not None else sample_rate // 50 * 2
-        )
-
-    def configure(self, sample_rate: int, pcm_frame_bytes: int) -> None:
-        """Update output rate to match the negotiated codec."""
-        self._sample_rate = sample_rate
-        self._pcm_frame_bytes = pcm_frame_bytes
 
     def _render_pcm(self) -> bytes:
-        n_samples = int(self._sample_rate * self._duration_ms / 1000)
-        if n_samples <= 0:
-            return b""
-        fade_samples = min(
-            int(self._sample_rate * self._fade_ms / 1000),
-            n_samples // 2,
+        return _render_tone_pcm(
+            sample_rate=self._sample_rate,
+            freq_hz=self._freq_hz,
+            duration_ms=self._duration_ms,
+            amplitude=self._amplitude,
+            fade_ms=self._fade_ms,
         )
-        peak = int(self._amplitude * 32767)
-        omega = 2.0 * math.pi * self._freq_hz / self._sample_rate
-        samples = array.array("h")
-        last = n_samples - 1
-        for i in range(n_samples):
-            env = 1.0
-            if fade_samples > 0:
-                if i < fade_samples:
-                    env = i / fade_samples
-                elif i > last - fade_samples:
-                    env = (last - i) / fade_samples
-            samples.append(int(peak * env * math.sin(omega * i)))
-        return samples.tobytes()
 
     async def run(self, push: PushFn, is_active: ActiveFn) -> None:
-        pcm = self._render_pcm()
-        offset = 0
-        frame = self._pcm_frame_bytes
-        while is_active() and offset < len(pcm):
-            push(pcm[offset : offset + frame])
-            offset += frame
-            await asyncio.sleep(0.018)
+        await self._push_paced_pcm(push, is_active, self._render_pcm())

@@ -146,6 +146,21 @@ def test_tone_audio_source_byte_count_and_fade():
     assert max(abs(s) for s in samples16) > 1000
 
 
+def test_tone_pcm_cache_reuses_rendered_bytes():
+    audio._TONE_PCM_CACHE.clear()
+    kwargs = {
+        "sample_rate": 8000,
+        "freq_hz": 880,
+        "duration_ms": 120,
+        "amplitude": 0.25,
+        "fade_ms": 10,
+    }
+    first = audio._render_tone_pcm(**kwargs)
+    second = audio._render_tone_pcm(**kwargs)
+    assert first is second
+    audio._TONE_PCM_CACHE.clear()
+
+
 # ------------------------------------------------------------ sip_message
 def test_parse_response():
     raw = (
@@ -852,7 +867,8 @@ def test_assist_playback_done_unblocks_next_turn():
         bridge.start()
         await asyncio.sleep(0.05)
         bridge._speaking = True
-        bridge._playback_done.clear()
+        bridge._tx_wait = "tts"
+        bridge._tx_done.clear()
         bridge.on_playback_done()
         if bridge.session_task:
             await bridge.session_task
@@ -1089,8 +1105,6 @@ def test_assist_tts_failure_signals_playback_done():
     failing_stream.async_stream_result = failing_result
     mock_tts.async_get_stream.return_value = failing_stream
 
-    playback_done = asyncio.Event()
-
     async def mock_pipeline(hass, **kwargs):
         cb = kwargs["event_callback"]
         cb(PE(PET.TTS_END, {"tts_output": {"token": "tok"}}))
@@ -1103,12 +1117,11 @@ def test_assist_tts_failure_signals_playback_done():
         on_done_fn=MagicMock(),
         max_turns=1,
     )
-    bridge._playback_done = playback_done
 
     async def run():
         bridge.start()
-        await asyncio.wait_for(playback_done.wait(), timeout=2)
-        assert playback_done.is_set()
+        await asyncio.wait_for(bridge._tx_done.wait(), timeout=2)
+        assert bridge._tx_done.is_set()
         if bridge.session_task:
             await bridge.session_task
 
@@ -1144,7 +1157,7 @@ def test_assist_barge_in_triggers_stop_and_preroll():
             bridge.write(frame)
         assert stop_calls == [True]
         assert bridge._barge_in_preroll
-        assert bridge._playback_done.is_set()
+        assert bridge._tx_done.is_set()
         assert bridge._post_barge_in_capture
     finally:
         assist_mod._VAD_MIN_SPEECH_FRAMES = original_min
@@ -1400,16 +1413,34 @@ def test_assist_turn_tone_playback_done_does_not_set_tts_event():
         on_done_fn=MagicMock(),
         turn_tone=True,
     )
-    bridge._awaiting_tone = True
-    bridge._tone_done = asyncio.Event()
-    assert not bridge._playback_done.is_set()
+    bridge._tx_wait = "tone"
+    bridge._tx_done.clear()
     bridge.on_playback_done()
-    assert bridge._tone_done.is_set()
-    assert not bridge._playback_done.is_set()
+    assert bridge._tx_done.is_set()
 
-    bridge._awaiting_tone = False
+    bridge._tx_wait = "tts"
+    bridge._tx_done.clear()
     bridge.on_playback_done()
-    assert bridge._playback_done.is_set()
+    assert bridge._tx_done.is_set()
+
+    bridge._tx_wait = None
+    bridge._tx_done.clear()
+    bridge.on_playback_done()
+    assert not bridge._tx_done.is_set()
+
+
+def test_assist_stale_tone_done_ignored_after_wait_cleared():
+    assist_mod, _, _, _ = _assist_ctx()
+    bridge = assist_mod.AssistBridge(
+        MagicMock(),
+        play_source_fn=MagicMock(),
+        on_done_fn=MagicMock(),
+        turn_tone=True,
+    )
+    bridge._tx_wait = None
+    bridge._tx_done.clear()
+    bridge.on_playback_done()
+    assert not bridge._tx_done.is_set()
 
 
 def test_assist_turn_tone_listening_after_playback_done():
@@ -1438,7 +1469,7 @@ def test_assist_turn_tone_listening_after_playback_done():
         bridge.start()
         await asyncio.sleep(0.05)
         assert bridge._listening is False
-        assert bridge._awaiting_tone is True
+        assert bridge._tx_wait == "tone"
         assert play_calls
         assert type(play_calls[0]).__name__ == "ToneAudioSource"
         bridge.on_playback_done()
@@ -1613,7 +1644,7 @@ def test_assist_close_unblocks_turn_tone_wait():
         bridge.start()
         task = bridge.session_task
         await asyncio.sleep(0.05)
-        assert bridge._awaiting_tone is True
+        assert bridge._tx_wait == "tone"
         t0 = asyncio.get_running_loop().time()
         bridge.close()
         try:
