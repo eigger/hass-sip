@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterable, Callable
+from typing import Literal
 
 from homeassistant.components import tts
 from homeassistant.components.assist_pipeline import (
@@ -39,6 +40,8 @@ _VAD_FRAME_BYTES = 320  # 10 ms @ 16 kHz s16le mono
 _VAD_SPEECH_THRESHOLD = 0.5
 _VAD_MIN_SPEECH_FRAMES = 30  # 300 ms consecutive speech
 _PREROLL_MAX_BYTES = 16000  # 500 ms @ 16 kHz s16le mono
+_TX_IDLE_TIMEOUT_SECONDS = 60.0
+_TxWaitKind = Literal["tts", "tone"]
 
 
 def _upsample_pcm(pcm_le: bytes, sample_rate: int) -> bytes:
@@ -117,6 +120,7 @@ class AssistBridge(AudioSink):
         noise_suppression: int = 0,
         turn_tone: bool = False,
         stop_audio_fn: Callable[..., None] | None = None,
+        media_playing_fn: Callable[[], bool] | None = None,
     ) -> None:
         """Initialize the Assist bridge."""
         self.hass = hass
@@ -131,6 +135,7 @@ class AssistBridge(AudioSink):
         self.noise_suppression = noise_suppression
         self.turn_tone = turn_tone
         self.stop_audio_fn = stop_audio_fn
+        self.media_playing_fn = media_playing_fn
 
         if barge_in and MicroVad is None:
             LOGGER.warning(
@@ -143,9 +148,8 @@ class AssistBridge(AudioSink):
         self._running = True
         self._listening = False
         self._speaking = False
-        self._playback_done = asyncio.Event()
-        self._tone_done: asyncio.Event | None = None
-        self._awaiting_tone = False
+        self._tx_done = asyncio.Event()
+        self._tx_wait: _TxWaitKind | None = None
         self._conversation_id: str | None = None
         self._turn_error: str | None = None
         self._turn_index = 0
@@ -168,7 +172,7 @@ class AssistBridge(AudioSink):
         """Receive incoming PCM from SIP client and feed it to Assist."""
         if self._listening:
             self.audio_stream.feed_audio(pcm_le, self.sample_rate)
-        elif self._awaiting_tone:
+        elif self._tx_wait == "tone":
             self._append_tone_capture(_upsample_pcm(pcm_le, self.sample_rate))
         elif self._post_barge_in_capture:
             self._append_rx_to_ring(_upsample_pcm(pcm_le, self.sample_rate))
@@ -178,13 +182,11 @@ class AssistBridge(AudioSink):
     def on_playback_done(self) -> None:
         """Signal that TX playback has finished (see IvrSession for the same pattern).
 
-        Turn-start tone completion must not set ``_playback_done``: that event
-        is reserved for TTS wait and would otherwise open the mic mid-response.
+        Only the waiter registered in ``_tx_wait`` is released so turn-start tone
+        completion cannot unblock a TTS wait (and vice versa).
         """
-        if self._awaiting_tone and self._tone_done is not None:
-            self._tone_done.set()
-            return
-        self._playback_done.set()
+        if self._tx_wait is not None:
+            self._tx_done.set()
 
     def close(self) -> None:
         """Stop the bridge and cancel running tasks."""
@@ -193,9 +195,8 @@ class AssistBridge(AudioSink):
         self._speaking = False
         self._post_barge_in_capture = False
         self._cancel_inflight_tts()
-        self._playback_done.set()
-        if self._tone_done is not None:
-            self._tone_done.set()
+        self._tx_wait = None
+        self._tx_done.set()
         if self.session_task:
             self.session_task.cancel()
             self.session_task = None
@@ -221,6 +222,25 @@ class AssistBridge(AudioSink):
         self._background_tasks.clear()
         if stop_audio and self.stop_audio_fn:
             self.stop_audio_fn(flush=True)
+
+    async def _wait_for_tx_idle(self) -> None:
+        """Wait until the SIP client is no longer transmitting audio.
+
+        ``play_source()`` cancels any in-flight TX, so callers must not start
+        a new source (turn tone, TTS, etc.) while the previous response is
+        still draining through RTP.
+        """
+        if self.media_playing_fn is None:
+            return
+        try:
+            async with asyncio.timeout(_TX_IDLE_TIMEOUT_SECONDS):
+                while self._running and self.media_playing_fn():
+                    await asyncio.sleep(0.02)
+        except TimeoutError:
+            LOGGER.warning(
+                "Assist: TX idle wait timeout after %.0fs; continuing",
+                _TX_IDLE_TIMEOUT_SECONDS,
+            )
 
     def _monitor_barge_in(self, pcm_le: bytes) -> None:
         """Detect caller speech during TTS playback and trigger barge-in."""
@@ -248,7 +268,7 @@ class AssistBridge(AudioSink):
         self._vad_speech_frames = 0
         self._ring_buffer.clear()
         self._post_barge_in_capture = True
-        self._playback_done.set()
+        self._tx_done.set()
 
     def _build_audio_settings(self) -> AudioSettings | None:
         """Return pipeline audio settings, or None to keep Assist defaults.
@@ -417,15 +437,18 @@ class AssistBridge(AudioSink):
         """
         if not self.turn_tone or self.play_source is None:
             return b""
-        self._tone_done = asyncio.Event()
-        self._awaiting_tone = True
+        self._tx_wait = "tone"
+        self._tx_done.clear()
         self._tone_capture = bytearray()
         timed_out = False
         try:
+            await self._wait_for_tx_idle()
+            if not self._running:
+                return b""
             self.play_source(ToneAudioSource())
             try:
                 async with asyncio.timeout(3):
-                    await self._tone_done.wait()
+                    await self._tx_done.wait()
             except TimeoutError:
                 timed_out = True
                 LOGGER.debug("Assist: turn tone playback-done timeout")
@@ -435,7 +458,7 @@ class AssistBridge(AudioSink):
             LOGGER.exception("Assist: failed to play turn tone")
             timed_out = True
         finally:
-            self._awaiting_tone = False
+            self._tx_wait = None
         if timed_out and self._tone_capture:
             return bytes(self._tone_capture)
         return b""
@@ -446,7 +469,7 @@ class AssistBridge(AudioSink):
             return
         try:
             async with asyncio.timeout(30):
-                await self._playback_done.wait()
+                await self._tx_done.wait()
         except TimeoutError:
             LOGGER.warning("Assist: playback-done timeout; continuing")
             # Only cancel/stop when a TTS fetch task is still in flight. Once
@@ -454,8 +477,10 @@ class AssistBridge(AudioSink):
             # RTP keeps playing — flushing there would cut long responses.
             if self._background_tasks:
                 self._cancel_inflight_tts(stop_audio=True)
+        await self._wait_for_tx_idle()
         ended_by_barge_in = self._post_barge_in_capture
-        self._playback_done.clear()
+        self._tx_done.clear()
+        self._tx_wait = None
         self._speaking = False
         if not ended_by_barge_in:
             self._reset_barge_in_state()
@@ -496,7 +521,8 @@ class AssistBridge(AudioSink):
                 and (stream := tts.async_get_stream(self.hass, tts_output["token"]))
             ):
                 self._speaking = True
-                self._playback_done.clear()
+                self._tx_wait = "tts"
+                self._tx_done.clear()
                 self._reset_barge_in_state()
                 self._tts_epoch += 1
                 epoch = self._tts_epoch
@@ -521,8 +547,11 @@ class AssistBridge(AudioSink):
 
             wav_data = b"".join(chunks)
             source = FfmpegAudioSource(data=wav_data, ffmpeg_bin=get_ffmpeg_bin(self.hass))
+            await self._wait_for_tx_idle()
+            if epoch != self._tts_epoch:
+                return
             self.play_source(source)
         except Exception as err:
             LOGGER.exception("Error playing Assist TTS response: %s", err)
             if epoch == self._tts_epoch:
-                self._playback_done.set()
+                self._tx_done.set()
