@@ -1032,6 +1032,24 @@ def test_assist_turn_tone_defers_until_media_idle():
     assert play_calls == ["ToneAudioSource"]
 
 
+def test_assist_wait_for_tx_idle_times_out():
+    assist_mod, _, _, _ = _assist_ctx()
+
+    async def run():
+        bridge = assist_mod.AssistBridge(
+            MagicMock(),
+            play_source_fn=MagicMock(),
+            on_done_fn=MagicMock(),
+            media_playing_fn=lambda: True,
+        )
+        t0 = asyncio.get_running_loop().time()
+        with patch.object(assist_mod, "_TX_IDLE_TIMEOUT_SECONDS", 0.05):
+            await bridge._wait_for_tx_idle()
+        assert asyncio.get_running_loop().time() - t0 < 1.0
+
+    asyncio.run(run())
+
+
 def test_assist_close_during_session():
     assist_mod, mock_ap, PET, PE = _assist_ctx()
     done_calls = []

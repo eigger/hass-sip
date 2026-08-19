@@ -40,6 +40,7 @@ _VAD_FRAME_BYTES = 320  # 10 ms @ 16 kHz s16le mono
 _VAD_SPEECH_THRESHOLD = 0.5
 _VAD_MIN_SPEECH_FRAMES = 30  # 300 ms consecutive speech
 _PREROLL_MAX_BYTES = 16000  # 500 ms @ 16 kHz s16le mono
+_TX_IDLE_TIMEOUT_SECONDS = 60.0
 _TxWaitKind = Literal["tts", "tone"]
 
 
@@ -231,8 +232,15 @@ class AssistBridge(AudioSink):
         """
         if self.media_playing_fn is None:
             return
-        while self._running and self.media_playing_fn():
-            await asyncio.sleep(0.02)
+        try:
+            async with asyncio.timeout(_TX_IDLE_TIMEOUT_SECONDS):
+                while self._running and self.media_playing_fn():
+                    await asyncio.sleep(0.02)
+        except TimeoutError:
+            LOGGER.warning(
+                "Assist: TX idle wait timeout after %.0fs; continuing",
+                _TX_IDLE_TIMEOUT_SECONDS,
+            )
 
     def _monitor_barge_in(self, pcm_le: bytes) -> None:
         """Detect caller speech during TTS playback and trigger barge-in."""
