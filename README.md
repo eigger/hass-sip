@@ -439,6 +439,16 @@ action:
       entity_id: media_player.phone_line
     data:
       max_silent_turns: 2
+```
+
+On a noisy or narrowband (G.711) line, the assistant may react to line noise or a breath before the caller speaks. Raise `silence_seconds` and enable `noise_suppression` to compensate:
+
+```yaml
+  - service: sip.start_assist
+    target:
+      entity_id: media_player.phone_line
+    data:
+      max_silent_turns: 2
       silence_seconds: 1.2
       noise_suppression: 2
 ```
