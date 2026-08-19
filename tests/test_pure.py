@@ -972,6 +972,66 @@ def test_assist_playback_timeout_does_not_stop_long_playback():
     asyncio.run(run())
 
 
+def test_assist_wait_playback_done_waits_for_media_idle():
+    assist_mod, _, _, _ = _assist_ctx()
+    polls: list[int] = []
+    media_state = {"playing": True}
+
+    def media_fn() -> bool:
+        polls.append(1)
+        if len(polls) >= 3:
+            media_state["playing"] = False
+        return media_state["playing"]
+
+    async def run():
+        bridge = assist_mod.AssistBridge(
+            MagicMock(),
+            play_source_fn=MagicMock(),
+            on_done_fn=MagicMock(),
+            media_playing_fn=media_fn,
+        )
+        bridge._speaking = True
+        bridge._tx_wait = "tts"
+        bridge._tx_done.set()
+        await bridge._wait_playback_done()
+        assert len(polls) >= 3
+        assert bridge._speaking is False
+
+    asyncio.run(run())
+
+
+def test_assist_turn_tone_defers_until_media_idle():
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    play_calls: list[str] = []
+    media_state = {"playing": True}
+
+    async def mock_pipeline(hass, **kwargs):
+        kwargs["event_callback"](PE(PET.ERROR, {"code": "stt-no-text-recognized"}))
+
+    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
+
+    bridge = assist_mod.AssistBridge(
+        MagicMock(),
+        play_source_fn=lambda src: play_calls.append(type(src).__name__),
+        on_done_fn=MagicMock(),
+        max_silent_turns=1,
+        turn_tone=True,
+        media_playing_fn=lambda: media_state["playing"],
+    )
+
+    async def run():
+        bridge.start()
+        await asyncio.sleep(0.05)
+        assert not play_calls
+        media_state["playing"] = False
+        bridge.on_playback_done()
+        if bridge.session_task:
+            await bridge.session_task
+
+    asyncio.run(run())
+    assert play_calls == ["ToneAudioSource"]
+
+
 def test_assist_close_during_session():
     assist_mod, mock_ap, PET, PE = _assist_ctx()
     done_calls = []

@@ -119,6 +119,7 @@ class AssistBridge(AudioSink):
         noise_suppression: int = 0,
         turn_tone: bool = False,
         stop_audio_fn: Callable[..., None] | None = None,
+        media_playing_fn: Callable[[], bool] | None = None,
     ) -> None:
         """Initialize the Assist bridge."""
         self.hass = hass
@@ -133,6 +134,7 @@ class AssistBridge(AudioSink):
         self.noise_suppression = noise_suppression
         self.turn_tone = turn_tone
         self.stop_audio_fn = stop_audio_fn
+        self.media_playing_fn = media_playing_fn
 
         if barge_in and MicroVad is None:
             LOGGER.warning(
@@ -219,6 +221,18 @@ class AssistBridge(AudioSink):
         self._background_tasks.clear()
         if stop_audio and self.stop_audio_fn:
             self.stop_audio_fn(flush=True)
+
+    async def _wait_for_tx_idle(self) -> None:
+        """Wait until the SIP client is no longer transmitting audio.
+
+        ``play_source()`` cancels any in-flight TX, so callers must not start
+        a new source (turn tone, TTS, etc.) while the previous response is
+        still draining through RTP.
+        """
+        if self.media_playing_fn is None:
+            return
+        while self._running and self.media_playing_fn():
+            await asyncio.sleep(0.02)
 
     def _monitor_barge_in(self, pcm_le: bytes) -> None:
         """Detect caller speech during TTS playback and trigger barge-in."""
@@ -420,6 +434,9 @@ class AssistBridge(AudioSink):
         self._tone_capture = bytearray()
         timed_out = False
         try:
+            await self._wait_for_tx_idle()
+            if not self._running:
+                return b""
             self.play_source(ToneAudioSource())
             try:
                 async with asyncio.timeout(3):
@@ -452,6 +469,7 @@ class AssistBridge(AudioSink):
             # RTP keeps playing — flushing there would cut long responses.
             if self._background_tasks:
                 self._cancel_inflight_tts(stop_audio=True)
+        await self._wait_for_tx_idle()
         ended_by_barge_in = self._post_barge_in_capture
         self._tx_done.clear()
         self._tx_wait = None
@@ -521,6 +539,9 @@ class AssistBridge(AudioSink):
 
             wav_data = b"".join(chunks)
             source = FfmpegAudioSource(data=wav_data, ffmpeg_bin=get_ffmpeg_bin(self.hass))
+            await self._wait_for_tx_idle()
+            if epoch != self._tts_epoch:
+                return
             self.play_source(source)
         except Exception as err:
             LOGGER.exception("Error playing Assist TTS response: %s", err)

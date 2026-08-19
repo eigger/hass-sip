@@ -425,6 +425,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             noise_suppression=noise_suppression,
             turn_tone=turn_tone,
             stop_audio_fn=client.stop_audio,
+            media_playing_fn=lambda: client.media_playing,
         )
 
         def on_assist_done() -> None:
