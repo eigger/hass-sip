@@ -221,6 +221,14 @@
           "name": "끼어들기",
           "description": "TTS 응답 중 말하여 끼어들기 허용 (pymicro_vad 필요; 기본 false; 에코 제거 없는 스피커폰에서 자기 트리거 위험)."
         },
+        "silence_seconds": {
+          "name": "무음 종료 시간",
+          "description": "발화 종료로 판정할 무음 길이(초). Assist 기본값은 0.7이며, 전화선에서는 보통 1.0~1.5가 필요해 말이 중간에 끊기지 않습니다."
+        },
+        "noise_suppression": {
+          "name": "잡음 억제",
+          "description": "수신 음성에 적용할 잡음 억제 강도(0 = 끔, 4 = 최대). 협대역 G.711 회선의 잡음에 도움이 됩니다."
+        },
         "hangup_on_end": {
           "name": "종료 시 끊기",
           "description": "Assist 세션 종료 시 통화를 끊습니다."

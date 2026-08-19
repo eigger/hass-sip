@@ -102,7 +102,11 @@ The session ends when:
 - `max_turns` *(Optional)*: Maximum conversation turns before ending (default: `0` = unlimited).
 - `max_silent_turns` *(Optional)*: Consecutive no-speech turns before ending (default: `2`).
 - `barge_in` *(Optional)*: Allow interrupting TTS mid-response by speaking (default: `false`; requires `pymicro_vad` from the Assist pipeline integration; may self-trigger on speakerphones without echo cancellation).
+- `silence_seconds` *(Optional)*: Seconds of silence that end a spoken command. Assist defaults to `0.7`, which is tuned for near-field microphones; phone lines usually need `1.0`–`1.5` so callers are not cut off mid-sentence.
+- `noise_suppression` *(Optional)*: Noise suppression level applied to caller audio, `0` (off) to `4` (max). Helps on noisy narrowband G.711 lines where line noise is otherwise mistaken for speech.
 - `hangup_on_end` *(Optional)*: Hang up the call when the Assist session ends (default: `false`).
+
+> **Tuning for phone calls**: the Assist defaults assume a smart speaker's microphone. On a telephone line, line noise and codec artefacts can trip the voice detector before the caller speaks — the symptom is a reply to a cough or a breath, followed by the real question being split across two turns. Raising `silence_seconds` and enabling `noise_suppression` addresses this; enabling `barge_in` (handsets only) additionally lets a caller talk over a response instead of losing that audio.
 
 ---
 
@@ -435,6 +439,8 @@ action:
       entity_id: media_player.phone_line
     data:
       max_silent_turns: 2
+      silence_seconds: 1.2
+      noise_suppression: 2
 ```
 
 ---

@@ -221,6 +221,14 @@
           "name": "Unterbrechen",
           "description": "TTS-Antworten durch Sprechen unterbrechen (benötigt pymicro_vad; Standard false; kann bei Freisprecheinrichtungen ohne Echokompensation selbst auslösen)."
         },
+        "silence_seconds": {
+          "name": "Stille-Zeitlimit",
+          "description": "Sekunden Stille, die einen Sprachbefehl beenden. Assist verwendet standardmäßig 0,7; Telefonleitungen benötigen meist 1,0-1,5, damit Anrufer nicht mitten im Satz abgeschnitten werden."
+        },
+        "noise_suppression": {
+          "name": "Rauschunterdrückung",
+          "description": "Stärke der Rauschunterdrückung für Anruferaudio (0 = aus, 4 = max). Hilft bei verrauschten Schmalband-G.711-Leitungen."
+        },
         "hangup_on_end": {
           "name": "Bei Ende auflegen",
           "description": "Anruf beenden, wenn die Assist-Sitzung endet."

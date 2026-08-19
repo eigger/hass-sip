@@ -6,6 +6,7 @@ from collections.abc import AsyncIterable, Callable
 
 from homeassistant.components import tts
 from homeassistant.components.assist_pipeline import (
+    AudioSettings,
     PipelineEvent,
     PipelineEventType,
     PipelineStage,
@@ -50,6 +51,20 @@ def _upsample_pcm(pcm_le: bytes, sample_rate: int) -> bytes:
         resampled[i * 2 : i * 2 + 2] = sample
         resampled[i * 2 + 2 : i * 2 + 4] = sample
     return bytes(resampled)
+
+
+def _stt_text(data: dict | None) -> str:
+    """Return the transcript from an STT_END event, or "" when absent."""
+    if not data:
+        return ""
+    return (data.get("stt_output") or {}).get("text", "")
+
+
+def _intent_speech(intent_output: dict) -> str:
+    """Return the spoken response text from an INTENT_END payload."""
+    response = intent_output.get("response") or {}
+    speech = (response.get("speech") or {}).get("plain") or {}
+    return speech.get("speech", "")
 
 
 class AssistAudioStream(AsyncIterable[bytes]):
@@ -98,6 +113,8 @@ class AssistBridge(AudioSink):
         max_turns: int = 0,
         max_silent_turns: int = 2,
         barge_in: bool = False,
+        silence_seconds: float | None = None,
+        noise_suppression: int = 0,
         stop_audio_fn: Callable[..., None] | None = None,
     ) -> None:
         """Initialize the Assist bridge."""
@@ -109,6 +126,8 @@ class AssistBridge(AudioSink):
         self.max_turns = max_turns
         self.max_silent_turns = max_silent_turns
         self.barge_in = barge_in
+        self.silence_seconds = silence_seconds
+        self.noise_suppression = noise_suppression
         self.stop_audio_fn = stop_audio_fn
 
         if barge_in and MicroVad is None:
@@ -125,6 +144,7 @@ class AssistBridge(AudioSink):
         self._playback_done = asyncio.Event()
         self._conversation_id: str | None = None
         self._turn_error: str | None = None
+        self._turn_index = 0
         self._continue_conversation = False
         self._background_tasks: set[asyncio.Task] = set()
         self._barge_in_preroll = b""
@@ -202,6 +222,23 @@ class AssistBridge(AudioSink):
             self.stop_audio_fn(flush=True)
         self._playback_done.set()
 
+    def _build_audio_settings(self) -> AudioSettings | None:
+        """Return pipeline audio settings, or None to keep Assist defaults.
+
+        The Assist defaults (0.7 s of silence ends a command) are tuned for
+        near-field microphones. Telephone lines carry line noise and codec
+        artefacts that the VAD readily mistakes for speech, so callers can
+        lengthen the silence window and enable noise suppression per call.
+        """
+        if self.silence_seconds is None and not self.noise_suppression:
+            return None
+        kwargs: dict[str, float | int] = {}
+        if self.silence_seconds is not None:
+            kwargs["silence_seconds"] = self.silence_seconds
+        if self.noise_suppression:
+            kwargs["noise_suppression_level"] = self.noise_suppression
+        return AudioSettings(**kwargs)
+
     def _reset_barge_in_state(self) -> None:
         self._ring_buffer.clear()
         self._vad_pending.clear()
@@ -212,6 +249,8 @@ class AssistBridge(AudioSink):
         silent_streak = 0
         error_streak = 0
         turns = 0
+        silent_turns = 0
+        error_turns = 0
         try:
             pipeline = async_get_pipeline(self.hass, self.pipeline_id)
             stt_metadata = SpeechMetadata(
@@ -222,10 +261,15 @@ class AssistBridge(AudioSink):
                 sample_rate=AudioSampleRates.SAMPLERATE_16000,
                 channel=AudioChannels.CHANNEL_MONO,
             )
+            audio_settings = self._build_audio_settings()
             LOGGER.info(
-                "Starting Voice Assist session (pipeline_id=%s, barge_in=%s)",
+                "Starting Voice Assist session (pipeline_id=%s, sample_rate=%d, "
+                "barge_in=%s, silence_seconds=%s, noise_suppression=%d)",
                 pipeline.id,
+                self.sample_rate,
                 self.barge_in,
+                self.silence_seconds if self.silence_seconds is not None else "default",
+                self.noise_suppression,
             )
             while self._running:
                 self.audio_stream = AssistAudioStream()
@@ -239,7 +283,14 @@ class AssistBridge(AudioSink):
                     self.audio_stream.inject_preroll(preroll)
                 self._turn_error = None
                 self._continue_conversation = False
+                self._turn_index = turns + 1
                 self._reset_barge_in_state()
+                LOGGER.debug(
+                    "Assist turn %d listening (conversation_id=%s, preroll=%d B)",
+                    self._turn_index,
+                    self._conversation_id,
+                    len(preroll),
+                )
                 self._listening = True
                 try:
                     await async_pipeline_from_audio_stream(
@@ -250,6 +301,7 @@ class AssistBridge(AudioSink):
                         stt_stream=self.audio_stream,
                         pipeline_id=pipeline.id,
                         conversation_id=self._conversation_id,
+                        audio_settings=audio_settings,
                         start_stage=PipelineStage.STT,
                         end_stage=PipelineStage.TTS,
                     )
@@ -262,13 +314,24 @@ class AssistBridge(AudioSink):
                     error_streak = 0
                 elif self._turn_error in _SILENT_TURN_ERRORS:
                     silent_streak += 1
+                    silent_turns += 1
                     error_streak = 0
                 elif self._turn_error:
                     silent_streak = 0
                     error_streak += 1
+                    error_turns += 1
                 else:
                     silent_streak = 0
                     error_streak = 0
+                LOGGER.debug(
+                    "Assist turn %d ended (error=%s, continue=%s, "
+                    "silent_streak=%d, error_streak=%d)",
+                    turns,
+                    self._turn_error,
+                    self._continue_conversation,
+                    silent_streak,
+                    error_streak,
+                )
 
                 await self._wait_playback_done()
 
@@ -300,7 +363,12 @@ class AssistBridge(AudioSink):
             self._listening = False
             self._speaking = False
             self._post_barge_in_capture = False
-            LOGGER.info("Voice Assist pipeline session ended")
+            LOGGER.info(
+                "Voice Assist session ended: %d turns (%d silent, %d errored)",
+                turns,
+                silent_turns,
+                error_turns,
+            )
             self.on_done()
 
     async def _wait_playback_done(self) -> None:
@@ -329,11 +397,23 @@ class AssistBridge(AudioSink):
         if event.type == PipelineEventType.RUN_START:
             if event.data:
                 self._conversation_id = event.data.get("conversation_id")
+        elif event.type == PipelineEventType.STT_END:
+            LOGGER.debug(
+                "Assist turn %d recognized: %r",
+                self._turn_index,
+                _stt_text(event.data),
+            )
         elif event.type == PipelineEventType.INTENT_END:
             if event.data:
                 intent_output = event.data.get("intent_output") or {}
                 self._continue_conversation = bool(
                     intent_output.get("continue_conversation")
+                )
+                LOGGER.debug(
+                    "Assist turn %d response: %r (continue=%s)",
+                    self._turn_index,
+                    _intent_speech(intent_output),
+                    self._continue_conversation,
                 )
         elif event.type == PipelineEventType.TTS_END:
             if (
