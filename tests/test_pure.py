@@ -613,6 +613,7 @@ def _setup_assist_deps():
 
     class _PipelineEventType:
         RUN_START = "run-start"
+        STT_END = "stt-end"
         INTENT_END = "intent-end"
         TTS_END = "tts-end"
         ERROR = "error"
@@ -626,7 +627,14 @@ def _setup_assist_deps():
             self.type = event_type
             self.data = data if data is not None else {}
 
+    class _AudioSettings:
+        """Records the kwargs assist.py builds, so tests can assert on them."""
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
     mock_ap = MagicMock()
+    mock_ap.AudioSettings = _AudioSettings
     mock_ap.PipelineEventType = _PipelineEventType
     mock_ap.PipelineStage = _PipelineStage
     mock_ap.PipelineEvent = _PipelineEvent
@@ -1196,6 +1204,91 @@ def test_call_ended_restores_sink_when_assist_bridge_cleared():
     on_call_ended()
     assert state["assist_bridge"] is None
     assert state["sink"] == "null"
+
+
+def _run_one_turn(assist_mod, mock_ap, PET, PE, **bridge_kwargs):
+    """Run a single pipeline turn and return the kwargs it was called with."""
+    captured = {}
+
+    async def mock_pipeline(hass, **kwargs):
+        captured.update(kwargs)
+        kwargs["event_callback"](PE(PET.ERROR, {"code": "stt-no-text-recognized"}))
+
+    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
+    bridge = assist_mod.AssistBridge(
+        MagicMock(),
+        play_source_fn=MagicMock(),
+        on_done_fn=MagicMock(),
+        max_silent_turns=1,
+        **bridge_kwargs,
+    )
+    _run_bridge_session(bridge)
+    return captured
+
+
+def test_assist_audio_settings_omitted_by_default():
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    captured = _run_one_turn(assist_mod, mock_ap, PET, PE)
+    # None keeps Home Assistant's own AudioSettings() defaults.
+    assert captured["audio_settings"] is None
+
+
+def test_assist_audio_settings_passed_when_tuned():
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    captured = _run_one_turn(
+        assist_mod, mock_ap, PET, PE, silence_seconds=1.2, noise_suppression=3
+    )
+    settings = captured["audio_settings"]
+    assert settings is not None
+    assert settings.kwargs == {"silence_seconds": 1.2, "noise_suppression_level": 3}
+
+
+def test_assist_audio_settings_partial_options():
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    captured = _run_one_turn(assist_mod, mock_ap, PET, PE, silence_seconds=1.5)
+    assert captured["audio_settings"].kwargs == {"silence_seconds": 1.5}
+
+    captured = _run_one_turn(assist_mod, mock_ap, PET, PE, noise_suppression=2)
+    assert captured["audio_settings"].kwargs == {"noise_suppression_level": 2}
+
+
+def test_assist_stt_and_intent_text_extractors():
+    assist_mod, _, _, _ = _assist_ctx()
+    assert assist_mod._stt_text({"stt_output": {"text": "turn on the light"}}) == (
+        "turn on the light"
+    )
+    assert assist_mod._stt_text(None) == ""
+    assert assist_mod._stt_text({}) == ""
+    assert assist_mod._stt_text({"stt_output": None}) == ""
+
+    intent_output = {"response": {"speech": {"plain": {"speech": "Done."}}}}
+    assert assist_mod._intent_speech(intent_output) == "Done."
+    assert assist_mod._intent_speech({}) == ""
+    assert assist_mod._intent_speech({"response": {"speech": None}}) == ""
+
+
+def test_assist_stt_end_event_is_logged_without_error():
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    turns = []
+
+    async def mock_pipeline(hass, **kwargs):
+        cb = kwargs["event_callback"]
+        turns.append(1)
+        cb(PE(PET.STT_END, {"stt_output": {"text": "hello"}}))
+        cb(PE(PET.INTENT_END, {"intent_output": {"response": {}}}))
+        cb(PE(PET.ERROR, {"code": "stt-no-text-recognized"}))
+
+    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
+    bridge = assist_mod.AssistBridge(
+        MagicMock(),
+        play_source_fn=MagicMock(),
+        on_done_fn=MagicMock(),
+        max_silent_turns=1,
+    )
+    _run_bridge_session(bridge)
+    assert turns == [1]
+    assert bridge._turn_index == 1
+
 
 
 # ------------------------------------------------------- config_flow schema

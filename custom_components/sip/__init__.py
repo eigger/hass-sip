@@ -135,6 +135,12 @@ SERVICE_ASSIST_SCHEMA = cv.make_entity_service_schema(
         vol.Optional("max_turns"): vol.All(vol.Coerce(int), vol.Range(min=0)),
         vol.Optional("max_silent_turns"): vol.All(vol.Coerce(int), vol.Range(min=1)),
         vol.Optional("barge_in"): cv.boolean,
+        vol.Optional("silence_seconds"): vol.All(
+            vol.Coerce(float), vol.Range(min=0.3, max=5.0)
+        ),
+        vol.Optional("noise_suppression"): vol.All(
+            vol.Coerce(int), vol.Range(min=0, max=4)
+        ),
         vol.Optional("hangup_on_end"): cv.boolean,
     }
 )
@@ -396,6 +402,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         max_turns: int = 0,
         max_silent_turns: int = 2,
         barge_in: bool = False,
+        silence_seconds: float | None = None,
+        noise_suppression: int = 0,
         hangup_on_end: bool = False,
     ) -> None:
         nonlocal assist_bridge
@@ -411,6 +419,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             max_turns=max_turns,
             max_silent_turns=max_silent_turns,
             barge_in=barge_in,
+            silence_seconds=silence_seconds,
+            noise_suppression=noise_suppression,
             stop_audio_fn=client.stop_audio,
         )
 
@@ -752,6 +762,8 @@ async def async_register_services(hass: HomeAssistant) -> None:
                 "max_turns",
                 "max_silent_turns",
                 "barge_in",
+                "silence_seconds",
+                "noise_suppression",
                 "hangup_on_end",
             )
             if k in call.data

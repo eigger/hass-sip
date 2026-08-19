@@ -221,6 +221,14 @@
           "name": "Barge-in",
           "description": "Allow interrupting TTS responses by speaking (requires pymicro_vad; default false; may self-trigger on speakerphones without echo cancellation)."
         },
+        "silence_seconds": {
+          "name": "Silence timeout",
+          "description": "Seconds of silence that end a spoken command. Assist defaults to 0.7; phone lines usually need 1.0-1.5 so callers are not cut off mid-sentence."
+        },
+        "noise_suppression": {
+          "name": "Noise suppression",
+          "description": "Noise suppression level applied to caller audio (0 = off, 4 = max). Helps on noisy narrowband G.711 lines."
+        },
         "hangup_on_end": {
           "name": "Hang up on end",
           "description": "Hang up the call when the Assist session ends."
