@@ -869,8 +869,12 @@ def test_assist_playback_timeout_continues():
             MagicMock(),
             play_source_fn=MagicMock(),
             on_done_fn=MagicMock(),
+            stop_audio_fn=MagicMock(),
         )
         bridge._speaking = True
+        bridge._tts_epoch = 4
+        stale_task = asyncio.create_task(asyncio.sleep(60))
+        bridge._background_tasks.add(stale_task)
         real_timeout = asyncio.timeout
 
         def short_timeout(delay):
@@ -881,8 +885,50 @@ def test_assist_playback_timeout_continues():
         with um.patch("asyncio.timeout", short_timeout):
             await bridge._wait_playback_done()
         assert bridge._speaking is False
+        assert bridge._tts_epoch == 5
+        assert stale_task.cancelled()
 
     asyncio.run(run())
+
+
+def test_assist_playback_timeout_stale_tts_does_not_play():
+    assist_mod, _, _, _ = _assist_ctx()
+    play_calls = []
+    release = asyncio.Event()
+
+    async def slow_stream():
+        await release.wait()
+        yield b"RIFF...."
+
+    stream = MagicMock()
+    stream.async_stream_result = slow_stream
+
+    async def run():
+        bridge = assist_mod.AssistBridge(
+            MagicMock(),
+            play_source_fn=lambda src: play_calls.append(type(src).__name__),
+            on_done_fn=MagicMock(),
+            stop_audio_fn=MagicMock(),
+        )
+        bridge._speaking = True
+        task = asyncio.create_task(bridge._play_tts_stream(stream, epoch=1))
+        bridge._background_tasks.add(task)
+        await asyncio.sleep(0.02)
+        real_timeout = asyncio.timeout
+
+        def short_timeout(delay):
+            return real_timeout(0.05)
+
+        with patch("asyncio.timeout", short_timeout):
+            await bridge._wait_playback_done()
+        release.set()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(run())
+    assert not play_calls
 
 
 def test_assist_close_during_session():
@@ -1376,6 +1422,78 @@ def test_assist_turn_tone_listening_after_playback_done():
 
     asyncio.run(run())
     assert listening_at_pipeline == [True]
+
+
+def test_assist_turn_tone_timeout_preserves_captured_speech():
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    captured_chunks = []
+
+    async def mock_pipeline(hass, **kwargs):
+        stream = kwargs["stt_stream"]
+        captured_chunks.append(await asyncio.wait_for(stream.queue.get(), timeout=0.5))
+        kwargs["event_callback"](PE(PET.ERROR, {"code": "stt-no-text-recognized"}))
+
+    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
+
+    bridge = assist_mod.AssistBridge(
+        MagicMock(),
+        play_source_fn=MagicMock(),
+        on_done_fn=MagicMock(),
+        max_silent_turns=1,
+        turn_tone=True,
+        stop_audio_fn=MagicMock(),
+    )
+    marker = b"\xab\xcd" * 80
+
+    async def run():
+        real_timeout = asyncio.timeout
+
+        def short_tone_timeout(delay):
+            if delay == 3:
+                return real_timeout(0.05)
+            return real_timeout(delay)
+
+        with patch("asyncio.timeout", short_tone_timeout):
+            bridge.start()
+            await asyncio.sleep(0.02)
+            bridge.write(marker)
+            if bridge.session_task:
+                await bridge.session_task
+
+    asyncio.run(run())
+    assert captured_chunks
+    assert b"\xab\xcd" in captured_chunks[0]
+
+
+def test_assist_turn_tone_success_does_not_inject_captured_speech():
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    queue_sizes_at_pipeline = []
+
+    async def mock_pipeline(hass, **kwargs):
+        queue_sizes_at_pipeline.append(kwargs["stt_stream"].queue.qsize())
+        kwargs["event_callback"](PE(PET.ERROR, {"code": "stt-no-text-recognized"}))
+
+    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
+
+    bridge = assist_mod.AssistBridge(
+        MagicMock(),
+        play_source_fn=MagicMock(),
+        on_done_fn=MagicMock(),
+        max_silent_turns=1,
+        turn_tone=True,
+    )
+    marker = b"\xef\xbe" * 80
+
+    async def run():
+        bridge.start()
+        await asyncio.sleep(0.02)
+        bridge.write(marker)
+        bridge.on_playback_done()
+        if bridge.session_task:
+            await bridge.session_task
+
+    asyncio.run(run())
+    assert queue_sizes_at_pipeline == [0]
 
 
 def test_assist_turn_tone_timeout_continues_turn():
