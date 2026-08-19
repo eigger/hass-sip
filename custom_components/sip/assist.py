@@ -41,6 +41,11 @@ _VAD_SPEECH_THRESHOLD = 0.5
 _VAD_MIN_SPEECH_FRAMES = 30  # 300 ms consecutive speech
 _PREROLL_MAX_BYTES = 16000  # 500 ms @ 16 kHz s16le mono
 _TX_IDLE_TIMEOUT_SECONDS = 60.0
+_TONE_WAIT_TIMEOUT_SECONDS = 3
+# Real-time playback of an LLM-generated response can legitimately run past a
+# minute; this is a safety net for a lost on_playback_done signal, not a
+# normal-case ceiling, so it stays generous.
+_TTS_WAIT_TIMEOUT_SECONDS = 300
 _TxWaitKind = Literal["tts", "tone"]
 
 
@@ -447,7 +452,7 @@ class AssistBridge(AudioSink):
                 return b""
             self.play_source(ToneAudioSource())
             try:
-                async with asyncio.timeout(3):
+                async with asyncio.timeout(_TONE_WAIT_TIMEOUT_SECONDS):
                     await self._tx_done.wait()
             except TimeoutError:
                 timed_out = True
@@ -468,7 +473,7 @@ class AssistBridge(AudioSink):
         if not self._speaking:
             return
         try:
-            async with asyncio.timeout(30):
+            async with asyncio.timeout(_TTS_WAIT_TIMEOUT_SECONDS):
                 await self._tx_done.wait()
         except TimeoutError:
             LOGGER.warning("Assist: playback-done timeout; continuing")

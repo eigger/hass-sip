@@ -972,6 +972,14 @@ def test_assist_playback_timeout_does_not_stop_long_playback():
     asyncio.run(run())
 
 
+def test_assist_tts_wait_timeout_is_generous():
+    """Real calls play 39-52s responses; the safety-net timeout must clear that
+    comfortably or every turn logs a spurious warning (seen at the old 30s)."""
+    assist_mod, _, _, _ = _assist_ctx()
+    assert assist_mod._TTS_WAIT_TIMEOUT_SECONDS >= 120
+    assert assist_mod._TONE_WAIT_TIMEOUT_SECONDS == 3
+
+
 def test_assist_wait_playback_done_waits_for_media_idle():
     assist_mod, _, _, _ = _assist_ctx()
     polls: list[int] = []
