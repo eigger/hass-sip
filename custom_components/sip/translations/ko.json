@@ -209,6 +209,10 @@
           "name": "Assist 파이프라인",
           "description": "선택적 Assist 파이프라인 ID. 생략 시 기본 파이프라인을 사용합니다."
         },
+        "conversation_id": {
+          "name": "대화 ID",
+          "description": "계속할 기존 대화 ID입니다. 동일한 대화 에이전트를 사용해야 하며, 만료된 세션은 새 대화로 시작될 수 있습니다."
+        },
         "initial_prompt": {
           "name": "초기 프롬프트",
           "description": "수신 대기 전에 대화 에이전트로 전송할 텍스트입니다. 에이전트의 응답이 발신자에게 재생됩니다."

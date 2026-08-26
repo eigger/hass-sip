@@ -120,6 +120,7 @@ class AssistBridge(AudioSink):
         on_done_fn: Callable[[], None],
         *,
         pipeline_id: str | None = None,
+        conversation_id: str | None = None,
         initial_prompt: str | None = None,
         system_prompt: str | None = None,
         sample_rate: int = 8000,
@@ -137,6 +138,7 @@ class AssistBridge(AudioSink):
         self.play_source = play_source_fn
         self.on_done = on_done_fn
         self.pipeline_id = pipeline_id
+        self._conversation_id = conversation_id
         self.initial_prompt = initial_prompt
         self.system_prompt = system_prompt
         self.sample_rate = sample_rate
@@ -162,7 +164,6 @@ class AssistBridge(AudioSink):
         self._speaking = False
         self._tx_done = asyncio.Event()
         self._tx_wait: _TxWaitKind | None = None
-        self._conversation_id: str | None = None
         self._turn_error: str | None = None
         self._turn_index = 0
         self._continue_conversation = False

@@ -99,6 +99,7 @@ action: sip.start_assist
 target:
   entity_id: media_player.sip
 data:
+  conversation_id: "existing-conversation"
   system_prompt: >-
     You are answering a support phone line. Keep responses concise and
     never expose internal implementation details.
@@ -108,6 +109,8 @@ data:
 
 Supplying only `system_prompt` does not create an additional opening pipeline turn or play audio. The bridge begins by listening to the caller as usual, then passes the instructions to the conversation agent with each turn.
 
+Use `conversation_id` to continue an existing Home Assistant conversation, such as one started by `conversation.process`. The Assist pipeline must use the same conversation agent. Conversation sessions are short-lived and may be replaced after Home Assistant cleans up their context.
+
 The session ends when:
 - The caller says nothing for `max_silent_turns` consecutive turns (default: 2, ~30 s of silence)
 - `max_turns` is reached (default: 0 = unlimited)
@@ -115,6 +118,7 @@ The session ends when:
 
 - `entity_id` *(Required)*: The target SIP media player entity.
 - `pipeline_id` *(Optional)*: Assist pipeline ID. Uses the Home Assistant default when omitted.
+- `conversation_id` *(Optional)*: Existing Home Assistant conversation ID to continue. Use the same conversation agent that created it; expired sessions may start a new conversation.
 - `initial_prompt` *(Optional)*: Text submitted as an opening conversation turn. The agent's response is played before the bridge starts listening and does not count toward `max_turns` or `max_silent_turns`.
 - `system_prompt` *(Optional)*: Additional instructions passed silently to the conversation agent on every turn. It does not create a conversation turn or trigger TTS by itself.
 - `max_turns` *(Optional)*: Maximum conversation turns before ending (default: `0` = unlimited).

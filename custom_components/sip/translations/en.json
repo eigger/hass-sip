@@ -209,6 +209,10 @@
           "name": "Assist pipeline",
           "description": "Optional Assist pipeline ID. Uses the default pipeline when omitted."
         },
+        "conversation_id": {
+          "name": "Conversation ID",
+          "description": "Optional existing conversation ID to continue. Use the same conversation agent; expired sessions may start a new conversation."
+        },
         "initial_prompt": {
           "name": "Initial prompt",
           "description": "Text sent to the conversation agent before listening. The response is played to the caller."

@@ -781,7 +781,12 @@ def _initial_prompt_doubles(PET, PE, *events):
 
         async def execute(self):
             callback = self.kwargs["run"].kwargs["event_callback"]
-            callback(PE(PET.RUN_START, {"conversation_id": "opening-conversation"}))
+            callback(
+                PE(
+                    PET.RUN_START,
+                    {"conversation_id": self.kwargs["session"].conversation_id},
+                )
+            )
             for event_type, data in events:
                 callback(PE(event_type, data))
 
@@ -960,6 +965,61 @@ def test_assist_system_prompt_does_not_create_opening_turn():
         call["conversation_extra_system_prompt"] == "Keep answers concise"
         for call in audio_calls
     )
+
+
+def test_assist_reuses_supplied_conversation_id_for_audio_turns():
+    assist_mod, mock_ap, _, _ = _assist_ctx()
+    conversation_ids = []
+
+    async def mock_audio_pipeline(hass, **kwargs):
+        conversation_ids.append(kwargs["conversation_id"])
+
+    mock_ap.async_pipeline_from_audio_stream.reset_mock()
+    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_audio_pipeline
+
+    bridge = assist_mod.AssistBridge(
+        MagicMock(),
+        play_source_fn=MagicMock(),
+        on_done_fn=MagicMock(),
+        conversation_id="existing-conversation",
+        max_turns=2,
+    )
+    _run_bridge_session(bridge)
+
+    assert conversation_ids == ["existing-conversation", "existing-conversation"]
+
+
+def test_assist_initial_prompt_reuses_supplied_conversation_id():
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    audio_calls = []
+    _, _, fake_run, fake_input, fake_chat_session = _initial_prompt_doubles(PET, PE)
+
+    async def mock_audio_pipeline(hass, **kwargs):
+        audio_calls.append(kwargs)
+
+    mock_ap.async_pipeline_from_audio_stream.reset_mock()
+    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_audio_pipeline
+    hass = MagicMock()
+
+    with (
+        patch.object(assist_mod, "PipelineRun", fake_run),
+        patch.object(assist_mod, "PipelineInput", fake_input),
+        patch.object(assist_mod, "chat_session", fake_chat_session),
+    ):
+        bridge = assist_mod.AssistBridge(
+            hass,
+            play_source_fn=MagicMock(),
+            on_done_fn=MagicMock(),
+            conversation_id="existing-conversation",
+            initial_prompt="Continue our conversation",
+            max_turns=1,
+        )
+        _run_bridge_session(bridge)
+
+    fake_chat_session.async_get_chat_session.assert_called_once_with(
+        hass, "existing-conversation"
+    )
+    assert audio_calls[0]["conversation_id"] == "existing-conversation"
 
 
 def test_assist_initial_prompt_waits_for_tts_before_listening():
@@ -1174,10 +1234,12 @@ def test_start_assist_service_accepts_and_forwards_prompts():
 
     service_data = integration.SERVICE_ASSIST_SCHEMA(
         {
+            "conversation_id": "existing-conversation",
             "initial_prompt": "Greet the caller",
             "system_prompt": "Keep answers concise",
         }
     )
+    assert service_data["conversation_id"] == "existing-conversation"
     assert service_data["initial_prompt"] == "Greet the caller"
     assert service_data["system_prompt"] == "Keep answers concise"
 
@@ -1205,6 +1267,7 @@ def test_start_assist_service_accepts_and_forwards_prompts():
 
     asyncio.run(run_service())
     trigger_assist.assert_awaited_once_with(
+        conversation_id="existing-conversation",
         initial_prompt="Greet the caller",
         system_prompt="Keep answers concise",
     )
