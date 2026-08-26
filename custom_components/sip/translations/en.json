@@ -209,6 +209,14 @@
           "name": "Assist pipeline",
           "description": "Optional Assist pipeline ID. Uses the default pipeline when omitted."
         },
+        "initial_prompt": {
+          "name": "Initial prompt",
+          "description": "Text sent to the conversation agent before listening. The response is played to the caller."
+        },
+        "system_prompt": {
+          "name": "System prompt",
+          "description": "Additional instructions supplied to the conversation agent on every turn. Does not start a turn or play audio by itself."
+        },
         "max_turns": {
           "name": "Max turns",
           "description": "Maximum conversation turns before the session ends. 0 means unlimited."

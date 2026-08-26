@@ -92,6 +92,22 @@ Stops active call recording.
 ### `sip.start_assist`
 Bridges the active call to Home Assistant's Voice Assist pipeline for **multi-turn conversation**. After each command and TTS response, the integration listens for the next command without hanging up. Conversation context is preserved across turns (e.g. "turn on the kitchen light" → "set it to 50%").
 
+Use `initial_prompt` when the agent should open the conversation with a spoken response, and `system_prompt` for silent instructions that should guide every agent turn:
+
+```yaml
+action: sip.start_assist
+target:
+  entity_id: media_player.sip
+data:
+  system_prompt: >-
+    You are answering a support phone line. Keep responses concise and
+    never expose internal implementation details.
+  initial_prompt: >-
+    Greet the caller, introduce yourself, and ask how you can help.
+```
+
+Supplying only `system_prompt` does not create an additional opening pipeline turn or play audio. The bridge begins by listening to the caller as usual, then passes the instructions to the conversation agent with each turn.
+
 The session ends when:
 - The caller says nothing for `max_silent_turns` consecutive turns (default: 2, ~30 s of silence)
 - `max_turns` is reached (default: 0 = unlimited)
@@ -99,6 +115,8 @@ The session ends when:
 
 - `entity_id` *(Required)*: The target SIP media player entity.
 - `pipeline_id` *(Optional)*: Assist pipeline ID. Uses the Home Assistant default when omitted.
+- `initial_prompt` *(Optional)*: Text submitted as an opening conversation turn. The agent's response is played before the bridge starts listening and does not count toward `max_turns` or `max_silent_turns`.
+- `system_prompt` *(Optional)*: Additional instructions passed silently to the conversation agent on every turn. It does not create a conversation turn or trigger TTS by itself.
 - `max_turns` *(Optional)*: Maximum conversation turns before ending (default: `0` = unlimited).
 - `max_silent_turns` *(Optional)*: Consecutive no-speech turns before ending (default: `2`).
 - `barge_in` *(Optional)*: Allow interrupting TTS mid-response by speaking (default: `false`; requires `pymicro_vad` from the Assist pipeline integration; may self-trigger on speakerphones without echo cancellation).

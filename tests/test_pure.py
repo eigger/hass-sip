@@ -664,6 +664,7 @@ def _setup_assist_deps():
         ERROR = "error"
 
     class _PipelineStage:
+        INTENT = "intent"
         STT = "stt"
         TTS = "tts"
 
@@ -757,6 +758,50 @@ def _run_bridge_session(bridge):
     asyncio.run(_wait())
 
 
+def _initial_prompt_doubles(PET, PE, *events):
+    """Return reusable doubles for a text-input Assist pipeline run."""
+    from contextlib import nullcontext
+
+    pipeline_runs = []
+    pipeline_inputs = []
+
+    class FakePipelineRun:
+        def __init__(self, hass, **kwargs):
+            self.hass = hass
+            self.kwargs = kwargs
+            pipeline_runs.append(self)
+
+    class FakePipelineInput:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            pipeline_inputs.append(self)
+
+        async def validate(self):
+            return None
+
+        async def execute(self):
+            callback = self.kwargs["run"].kwargs["event_callback"]
+            callback(PE(PET.RUN_START, {"conversation_id": "opening-conversation"}))
+            for event_type, data in events:
+                callback(PE(event_type, data))
+
+    fake_chat_session = MagicMock()
+    fake_chat_session.async_get_chat_session.side_effect = (
+        lambda hass, conversation_id: nullcontext(
+            types.SimpleNamespace(
+                conversation_id=conversation_id or "opening-conversation"
+            )
+        )
+    )
+    return (
+        pipeline_runs,
+        pipeline_inputs,
+        FakePipelineRun,
+        FakePipelineInput,
+        fake_chat_session,
+    )
+
+
 def test_assist_listening_gate():
     assist_mod, _, _, _ = _assist_ctx()
     bridge = assist_mod.AssistBridge(
@@ -839,6 +884,330 @@ def test_assist_conversation_id_carried_across_turns():
     )
     _run_bridge_session(bridge)
     assert conv_ids[1] == "conv-abc"
+
+
+def test_assist_initial_prompt_error_still_starts_audio_with_context():
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    audio_calls = []
+    (
+        pipeline_runs,
+        pipeline_inputs,
+        fake_run,
+        fake_input,
+        fake_chat_session,
+    ) = _initial_prompt_doubles(
+        PET, PE, (PET.ERROR, {"code": "intent-failed"})
+    )
+
+    async def mock_audio_pipeline(hass, **kwargs):
+        audio_calls.append(kwargs)
+
+    mock_ap.async_pipeline_from_audio_stream.reset_mock()
+    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_audio_pipeline
+
+    with (
+        patch.object(assist_mod, "PipelineRun", fake_run),
+        patch.object(assist_mod, "PipelineInput", fake_input),
+        patch.object(assist_mod, "chat_session", fake_chat_session),
+    ):
+        bridge = assist_mod.AssistBridge(
+            MagicMock(),
+            play_source_fn=MagicMock(),
+            on_done_fn=MagicMock(),
+            initial_prompt="Greet the caller",
+            system_prompt="Keep answers concise",
+            max_turns=1,
+        )
+        _run_bridge_session(bridge)
+
+    assert len(pipeline_inputs) == 1
+    assert pipeline_inputs[0].kwargs["intent_input"] == "Greet the caller"
+    assert (
+        pipeline_inputs[0].kwargs["conversation_extra_system_prompt"]
+        == "Keep answers concise"
+    )
+    assert pipeline_runs[0].kwargs["start_stage"] == "intent"
+    assert pipeline_runs[0].kwargs["end_stage"] == "tts"
+    assert len(audio_calls) == 1
+    assert audio_calls[0]["conversation_id"] == "opening-conversation"
+    assert (
+        audio_calls[0]["conversation_extra_system_prompt"]
+        == "Keep answers concise"
+    )
+
+
+def test_assist_system_prompt_does_not_create_opening_turn():
+    assist_mod, mock_ap, _, _ = _assist_ctx()
+    audio_calls = []
+
+    async def mock_audio_pipeline(hass, **kwargs):
+        audio_calls.append(kwargs)
+
+    mock_ap.async_pipeline_from_audio_stream.reset_mock()
+    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_audio_pipeline
+
+    bridge = assist_mod.AssistBridge(
+        MagicMock(),
+        play_source_fn=MagicMock(),
+        on_done_fn=MagicMock(),
+        system_prompt="Keep answers concise",
+        max_turns=2,
+    )
+    _run_bridge_session(bridge)
+
+    assert len(audio_calls) == 2
+    assert all(
+        call["conversation_extra_system_prompt"] == "Keep answers concise"
+        for call in audio_calls
+    )
+
+
+def test_assist_initial_prompt_waits_for_tts_before_listening():
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    mock_tts = sys.modules["homeassistant.components.tts"]
+    original_get_stream = mock_tts.async_get_stream.return_value
+    audio_calls = []
+    play_source = MagicMock()
+
+    _, _, fake_run, fake_input, fake_chat_session = _initial_prompt_doubles(
+        PET, PE, (PET.TTS_END, {"tts_output": {"token": "opening-tts"}})
+    )
+
+    async def stream_result():
+        yield b"RIFF...."
+
+    stream = MagicMock()
+    stream.async_stream_result = stream_result
+    mock_tts.async_get_stream.return_value = stream
+
+    async def mock_audio_pipeline(hass, **kwargs):
+        audio_calls.append(kwargs)
+
+    mock_ap.async_pipeline_from_audio_stream.reset_mock()
+    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_audio_pipeline
+
+    async def run():
+        with (
+            patch.object(assist_mod, "PipelineRun", fake_run),
+            patch.object(assist_mod, "PipelineInput", fake_input),
+            patch.object(assist_mod, "chat_session", fake_chat_session),
+        ):
+            bridge = assist_mod.AssistBridge(
+                MagicMock(),
+                play_source_fn=play_source,
+                on_done_fn=MagicMock(),
+                initial_prompt="Greet the caller",
+                max_turns=1,
+            )
+            bridge.start()
+            for _ in range(50):
+                await asyncio.sleep(0.01)
+                if play_source.called:
+                    break
+            assert play_source.called
+            assert audio_calls == []
+            assert bridge.session_task is not None
+            assert not bridge.session_task.done()
+            bridge.on_playback_done()
+            await bridge.session_task
+
+    try:
+        asyncio.run(run())
+    finally:
+        mock_tts.async_get_stream.return_value = original_get_stream
+
+    assert len(audio_calls) == 1
+
+
+def test_assist_initial_prompt_barge_in_becomes_first_turn_preroll():
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    mock_tts = sys.modules["homeassistant.components.tts"]
+    original_get_stream = mock_tts.async_get_stream.return_value
+    original_min = assist_mod._VAD_MIN_SPEECH_FRAMES
+    original_micro_vad = assist_mod.MicroVad
+    preroll_queue_sizes = []
+    play_source = MagicMock()
+    stop_audio = MagicMock()
+
+    _, _, fake_run, fake_input, fake_chat_session = _initial_prompt_doubles(
+        PET, PE, (PET.TTS_END, {"tts_output": {"token": "opening-tts"}})
+    )
+
+    class StubVad:
+        def Process10ms(self, frame: bytes) -> float:
+            return 0.9
+
+    async def stream_result():
+        yield b"RIFF...."
+
+    stream = MagicMock()
+    stream.async_stream_result = stream_result
+    mock_tts.async_get_stream.return_value = stream
+
+    async def mock_audio_pipeline(hass, **kwargs):
+        preroll_queue_sizes.append(kwargs["stt_stream"].queue.qsize())
+
+    mock_ap.async_pipeline_from_audio_stream.reset_mock()
+    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_audio_pipeline
+    assist_mod.MicroVad = lambda: StubVad()
+    assist_mod._VAD_MIN_SPEECH_FRAMES = 2
+
+    async def run():
+        with (
+            patch.object(assist_mod, "PipelineRun", fake_run),
+            patch.object(assist_mod, "PipelineInput", fake_input),
+            patch.object(assist_mod, "chat_session", fake_chat_session),
+        ):
+            bridge = assist_mod.AssistBridge(
+                MagicMock(),
+                play_source_fn=play_source,
+                on_done_fn=MagicMock(),
+                initial_prompt="Greet the caller",
+                barge_in=True,
+                stop_audio_fn=stop_audio,
+                max_turns=1,
+            )
+            bridge.start()
+            for _ in range(50):
+                await asyncio.sleep(0.01)
+                if play_source.called:
+                    break
+            assert play_source.called
+            frame = b"\x00\x01" * (assist_mod._VAD_FRAME_BYTES // 2)
+            bridge.write(frame)
+            assert bridge.session_task is not None
+            await bridge.session_task
+
+    try:
+        asyncio.run(run())
+    finally:
+        mock_tts.async_get_stream.return_value = original_get_stream
+        assist_mod._VAD_MIN_SPEECH_FRAMES = original_min
+        assist_mod.MicroVad = original_micro_vad
+
+    stop_audio.assert_called_once_with(flush=True)
+    assert preroll_queue_sizes[0] > 0
+
+
+def test_assist_ignores_prior_playback_done_while_tts_is_pending():
+    assist_mod, _, PET, PE = _assist_ctx()
+    mock_tts = sys.modules["homeassistant.components.tts"]
+    original_get_stream = mock_tts.async_get_stream.return_value
+    media_playing = {"value": True}
+    play_source = MagicMock()
+
+    async def stream_result():
+        yield b"RIFF...."
+
+    stream = MagicMock()
+    stream.async_stream_result = stream_result
+    mock_tts.async_get_stream.return_value = stream
+
+    bridge = assist_mod.AssistBridge(
+        MagicMock(),
+        play_source_fn=play_source,
+        on_done_fn=MagicMock(),
+        media_playing_fn=lambda: media_playing["value"],
+    )
+
+    async def run():
+        bridge._on_pipeline_event(
+            PE(PET.TTS_END, {"tts_output": {"token": "opening-tts"}})
+        )
+        await asyncio.sleep(0.03)
+        assert bridge._background_tasks
+        bridge.on_playback_done()
+        assert not bridge._tx_done.is_set()
+        media_playing["value"] = False
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            if play_source.called:
+                break
+        assert play_source.called
+        assert bridge._tx_wait == "tts"
+        bridge.on_playback_done()
+        assert bridge._tx_done.is_set()
+        bridge.close()
+        await asyncio.sleep(0)
+
+    try:
+        asyncio.run(run())
+    finally:
+        mock_tts.async_get_stream.return_value = original_get_stream
+
+
+def test_start_assist_service_accepts_and_forwards_prompts():
+    from unittest.mock import AsyncMock
+
+    _assist_ctx()
+    helpers = sys.modules["homeassistant.helpers"]
+    original_cv_attr = helpers.config_validation
+    original_cv_module = sys.modules["homeassistant.helpers.config_validation"]
+    original_service_module = sys.modules.get("homeassistant.helpers.service")
+    cv_stub = types.SimpleNamespace(
+        boolean=bool,
+        match_all=lambda value: value,
+        positive_int=int,
+        string=str,
+        make_entity_service_schema=lambda schema: vol.Schema(schema),
+    )
+    helpers.config_validation = cv_stub
+    sys.modules["homeassistant.helpers.config_validation"] = cv_stub
+    service_stub = types.ModuleType("homeassistant.helpers.service")
+    service_stub.async_extract_config_entry_ids = AsyncMock()
+    sys.modules["homeassistant.helpers.service"] = service_stub
+    try:
+        module_name = f"{_CC_PKG}._integration_init_test"
+        spec = importlib.util.spec_from_file_location(
+            module_name, os.path.join(os.path.abspath(_COMPONENT), "__init__.py")
+        )
+        integration = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = integration
+        spec.loader.exec_module(integration)
+    finally:
+        helpers.config_validation = original_cv_attr
+        sys.modules["homeassistant.helpers.config_validation"] = original_cv_module
+        if original_service_module is None:
+            sys.modules.pop("homeassistant.helpers.service", None)
+        else:
+            sys.modules["homeassistant.helpers.service"] = original_service_module
+
+    service_data = integration.SERVICE_ASSIST_SCHEMA(
+        {
+            "initial_prompt": "Greet the caller",
+            "system_prompt": "Keep answers concise",
+        }
+    )
+    assert service_data["initial_prompt"] == "Greet the caller"
+    assert service_data["system_prompt"] == "Keep answers concise"
+
+    trigger_assist = AsyncMock()
+    entry = MagicMock()
+    entry.domain = "sip"
+    entry.state.value = "loaded"
+    entry.runtime_data = {"trigger_assist_fn": trigger_assist}
+
+    hass = MagicMock()
+    hass.services.has_service.return_value = False
+    hass.config_entries.async_entries.return_value = [entry]
+    hass.config_entries.async_get_entry.return_value = entry
+    integration.async_extract_config_entry_ids = AsyncMock(return_value={"entry-1"})
+
+    async def run_service():
+        await integration.async_register_services(hass)
+        registration = next(
+            call
+            for call in hass.services.async_register.call_args_list
+            if call.args[:2] == ("sip", "start_assist")
+        )
+        handler = registration.args[2]
+        await handler(types.SimpleNamespace(data=service_data))
+
+    asyncio.run(run_service())
+    trigger_assist.assert_awaited_once_with(
+        initial_prompt="Greet the caller",
+        system_prompt="Keep answers concise",
+    )
 
 
 def test_assist_playback_done_unblocks_next_turn():

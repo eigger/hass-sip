@@ -132,6 +132,8 @@ SERVICE_GENERIC_SCHEMA = cv.make_entity_service_schema({})
 SERVICE_ASSIST_SCHEMA = cv.make_entity_service_schema(
     {
         vol.Optional("pipeline_id"): cv.string,
+        vol.Optional("initial_prompt"): cv.string,
+        vol.Optional("system_prompt"): cv.string,
         vol.Optional("max_turns"): vol.All(vol.Coerce(int), vol.Range(min=0)),
         vol.Optional("max_silent_turns"): vol.All(vol.Coerce(int), vol.Range(min=1)),
         vol.Optional("barge_in"): cv.boolean,
@@ -400,6 +402,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Helper function to trigger Assist bridge
     async def trigger_assist_internal(
         pipeline_id: str | None = None,
+        initial_prompt: str | None = None,
+        system_prompt: str | None = None,
         max_turns: int = 0,
         max_silent_turns: int = 2,
         barge_in: bool = False,
@@ -417,6 +421,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             play_source_fn=client.play_source,
             on_done_fn=lambda: None,  # set below once bridge exists
             pipeline_id=pipeline_id,
+            initial_prompt=initial_prompt,
+            system_prompt=system_prompt,
             sample_rate=client.codec.sample_rate,
             max_turns=max_turns,
             max_silent_turns=max_silent_turns,
@@ -763,6 +769,8 @@ async def async_register_services(hass: HomeAssistant) -> None:
             k: call.data[k]
             for k in (
                 "pipeline_id",
+                "initial_prompt",
+                "system_prompt",
                 "max_turns",
                 "max_silent_turns",
                 "barge_in",
