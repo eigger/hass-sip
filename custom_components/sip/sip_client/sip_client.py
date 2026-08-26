@@ -166,6 +166,7 @@ class SipClient:
         self._outbound = False
         self._invite_auth_tried = False
         self._incoming_invite: sm.SipMessage | None = None
+        self._dialog_routes: list[str] = []
 
         # negotiated media
         self._remote_rtp_ip = ""
@@ -496,6 +497,7 @@ class SipClient:
         self._pending_source = on_connect_source
         self._outbound = True
         self._invite_auth_tried = False
+        self._dialog_routes = []
         self._d_call_id = sm.gen_call_id(self._local_ip)
         self._d_local_tag = sm.gen_tag()
         self._d_branch = sm.gen_branch()
@@ -622,6 +624,8 @@ class SipClient:
         )
         if self._service_routes and 300 <= resp.status_code < 700:
             msg += f"Route: {self._service_routes}\r\n"
+        elif 200 <= resp.status_code < 300:
+            msg += self._dialog_route_header()
 
         msg += (
             f"From: {self._d_local}\r\n"
@@ -698,6 +702,9 @@ class SipClient:
             contact_uri = _angle_uri(m.header("Contact"))
             if contact_uri:
                 self._d_remote_target = contact_uri
+            self._dialog_routes = list(
+                reversed(sm.split_header_values(m.header("Record-Route")))
+            )
             self._apply_remote_sdp(sm.parse_sdp(m.body))
             self._send_raw(self._build_ack(m))
 
@@ -821,6 +828,7 @@ class SipClient:
                 self._d_local += f";tag={self._d_local_tag}"
             self._d_remote = m.header("From")
             self._d_remote_target = _angle_uri(m.header("Contact"))
+            self._dialog_routes = sm.split_header_values(m.header("Record-Route"))
             try:
                 self._d_cseq = int(m.header("CSeq").split()[0])
             except (ValueError, IndexError):
@@ -951,6 +959,7 @@ class SipClient:
             f"{method} {self._d_remote_target} SIP/2.0\r\n"
             f"Via: SIP/2.0/UDP {self._local_ip}:{self._local_port};branch={sm.gen_branch()};rport\r\n"
             "Max-Forwards: 70\r\n"
+            f"{self._dialog_route_header()}"
             f"From: {self._d_local}\r\n"
             f"To: {self._d_remote}\r\n"
             f"Call-ID: {self._d_call_id}\r\n"
@@ -958,6 +967,11 @@ class SipClient:
             f"User-Agent: {USER_AGENT}\r\n"
             "Content-Length: 0\r\n\r\n"
         )
+
+    def _dialog_route_header(self) -> str:
+        if not self._dialog_routes:
+            return ""
+        return f"Route: {', '.join(self._dialog_routes)}\r\n"
 
     def send_dtmf(self, digits: str) -> None:
         if self.state != SipState.IN_CALL:

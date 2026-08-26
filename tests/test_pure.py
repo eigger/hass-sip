@@ -53,7 +53,7 @@ except AttributeError:  # enum.StrEnum needs Python 3.11+ (CI runs 3.12+)
 # calls (FlowResult, cv.*). Stub those directly with setdefault so this works
 # standalone too — not just under pytest, where conftest.py already mocks
 # `homeassistant`/`homeassistant.core`/`homeassistant.config_entries`.
-from unittest.mock import MagicMock, patch  # noqa: E402
+from unittest.mock import AsyncMock, MagicMock, patch  # noqa: E402
 import voluptuous as vol  # noqa: E402
 
 for _mod_name in (
@@ -405,6 +405,99 @@ def test_response_copies_complete_via_chain():
         "Via: SIP/2.0/UDP first.example;branch=1, "
         "SIP/2.0/UDP second.example;branch=2\r\n"
     ) in response
+
+
+def test_successful_invite_ack_and_bye_use_reversed_record_route():
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client._local_ip = "192.0.2.10"
+        client._local_port = 5060
+        client._outbound = True
+        client._d_call_id = "call@example"
+        client._d_local = "<sip:alice@example>;tag=local"
+        client._d_remote = "<sip:bob@example>"
+        client._d_remote_target = "sip:bob@example"
+        client._d_cseq = 2
+        client.state = sip_client.SipState.RINGING_OUT
+        response = sm.parse_sip_message(
+            "SIP/2.0 200 OK\r\n"
+            "Record-Route: <sip:first.example;lr>,<sip:second.example;lr>\r\n"
+            "To: <sip:bob@example>;tag=remote\r\n"
+            "Contact: <sip:bob@target.example>\r\n"
+            "Call-ID: call@example\r\n"
+            "CSeq: 2 INVITE\r\n"
+            "Content-Length: 0\r\n\r\n"
+        )
+        with (
+            patch.object(client, "_send_raw") as send,
+            patch.object(client, "_apply_remote_sdp"),
+            patch.object(client, "_start_media", AsyncMock()),
+        ):
+            client._handle_invite_response(response)
+            first_ack = send.call_args_list[0].args[0]
+            client._handle_invite_response(response)
+            repeated_ack = send.call_args_list[1].args[0]
+            await asyncio.sleep(0)
+        client._d_cseq += 1
+        return first_ack, repeated_ack, client._build_in_dialog("BYE")
+
+    first_ack, repeated_ack, bye = asyncio.run(run())
+    expected = "Route: <sip:second.example;lr>, <sip:first.example;lr>\r\n"
+    assert expected in first_ack
+    assert expected in repeated_ack
+    assert expected in bye
+    assert first_ack.startswith("ACK sip:bob@target.example SIP/2.0\r\n")
+    assert bye.startswith("BYE sip:bob@target.example SIP/2.0\r\n")
+
+
+def test_new_outbound_call_clears_previous_dialog_routes():
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client.state = sip_client.SipState.REGISTERED
+        client._dialog_routes = ["<sip:stale.example;lr>"]
+        with (
+            patch.object(client, "_send_raw"),
+            patch.object(client, "_start_invite_retx"),
+        ):
+            client.call("1234")
+        return client._dialog_routes
+
+    assert asyncio.run(run()) == []
+
+
+def test_inbound_dialog_keeps_record_route_wire_order():
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client.state = sip_client.SipState.REGISTERED
+        invite = sm.parse_sip_message(
+            "INVITE sip:alice@example SIP/2.0\r\n"
+            "Record-Route: <sip:first.example;lr>,<sip:second.example;lr>\r\n"
+            "From: <sip:bob@example>;tag=remote\r\n"
+            "To: <sip:alice@example>\r\n"
+            "Contact: <sip:bob@target.example>\r\n"
+            "Call-ID: inbound@example\r\n"
+            "CSeq: 1 INVITE\r\n"
+            "Content-Type: application/sdp\r\n\r\n"
+            "v=0\r\nc=IN IP4 198.51.100.10\r\n"
+            "m=audio 4000 RTP/AVP 8\r\na=rtpmap:8 PCMA/8000\r\n"
+        )
+        with patch.object(client, "_send_raw"):
+            client._handle_request(invite)
+        return client._build_in_dialog("BYE")
+
+    bye = asyncio.run(run())
+    assert "Route: <sip:first.example;lr>, <sip:second.example;lr>\r\n" in bye
+
+
 # ------------------------------------------------------- RFC 2833 RX
 def _te_packet(pt, marker, timestamp, event, seq=1):
     """Build one telephone-event RTP packet."""
