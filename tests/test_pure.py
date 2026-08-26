@@ -421,6 +421,8 @@ def test_successful_invite_ack_and_bye_use_reversed_record_route():
         client._d_remote = "<sip:bob@example>"
         client._d_remote_target = "sip:bob@example"
         client._d_cseq = 2
+        client._invite_cseq = 2
+        client.registered = True
         client.state = sip_client.SipState.RINGING_OUT
         response = sm.parse_sip_message(
             "SIP/2.0 200 OK\r\n"
@@ -441,21 +443,32 @@ def test_successful_invite_ack_and_bye_use_reversed_record_route():
             first_ack = send.call_args_list[0].args[0]
             client._handle_invite_response(response)
             repeated_ack = send.call_args_list[1].args[0]
-            client.state = sip_client.SipState.REGISTERED
+            client.hangup()
+            local_bye = send.call_args_list[2].args[0]
             client._handle_invite_response(response)
-            delayed_ack = send.call_args_list[2].args[0]
+            delayed_ack = send.call_args_list[3].args[0]
             await asyncio.sleep(0)
-        client._d_cseq += 1
         return (
             first_ack,
             repeated_ack,
             delayed_ack,
-            client._build_in_dialog("BYE"),
+            local_bye,
             start_media.await_count,
             client.state,
+            client._d_cseq,
+            client._invite_cseq,
         )
 
-    first_ack, repeated_ack, delayed_ack, bye, media_starts, state = asyncio.run(run())
+    (
+        first_ack,
+        repeated_ack,
+        delayed_ack,
+        bye,
+        media_starts,
+        state,
+        dialog_cseq,
+        invite_cseq,
+    ) = asyncio.run(run())
     expected = (
         "Route: <sip:last.example;lr>, <sip:middle.example;lr>, "
         "<sip:first.example;lr>\r\n"
@@ -468,6 +481,57 @@ def test_successful_invite_ack_and_bye_use_reversed_record_route():
     assert bye.startswith("BYE sip:bob@target.example SIP/2.0\r\n")
     assert media_starts == 1
     assert state == sip_client.SipState.REGISTERED
+    assert dialog_cseq == 3
+    assert invite_cseq == 2
+
+
+def test_cancel_race_acks_and_ends_late_2xx_with_original_invite_cseq():
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client._local_ip = "192.0.2.10"
+        client._local_port = 5060
+        client._outbound = True
+        client._d_call_id = "call@example"
+        client._d_local = "<sip:alice@example>;tag=local"
+        client._d_remote = "<sip:bob@example>"
+        client._d_remote_target = "sip:bob@example"
+        client._d_branch = "z9hG4bKinvite"
+        client._d_cseq = 2
+        client._invite_cseq = 2
+        client.registered = True
+        client.state = sip_client.SipState.RINGING_OUT
+        response = sm.parse_sip_message(
+            "SIP/2.0 200 OK\r\n"
+            "Record-Route: <sip:first.example;lr>,<sip:last.example;lr>\r\n"
+            "To: <sip:bob@example>;tag=late\r\n"
+            "Contact: <sip:bob@late.example>\r\n"
+            "Call-ID: call@example\r\n"
+            "CSeq: 2 INVITE\r\n"
+            "Content-Length: 0\r\n\r\n"
+        )
+        with (
+            patch.object(client, "_send_raw") as send,
+            patch.object(client, "_start_media", AsyncMock()) as start_media,
+        ):
+            client.hangup()
+            client._handle_invite_response(response)
+            await asyncio.sleep(0)
+        return client, [call.args[0] for call in send.call_args_list], start_media
+
+    client, sent, start_media = asyncio.run(run())
+    assert len(sent) == 3
+    assert sent[0].startswith("CANCEL sip:bob@example SIP/2.0\r\n")
+    assert "branch=z9hG4bKinvite;rport" in sent[0]
+    assert "CSeq: 2 CANCEL\r\n" in sent[0]
+    assert sent[1].startswith("ACK sip:bob@late.example SIP/2.0\r\n")
+    assert sent[2].startswith("BYE sip:bob@late.example SIP/2.0\r\n")
+    assert client._d_cseq == 2
+    assert client._invite_cseq == 2
+    assert client.state == sip_client.SipState.REGISTERED
+    start_media.assert_not_awaited()
 
 
 def test_invite_response_from_previous_call_id_is_ignored():
@@ -479,6 +543,7 @@ def test_invite_response_from_previous_call_id_is_ignored():
         client._outbound = True
         client._d_call_id = "current@example"
         client._d_cseq = 1
+        client._invite_cseq = 1
         client.state = sip_client.SipState.RINGING_OUT
         response = sm.parse_sip_message(
             "SIP/2.0 200 OK\r\n"
@@ -515,6 +580,7 @@ def test_forked_invite_2xx_is_acknowledged_and_ended_without_replacing_dialog():
         client._d_remote = "<sip:bob@example>;tag=accepted"
         client._d_remote_target = "sip:bob@accepted.example"
         client._d_cseq = 1
+        client._invite_cseq = 1
         client._dialog_routes = ["<sip:accepted-proxy.example;lr>"]
         client._accepted_dialog_to = client._d_remote
         client.state = sip_client.SipState.IN_CALL
@@ -556,9 +622,55 @@ def test_new_outbound_call_clears_previous_dialog_routes():
             patch.object(client, "_start_invite_retx"),
         ):
             client.call("1234")
-        return client._dialog_routes
+        return client._dialog_routes, client._d_cseq, client._invite_cseq
 
-    assert asyncio.run(run()) == []
+    assert asyncio.run(run()) == ([], 1, 1)
+
+
+def test_authenticated_invite_updates_retained_invite_cseq():
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(
+            sip_client.SipConfig(
+                server="pbx.example",
+                username="alice",
+                password="secret",
+                domain="example",
+            )
+        )
+        client._local_ip = "192.0.2.10"
+        client._local_port = 5060
+        client._outbound = True
+        client._d_call_id = "call@example"
+        client._d_local = "<sip:alice@example>;tag=local"
+        client._d_remote = "<sip:bob@example>"
+        client._d_remote_target = "sip:bob@example"
+        client._d_branch = "z9hG4bKinitial"
+        client._d_cseq = 1
+        client._invite_cseq = 1
+        client.state = sip_client.SipState.INVITING
+        response = sm.parse_sip_message(
+            "SIP/2.0 407 Proxy Authentication Required\r\n"
+            "To: <sip:bob@example>;tag=proxy\r\n"
+            "Call-ID: call@example\r\n"
+            "CSeq: 1 INVITE\r\n"
+            'Proxy-Authenticate: Digest realm="example", nonce="abc123"\r\n'
+            "Content-Length: 0\r\n\r\n"
+        )
+        with (
+            patch.object(client, "_send_raw") as send,
+            patch.object(client, "_start_invite_retx"),
+        ):
+            client._handle_invite_response(response)
+        return client, [call.args[0] for call in send.call_args_list]
+
+    client, sent = asyncio.run(run())
+    assert client._d_cseq == 2
+    assert client._invite_cseq == 2
+    assert "CSeq: 1 ACK\r\n" in sent[0]
+    assert "CSeq: 2 INVITE\r\n" in sent[1]
 
 
 def test_inbound_dialog_keeps_record_route_wire_order():

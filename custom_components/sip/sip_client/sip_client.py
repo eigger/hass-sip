@@ -163,6 +163,7 @@ class SipClient:
         self._d_local_tag = ""
         self._d_branch = ""
         self._d_cseq = 0
+        self._invite_cseq = 0
         self._outbound = False
         self._invite_auth_tried = False
         self._incoming_invite: sm.SipMessage | None = None
@@ -504,6 +505,7 @@ class SipClient:
         self._d_local_tag = sm.gen_tag()
         self._d_branch = sm.gen_branch()
         self._d_cseq = 1
+        self._invite_cseq = self._d_cseq
         self._invite_number = number
         disp = self.config.caller_id or self.config.username
         self._d_local = (
@@ -610,7 +612,7 @@ class SipClient:
         try:
             cseq = resp.header("CSeq").split()[0]
         except (ValueError, IndexError):
-            cseq = str(self._d_cseq)
+            cseq = str(self._invite_cseq)
             
         if 300 <= resp.status_code < 700:
             # ACK to a non-2xx response MUST use the exact same branch as the original request
@@ -657,7 +659,7 @@ class SipClient:
         ):
             return
 
-        if cseq_num != self._d_cseq:
+        if cseq_num != self._invite_cseq:
             # Ignore responses for old transactions, but re-ACK final failures (>=300)
             # to stop server retransmissions.
             if 300 <= m.status_code < 700:
@@ -685,6 +687,7 @@ class SipClient:
                 nonce, "auth" if qop else "", nc, cnonce,
             )
             self._d_cseq += 1
+            self._invite_cseq = self._d_cseq
             self._d_branch = sm.gen_branch()
             msg = self._build_invite()
             auth = self._digest_auth_line(
@@ -953,7 +956,6 @@ class SipClient:
             self._send_raw(self._build_in_dialog("BYE"))
             self._end_call()
         elif self.state in (SipState.INVITING, SipState.RINGING_OUT):
-            self._d_cseq += 1
             msg = (
                 f"CANCEL {self._d_remote_target} SIP/2.0\r\n"
                 f"Via: SIP/2.0/UDP {self._local_ip}:{self._local_port};branch={self._d_branch};rport\r\n"
@@ -961,7 +963,7 @@ class SipClient:
                 f"From: {self._d_local}\r\n"
                 f"To: {self._d_remote}\r\n"
                 f"Call-ID: {self._d_call_id}\r\n"
-                f"CSeq: {self._d_cseq} CANCEL\r\n"
+                f"CSeq: {self._invite_cseq} CANCEL\r\n"
                 "Content-Length: 0\r\n\r\n"
             )
             self._send_raw(msg)
