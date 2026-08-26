@@ -53,7 +53,7 @@ except AttributeError:  # enum.StrEnum needs Python 3.11+ (CI runs 3.12+)
 # calls (FlowResult, cv.*). Stub those directly with setdefault so this works
 # standalone too — not just under pytest, where conftest.py already mocks
 # `homeassistant`/`homeassistant.core`/`homeassistant.config_entries`.
-from unittest.mock import MagicMock, patch  # noqa: E402
+from unittest.mock import AsyncMock, MagicMock, patch  # noqa: E402
 import voluptuous as vol  # noqa: E402
 
 for _mod_name in (
@@ -187,6 +187,33 @@ def test_parse_request():
     assert m.method == "INVITE"
     assert m.request_uri == "sip:100@pbx"
     assert m.header("call-id") == "xyz@host"
+
+
+def test_parse_combines_repeated_routing_headers_in_wire_order():
+    msg = sm.parse_sip_message(
+        "BYE sip:client@example SIP/2.0\r\n"
+        "Via: SIP/2.0/UDP first.example;branch=1\r\n"
+        "Via: SIP/2.0/UDP second.example;branch=2\r\n"
+        "Record-Route: <sip:first.example;lr>\r\n"
+        "Record-Route: <sip:second.example;lr>\r\n\r\n"
+    )
+    assert msg.header("Via") == (
+        "SIP/2.0/UDP first.example;branch=1, "
+        "SIP/2.0/UDP second.example;branch=2"
+    )
+    assert msg.header("Record-Route") == (
+        "<sip:first.example;lr>, <sip:second.example;lr>"
+    )
+
+
+def test_split_header_values_ignores_nested_commas():
+    assert sm.split_header_values(
+        '"Proxy, One" <sip:first.example;lr>, '
+        '<sip:second.example?Subject=hello,world;lr>'
+    ) == [
+        '"Proxy, One" <sip:first.example;lr>',
+        '<sip:second.example?Subject=hello,world;lr>',
+    ]
 
 
 def test_parse_sdp():
@@ -354,6 +381,325 @@ def test_info_dtmf_ignores_other_content():
     assert p("application/sdp", "Signal=1") is None
     assert p("application/dtmf-relay", "") is None
     assert p("application/dtmf-relay", "Duration=160") is None
+
+
+def test_response_copies_complete_via_chain():
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        request = sm.parse_sip_message(
+            "BYE sip:alice@example SIP/2.0\r\n"
+            "Via: SIP/2.0/UDP first.example;branch=1\r\n"
+            "Via: SIP/2.0/UDP second.example;branch=2\r\n"
+            "From: <sip:bob@example>;tag=remote\r\n"
+            "To: <sip:alice@example>;tag=local\r\n"
+            "Call-ID: call@example\r\n"
+            "CSeq: 1 BYE\r\n\r\n"
+        )
+        return client._build_response(request, 200, "OK", False)
+
+    response = asyncio.run(run())
+    assert (
+        "Via: SIP/2.0/UDP first.example;branch=1, "
+        "SIP/2.0/UDP second.example;branch=2\r\n"
+    ) in response
+
+
+def test_successful_invite_ack_and_bye_use_reversed_record_route():
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client._local_ip = "192.0.2.10"
+        client._local_port = 5060
+        client._outbound = True
+        client._d_call_id = "call@example"
+        client._d_local = "<sip:alice@example>;tag=local"
+        client._d_remote = "<sip:bob@example>"
+        client._d_remote_target = "sip:bob@example"
+        client._d_cseq = 2
+        client._invite_cseq = 2
+        client.registered = True
+        client.state = sip_client.SipState.RINGING_OUT
+        response = sm.parse_sip_message(
+            "SIP/2.0 200 OK\r\n"
+            "Record-Route: <sip:first.example;lr>,<sip:middle.example;lr>\r\n"
+            "Record-Route: <sip:last.example;lr>\r\n"
+            "To: <sip:bob@example>;tag=remote\r\n"
+            "Contact: <sip:bob@target.example>\r\n"
+            "Call-ID: call@example\r\n"
+            "CSeq: 2 INVITE\r\n"
+            "Content-Length: 0\r\n\r\n"
+        )
+        with (
+            patch.object(client, "_send_raw") as send,
+            patch.object(client, "_apply_remote_sdp"),
+            patch.object(client, "_start_media", AsyncMock()) as start_media,
+        ):
+            client._handle_invite_response(response)
+            first_ack = send.call_args_list[0].args[0]
+            client._handle_invite_response(response)
+            repeated_ack = send.call_args_list[1].args[0]
+            client.hangup()
+            local_bye = send.call_args_list[2].args[0]
+            client._handle_invite_response(response)
+            delayed_ack = send.call_args_list[3].args[0]
+            await asyncio.sleep(0)
+        return (
+            first_ack,
+            repeated_ack,
+            delayed_ack,
+            local_bye,
+            start_media.await_count,
+            client.state,
+            client._d_cseq,
+            client._invite_cseq,
+        )
+
+    (
+        first_ack,
+        repeated_ack,
+        delayed_ack,
+        bye,
+        media_starts,
+        state,
+        dialog_cseq,
+        invite_cseq,
+    ) = asyncio.run(run())
+    expected = (
+        "Route: <sip:last.example;lr>, <sip:middle.example;lr>, "
+        "<sip:first.example;lr>\r\n"
+    )
+    assert expected in first_ack
+    assert expected in repeated_ack
+    assert expected in delayed_ack
+    assert expected in bye
+    assert first_ack.startswith("ACK sip:bob@target.example SIP/2.0\r\n")
+    assert bye.startswith("BYE sip:bob@target.example SIP/2.0\r\n")
+    assert media_starts == 1
+    assert state == sip_client.SipState.REGISTERED
+    assert dialog_cseq == 3
+    assert invite_cseq == 2
+
+
+def test_cancel_race_acks_and_ends_late_2xx_with_original_invite_cseq():
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client._local_ip = "192.0.2.10"
+        client._local_port = 5060
+        client._outbound = True
+        client._d_call_id = "call@example"
+        client._d_local = "<sip:alice@example>;tag=local"
+        client._d_remote = "<sip:bob@example>"
+        client._d_remote_target = "sip:bob@example"
+        client._d_branch = "z9hG4bKinvite"
+        client._d_cseq = 2
+        client._invite_cseq = 2
+        client.registered = True
+        client.state = sip_client.SipState.RINGING_OUT
+        response = sm.parse_sip_message(
+            "SIP/2.0 200 OK\r\n"
+            "Record-Route: <sip:first.example;lr>,<sip:last.example;lr>\r\n"
+            "To: <sip:bob@example>;tag=late\r\n"
+            "Contact: <sip:bob@late.example>\r\n"
+            "Call-ID: call@example\r\n"
+            "CSeq: 2 INVITE\r\n"
+            "Content-Length: 0\r\n\r\n"
+        )
+        with (
+            patch.object(client, "_send_raw") as send,
+            patch.object(client, "_start_media", AsyncMock()) as start_media,
+        ):
+            client.hangup()
+            client._handle_invite_response(response)
+            await asyncio.sleep(0)
+        return client, [call.args[0] for call in send.call_args_list], start_media
+
+    client, sent, start_media = asyncio.run(run())
+    assert len(sent) == 3
+    assert sent[0].startswith("CANCEL sip:bob@example SIP/2.0\r\n")
+    assert "branch=z9hG4bKinvite;rport" in sent[0]
+    assert "CSeq: 2 CANCEL\r\n" in sent[0]
+    assert sent[1].startswith("ACK sip:bob@late.example SIP/2.0\r\n")
+    assert sent[2].startswith("BYE sip:bob@late.example SIP/2.0\r\n")
+    assert client._d_cseq == 2
+    assert client._invite_cseq == 2
+    assert client.state == sip_client.SipState.REGISTERED
+    start_media.assert_not_awaited()
+
+
+def test_invite_response_from_previous_call_id_is_ignored():
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client._outbound = True
+        client._d_call_id = "current@example"
+        client._d_cseq = 1
+        client._invite_cseq = 1
+        client.state = sip_client.SipState.RINGING_OUT
+        response = sm.parse_sip_message(
+            "SIP/2.0 200 OK\r\n"
+            "To: <sip:bob@example>;tag=old\r\n"
+            "Contact: <sip:bob@old.example>\r\n"
+            "Call-ID: previous@example\r\n"
+            "CSeq: 1 INVITE\r\n"
+            "Content-Length: 0\r\n\r\n"
+        )
+        with (
+            patch.object(client, "_send_raw") as send,
+            patch.object(client, "_start_media", AsyncMock()) as start_media,
+        ):
+            client._handle_invite_response(response)
+        return client, send, start_media
+
+    client, send, start_media = asyncio.run(run())
+    send.assert_not_called()
+    start_media.assert_not_awaited()
+    assert client.state == sip_client.SipState.RINGING_OUT
+
+
+def test_forked_invite_2xx_is_acknowledged_and_ended_without_replacing_dialog():
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client._local_ip = "192.0.2.10"
+        client._local_port = 5060
+        client._outbound = True
+        client._d_call_id = "call@example"
+        client._d_local = "<sip:alice@example>;tag=local"
+        client._d_remote = "<sip:bob@example>;tag=accepted"
+        client._d_remote_target = "sip:bob@accepted.example"
+        client._d_cseq = 1
+        client._invite_cseq = 1
+        client._dialog_routes = ["<sip:accepted-proxy.example;lr>"]
+        client._accepted_dialog_to = client._d_remote
+        client.state = sip_client.SipState.IN_CALL
+        response = sm.parse_sip_message(
+            "SIP/2.0 200 OK\r\n"
+            "Record-Route: <sip:first-fork.example;lr>,<sip:last-fork.example;lr>\r\n"
+            "To: <sip:bob@example>;tag=forked\r\n"
+            "Contact: <sip:bob@forked.example>\r\n"
+            "Call-ID: call@example\r\n"
+            "CSeq: 1 INVITE\r\n"
+            "Content-Length: 0\r\n\r\n"
+        )
+        with patch.object(client, "_send_raw") as send:
+            client._handle_invite_response(response)
+        return client, [call.args[0] for call in send.call_args_list]
+
+    client, sent = asyncio.run(run())
+    assert len(sent) == 2
+    assert sent[0].startswith("ACK sip:bob@forked.example SIP/2.0\r\n")
+    assert sent[1].startswith("BYE sip:bob@forked.example SIP/2.0\r\n")
+    expected = "Route: <sip:last-fork.example;lr>, <sip:first-fork.example;lr>\r\n"
+    assert expected in sent[0]
+    assert expected in sent[1]
+    assert client._d_remote == "<sip:bob@example>;tag=accepted"
+    assert client._d_remote_target == "sip:bob@accepted.example"
+    assert client._dialog_routes == ["<sip:accepted-proxy.example;lr>"]
+
+
+def test_new_outbound_call_clears_previous_dialog_routes():
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client.state = sip_client.SipState.REGISTERED
+        client._dialog_routes = ["<sip:stale.example;lr>"]
+        with (
+            patch.object(client, "_send_raw"),
+            patch.object(client, "_start_invite_retx"),
+        ):
+            client.call("1234")
+        return client._dialog_routes, client._d_cseq, client._invite_cseq
+
+    assert asyncio.run(run()) == ([], 1, 1)
+
+
+def test_authenticated_invite_updates_retained_invite_cseq():
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(
+            sip_client.SipConfig(
+                server="pbx.example",
+                username="alice",
+                password="secret",
+                domain="example",
+            )
+        )
+        client._local_ip = "192.0.2.10"
+        client._local_port = 5060
+        client._outbound = True
+        client._d_call_id = "call@example"
+        client._d_local = "<sip:alice@example>;tag=local"
+        client._d_remote = "<sip:bob@example>"
+        client._d_remote_target = "sip:bob@example"
+        client._d_branch = "z9hG4bKinitial"
+        client._d_cseq = 1
+        client._invite_cseq = 1
+        client.state = sip_client.SipState.INVITING
+        response = sm.parse_sip_message(
+            "SIP/2.0 407 Proxy Authentication Required\r\n"
+            "To: <sip:bob@example>;tag=proxy\r\n"
+            "Call-ID: call@example\r\n"
+            "CSeq: 1 INVITE\r\n"
+            'Proxy-Authenticate: Digest realm="example", nonce="abc123"\r\n'
+            "Content-Length: 0\r\n\r\n"
+        )
+        with (
+            patch.object(client, "_send_raw") as send,
+            patch.object(client, "_start_invite_retx"),
+        ):
+            client._handle_invite_response(response)
+        return client, [call.args[0] for call in send.call_args_list]
+
+    client, sent = asyncio.run(run())
+    assert client._d_cseq == 2
+    assert client._invite_cseq == 2
+    assert "CSeq: 1 ACK\r\n" in sent[0]
+    assert "CSeq: 2 INVITE\r\n" in sent[1]
+
+
+def test_inbound_dialog_keeps_record_route_wire_order():
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client.state = sip_client.SipState.REGISTERED
+        invite = sm.parse_sip_message(
+            "INVITE sip:alice@example SIP/2.0\r\n"
+            "Record-Route: <sip:first.example;lr>,<sip:second.example;lr>\r\n"
+            "From: <sip:bob@example>;tag=remote\r\n"
+            "To: <sip:alice@example>\r\n"
+            "Contact: <sip:bob@target.example>\r\n"
+            "Call-ID: inbound@example\r\n"
+            "CSeq: 1 INVITE\r\n"
+            "Content-Type: application/sdp\r\n\r\n"
+            "v=0\r\nc=IN IP4 198.51.100.10\r\n"
+            "m=audio 4000 RTP/AVP 8\r\na=rtpmap:8 PCMA/8000\r\n"
+        )
+        with patch.object(client, "_send_raw") as send:
+            client._handle_request(invite)
+            response = client._build_response(invite, 200, "OK", True)
+        return client._build_in_dialog("BYE"), response, send
+
+    bye, response, _send = asyncio.run(run())
+    assert "Route: <sip:first.example;lr>, <sip:second.example;lr>\r\n" in bye
+    assert "Record-Route: <sip:first.example;lr>,<sip:second.example;lr>\r\n" in response
 
 
 # ------------------------------------------------------- RFC 2833 RX

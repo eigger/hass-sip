@@ -58,6 +58,35 @@ _COMPACT_HEADERS = {
     "v": "via",
 }
 
+_COMMA_LIST_HEADERS = {"record-route", "route", "service-route", "via"}
+
+
+def split_header_values(value: str) -> list[str]:
+    """Split a comma-list SIP header without splitting nested commas."""
+    values: list[str] = []
+    start = 0
+    angle_depth = 0
+    quoted = False
+    escaped = False
+    for index, char in enumerate(value):
+        if escaped:
+            escaped = False
+        elif quoted and char == "\\":
+            escaped = True
+        elif char == '"':
+            quoted = not quoted
+        elif not quoted and char == "<":
+            angle_depth += 1
+        elif not quoted and char == ">" and angle_depth:
+            angle_depth -= 1
+        elif not quoted and angle_depth == 0 and char == ",":
+            if item := value[start:index].strip():
+                values.append(item)
+            start = index + 1
+    if item := value[start:].strip():
+        values.append(item)
+    return values
+
 
 def parse_sip_message(raw: str) -> SipMessage:
     msg = SipMessage()
@@ -103,10 +132,11 @@ def parse_sip_message(raw: str) -> SipMessage:
         name = _COMPACT_HEADERS.get(name, name)
         value = line[colon + 1:].strip()
         last_name = name
-        # Keep the first occurrence (topmost Via, etc.), except for Service-Route.
+        # List-valued routing headers can be represented as repeated rows or one
+        # comma-separated row. Preserve their wire order in a combined value.
         if name not in msg.headers:
             msg.headers[name] = value
-        elif name == "service-route":
+        elif name in _COMMA_LIST_HEADERS:
             msg.headers[name] += f", {value}"
     return msg
 
