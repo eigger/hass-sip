@@ -189,6 +189,33 @@ def test_parse_request():
     assert m.header("call-id") == "xyz@host"
 
 
+def test_parse_combines_repeated_routing_headers_in_wire_order():
+    msg = sm.parse_sip_message(
+        "BYE sip:client@example SIP/2.0\r\n"
+        "Via: SIP/2.0/UDP first.example;branch=1\r\n"
+        "Via: SIP/2.0/UDP second.example;branch=2\r\n"
+        "Record-Route: <sip:first.example;lr>\r\n"
+        "Record-Route: <sip:second.example;lr>\r\n\r\n"
+    )
+    assert msg.header("Via") == (
+        "SIP/2.0/UDP first.example;branch=1, "
+        "SIP/2.0/UDP second.example;branch=2"
+    )
+    assert msg.header("Record-Route") == (
+        "<sip:first.example;lr>, <sip:second.example;lr>"
+    )
+
+
+def test_split_header_values_ignores_nested_commas():
+    assert sm.split_header_values(
+        '"Proxy, One" <sip:first.example;lr>, '
+        '<sip:second.example?Subject=hello,world;lr>'
+    ) == [
+        '"Proxy, One" <sip:first.example;lr>',
+        '<sip:second.example?Subject=hello,world;lr>',
+    ]
+
+
 def test_parse_sdp():
     body = (
         "v=0\r\n"
@@ -356,6 +383,28 @@ def test_info_dtmf_ignores_other_content():
     assert p("application/dtmf-relay", "Duration=160") is None
 
 
+def test_response_copies_complete_via_chain():
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        request = sm.parse_sip_message(
+            "BYE sip:alice@example SIP/2.0\r\n"
+            "Via: SIP/2.0/UDP first.example;branch=1\r\n"
+            "Via: SIP/2.0/UDP second.example;branch=2\r\n"
+            "From: <sip:bob@example>;tag=remote\r\n"
+            "To: <sip:alice@example>;tag=local\r\n"
+            "Call-ID: call@example\r\n"
+            "CSeq: 1 BYE\r\n\r\n"
+        )
+        return client._build_response(request, 200, "OK", False)
+
+    response = asyncio.run(run())
+    assert (
+        "Via: SIP/2.0/UDP first.example;branch=1, "
+        "SIP/2.0/UDP second.example;branch=2\r\n"
+    ) in response
 # ------------------------------------------------------- RFC 2833 RX
 def _te_packet(pt, marker, timestamp, event, seq=1):
     """Build one telephone-event RTP packet."""
