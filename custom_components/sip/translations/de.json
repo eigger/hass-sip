@@ -209,6 +209,18 @@
           "name": "Assist-Pipeline",
           "description": "Optionale Assist-Pipeline-ID. Ohne Angabe wird die Standard-Pipeline verwendet."
         },
+        "conversation_id": {
+          "name": "Konversations-ID",
+          "description": "Optionale vorhandene Konversations-ID zum Fortsetzen. Verwenden Sie denselben Konversationsagenten; abgelaufene Sitzungen können eine neue Konversation starten."
+        },
+        "initial_prompt": {
+          "name": "Erste Eingabe",
+          "description": "Text, der vor dem Zuhören an den Konversationsagenten gesendet wird. Die Antwort wird dem Anrufer vorgespielt."
+        },
+        "system_prompt": {
+          "name": "Systemanweisung",
+          "description": "Zusätzliche Anweisungen für den Konversationsagenten bei jeder Runde. Startet selbst keine Runde und spielt kein Audio ab."
+        },
         "max_turns": {
           "name": "Max. Runden",
           "description": "Maximale Gesprächsrunden vor Sitzungsende. 0 bedeutet unbegrenzt."
