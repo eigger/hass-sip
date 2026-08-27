@@ -698,8 +698,101 @@ def test_inbound_dialog_keeps_record_route_wire_order():
         return client._build_in_dialog("BYE"), response, send
 
     bye, response, _send = asyncio.run(run())
+    assert bye.startswith("BYE sip:bob@target.example SIP/2.0\r\n")
     assert "Route: <sip:first.example;lr>, <sip:second.example;lr>\r\n" in bye
     assert "Record-Route: <sip:first.example;lr>,<sip:second.example;lr>\r\n" in response
+
+
+def _inbound_client_with_routes(record_route):
+    """Drive an incoming INVITE carrying `record_route` and return the client."""
+    client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+    client.state = sip_client.SipState.REGISTERED
+    invite = sm.parse_sip_message(
+        "INVITE sip:14@192.168.1.237:59436 SIP/2.0\r\n"
+        f"Record-Route: {record_route}\r\n"
+        "From: <sip:12@example>;tag=remote\r\n"
+        "To: <sip:14@example>\r\n"
+        "Contact: <sip:12@127.0.0.1:5060>\r\n"
+        "Call-ID: inbound@example\r\n"
+        "CSeq: 1 INVITE\r\n"
+        "Content-Type: application/sdp\r\n\r\n"
+        "v=0\r\nc=IN IP4 198.51.100.10\r\n"
+        "m=audio 4000 RTP/AVP 8\r\na=rtpmap:8 PCMA/8000\r\n"
+    )
+    with patch.object(client, "_send_raw"):
+        client._handle_request(invite)
+    return client, invite
+
+
+def test_strict_route_moves_first_hop_into_request_uri():
+    """A route set without ";lr" is a strict router (RFC 3261 §12.2.1.1).
+
+    The 3CX SBC in issue #39 record-routes without ";lr", so sending the BYE
+    to the peer's Contact would address 127.0.0.1 and never reach the SBC.
+    """
+    if sip_client is None:
+        return
+
+    async def run():
+        client, _ = _inbound_client_with_routes(
+            "<sip:3CXSBC@192.168.1.194:5060;user=proxy;tnlid=sbc.c8d9>"
+        )
+        return client._build_in_dialog("BYE")
+
+    bye = asyncio.run(run())
+    assert bye.startswith(
+        "BYE sip:3CXSBC@192.168.1.194:5060;user=proxy;tnlid=sbc.c8d9 SIP/2.0\r\n"
+    )
+    # The unreachable Contact is preserved as the final route, not dropped.
+    assert "Route: <sip:12@127.0.0.1:5060>\r\n" in bye
+
+
+def test_strict_route_keeps_remaining_hops_from_combined_header():
+    """Comma-combined and repeated Record-Route rows must behave identically."""
+    if sip_client is None:
+        return
+
+    async def run():
+        client, _ = _inbound_client_with_routes(
+            "<sip:sbc.example>,<sip:middle.example>"
+        )
+        return client._build_in_dialog("BYE")
+
+    bye = asyncio.run(run())
+    assert bye.startswith("BYE sip:sbc.example SIP/2.0\r\n")
+    assert "Route: <sip:middle.example>, <sip:12@127.0.0.1:5060>\r\n" in bye
+
+
+def test_lr_lookalike_param_is_not_treated_as_loose():
+    if sip_client is None:
+        return
+
+    async def run():
+        client, _ = _inbound_client_with_routes("<sip:sbc.example;lrx=1>")
+        return client._build_in_dialog("BYE")
+
+    bye = asyncio.run(run())
+    assert bye.startswith("BYE sip:sbc.example;lrx=1 SIP/2.0\r\n")
+
+
+def test_ringing_response_establishes_early_dialog():
+    """18x opens an early dialog, so it needs Record-Route and Contact too."""
+    if sip_client is None:
+        return
+
+    async def run():
+        client, invite = _inbound_client_with_routes("<sip:sbc.example;lr>")
+        return (
+            client._build_response(invite, 180, "Ringing", False),
+            client._build_response(invite, 100, "Trying", False),
+        )
+
+    ringing, trying = asyncio.run(run())
+    assert "Record-Route: <sip:sbc.example;lr>\r\n" in ringing
+    assert "Contact: <sip:" in ringing
+    # 100 Trying is not dialog-establishing and must stay bare.
+    assert "Record-Route:" not in trying
+    assert "Contact:" not in trying
 
 
 # ------------------------------------------------------- RFC 2833 RX

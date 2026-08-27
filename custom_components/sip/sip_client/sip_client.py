@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import enum
 import logging
+import re
 import socket
 import time
 from dataclasses import dataclass
@@ -115,6 +116,17 @@ def _angle_uri(value: str) -> str:
     # No angle brackets: treat the whole value as a bare URI (RFC 3261 §20.10)
     stripped = value.strip()
     return stripped if stripped.startswith("sip") else ""
+
+
+# A route is loose only when its URI carries an ";lr" parameter (RFC 3261
+# §19.1.1). Match it as a whole parameter so ";lrx" or a userinfo "lr" is not
+# mistaken for one.
+_LOOSE_ROUTE_PARAM = re.compile(r";lr(?=[;=?]|$)", re.IGNORECASE)
+
+
+def _is_loose_route(route: str) -> bool:
+    """Whether a Record-Route/Route field-value points at a loose router."""
+    return bool(_LOOSE_ROUTE_PARAM.search(_angle_uri(route) or route.strip()))
 
 
 class _SipProtocol(asyncio.DatagramProtocol):
@@ -622,18 +634,19 @@ class SipClient:
             branch = sm.gen_branch()
             
         via = f"SIP/2.0/UDP {self._local_ip}:{self._local_port};branch={branch};rport"
-            
+
+        if self._service_routes and 300 <= resp.status_code < 700:
+            route_block = f"Route: {self._service_routes}\r\n"
+        elif 200 <= resp.status_code < 300:
+            target, route_block = self._route_request(target, routes)
+        else:
+            route_block = ""
+
         msg = (
             f"ACK {target} SIP/2.0\r\n"
             f"Via: {via}\r\n"
             "Max-Forwards: 70\r\n"
-        )
-        if self._service_routes and 300 <= resp.status_code < 700:
-            msg += f"Route: {self._service_routes}\r\n"
-        elif 200 <= resp.status_code < 300:
-            msg += self._dialog_route_header(routes)
-
-        msg += (
+            f"{route_block}"
             f"From: {self._d_local}\r\n"
             f"To: {to or self._d_remote}\r\n"
             f"Call-ID: {self._d_call_id}\r\n"
@@ -809,7 +822,11 @@ class SipClient:
             f"Call-ID: {req.header('Call-ID')}\r\n"
             f"CSeq: {req.header('CSeq')}\r\n"
         )
-        if 200 <= code < 300 and req.method == "INVITE":
+        # RFC 3261 §12.1.1: every dialog-establishing response — the early
+        # dialog of a 18x included, not just the 2xx — must echo the request's
+        # Record-Route and carry a Contact the peer can route in-dialog
+        # requests to. Dropping either strands a proxy/SBC outside the dialog.
+        if req.method == "INVITE" and 101 <= code < 300:
             if record_route := req.header("Record-Route"):
                 msg += f"Record-Route: {record_route}\r\n"
             msg += f"Contact: {self._contact_uri()}\r\n"
@@ -991,11 +1008,14 @@ class SipClient:
         routes: list[str] | None = None,
         cseq: int | None = None,
     ) -> str:
+        request_uri, route_block = self._route_request(
+            target or self._d_remote_target, routes
+        )
         return (
-            f"{method} {target or self._d_remote_target} SIP/2.0\r\n"
+            f"{method} {request_uri} SIP/2.0\r\n"
             f"Via: SIP/2.0/UDP {self._local_ip}:{self._local_port};branch={sm.gen_branch()};rport\r\n"
             "Max-Forwards: 70\r\n"
-            f"{self._dialog_route_header(routes)}"
+            f"{route_block}"
             f"From: {self._d_local}\r\n"
             f"To: {remote or self._d_remote}\r\n"
             f"Call-ID: {self._d_call_id}\r\n"
@@ -1004,11 +1024,26 @@ class SipClient:
             "Content-Length: 0\r\n\r\n"
         )
 
-    def _dialog_route_header(self, routes: list[str] | None = None) -> str:
-        active_routes = self._dialog_routes if routes is None else routes
-        if not active_routes:
-            return ""
-        return f"Route: {', '.join(active_routes)}\r\n"
+    def _route_request(
+        self, target: str, routes: list[str] | None = None
+    ) -> tuple[str, str]:
+        """Resolve the Request-URI and Route block for an in-dialog request.
+
+        RFC 3261 §12.2.1.1: when the first hop is a loose router the remote
+        target stays in the Request-URI and the whole route set travels as
+        Route headers. A strict router instead takes the Request-URI, and the
+        remote target moves to the tail of the route set so it is not lost.
+        """
+        active = [r for r in (self._dialog_routes if routes is None else routes) if r.strip()]
+        if not active:
+            return target, ""
+        if _is_loose_route(active[0]):
+            return target, f"Route: {', '.join(active)}\r\n"
+        remaining = active[1:]
+        if target:
+            remaining = [*remaining, f"<{target}>"]
+        route_block = f"Route: {', '.join(remaining)}\r\n" if remaining else ""
+        return _angle_uri(active[0]) or active[0], route_block
 
     def _end_forked_dialog(
         self, response: sm.SipMessage, routes: list[str], remote: str
