@@ -1307,6 +1307,62 @@ def test_assist_silent_turns_end_session():
     assert len(done_calls) == 1
 
 
+def test_assist_hangup_on_end_shrinks_silent_turn_budget():
+    """hangup_on_end ends after 1 silent turn instead of the configured 2.
+
+    Regression for #41: without a smaller budget, hangup_on_end callers wait
+    through the full silent-turn count before the call is torn down.
+    """
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    turn_count = 0
+    done_calls = []
+
+    async def mock_pipeline(hass, **kwargs):
+        nonlocal turn_count
+        turn_count += 1
+        kwargs["event_callback"](PE(PET.ERROR, {"code": "stt-no-text-recognized"}))
+
+    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
+
+    bridge = assist_mod.AssistBridge(
+        MagicMock(),
+        play_source_fn=MagicMock(),
+        on_done_fn=lambda: done_calls.append(1),
+        max_silent_turns=2,
+        hangup_on_end=True,
+    )
+    _run_bridge_session(bridge)
+    assert turn_count == 1
+    assert len(done_calls) == 1
+
+
+def test_assist_hangup_on_end_does_not_widen_a_stricter_budget():
+    """hangup_on_end only ever shrinks the budget, never grows it.
+
+    An explicit max_silent_turns=0 already ends after the first silent turn;
+    hangup_on_end clamping it up to 1 would wait through an extra turn.
+    """
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    turn_count = 0
+
+    async def mock_pipeline(hass, **kwargs):
+        nonlocal turn_count
+        turn_count += 1
+        kwargs["event_callback"](PE(PET.ERROR, {"code": "stt-no-text-recognized"}))
+
+    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
+
+    bridge = assist_mod.AssistBridge(
+        MagicMock(),
+        play_source_fn=MagicMock(),
+        on_done_fn=MagicMock(),
+        max_silent_turns=0,
+        hangup_on_end=True,
+    )
+    _run_bridge_session(bridge)
+    assert turn_count == 1
+
+
 def test_assist_conversation_id_carried_across_turns():
     assist_mod, mock_ap, PET, PE = _assist_ctx()
     conv_ids = []

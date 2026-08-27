@@ -38,6 +38,10 @@ except ImportError:
 
 _SILENT_TURN_ERRORS = frozenset({"stt-no-text-recognized", "wake-word-timeout"})
 _MAX_CONSECUTIVE_ERRORS = 3
+# hangup_on_end callers want the call to end promptly once the caller has
+# stopped responding, rather than waiting through the full silent-turn
+# budget of a normal session.
+_HANGUP_ON_END_MAX_SILENT_TURNS = 1
 _ERROR_TURN_BACKOFF_SECONDS = 1.0
 _VAD_FRAME_BYTES = 320  # 10 ms @ 16 kHz s16le mono
 _VAD_SPEECH_THRESHOLD = 0.5
@@ -130,6 +134,7 @@ class AssistBridge(AudioSink):
         silence_seconds: float | None = None,
         noise_suppression: int = 0,
         turn_tone: bool = False,
+        hangup_on_end: bool = False,
         stop_audio_fn: Callable[..., None] | None = None,
         media_playing_fn: Callable[[], bool] | None = None,
     ) -> None:
@@ -144,6 +149,10 @@ class AssistBridge(AudioSink):
         self.sample_rate = sample_rate
         self.max_turns = max_turns
         self.max_silent_turns = max_silent_turns
+        if hangup_on_end:
+            self.max_silent_turns = min(
+                self.max_silent_turns, _HANGUP_ON_END_MAX_SILENT_TURNS
+            )
         self.barge_in = barge_in
         self.silence_seconds = silence_seconds
         self.noise_suppression = noise_suppression
