@@ -2712,6 +2712,34 @@ def test_build_schema_reconfigure_prefills_current_entry_values():
     assert markers["outbound_proxy"].default is vol.UNDEFINED
 
 
+def test_sip_device_id_lookup():
+    """_sip_device_id uses async_get_device_by_identifier."""
+    import types
+    from unittest.mock import MagicMock, patch
+
+    if "homeassistant.helpers.service" not in sys.modules:
+        service_stub = types.ModuleType("homeassistant.helpers.service")
+        service_stub.async_extract_config_entry_ids = MagicMock()
+        sys.modules["homeassistant.helpers.service"] = service_stub
+
+    init_mod = _load_component_module("__init__")
+
+    hass = MagicMock()
+    mock_dr = MagicMock()
+    mock_device = MagicMock(id="dev_12345")
+    mock_dr.async_get_device_by_identifier.return_value = mock_device
+
+    with patch.object(init_mod.dr, "async_get", return_value=mock_dr):
+        dev_id = init_mod._sip_device_id(hass, "entry_abc")
+        assert dev_id == "dev_12345"
+        mock_dr.async_get_device_by_identifier.assert_called_once_with(
+            ("sip", "entry_abc"), config_entry_id="entry_abc"
+        )
+
+        mock_dr.async_get_device_by_identifier.return_value = None
+        assert init_mod._sip_device_id(hass, "entry_abc") is None
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

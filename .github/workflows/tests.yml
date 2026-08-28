@@ -18,7 +18,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: Install ruff
         run: pip install ruff
@@ -32,7 +32,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13", "3.14"]
+        python-version: ["3.14"]
     steps:
       - uses: actions/checkout@v6
 
@@ -44,7 +44,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install pytest voluptuous
+          pip install pytest voluptuous "homeassistant>=2026.8.0"
           if [ -f custom_components/sip/manifest.json ]; then
             python -c "import json; reqs = json.load(open('custom_components/sip/manifest.json')).get('requirements', []); print('\n'.join(reqs))" > requirements.txt
             if [ -s requirements.txt ]; then

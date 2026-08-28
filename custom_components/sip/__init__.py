@@ -1,4 +1,5 @@
 """The SIP Client integration."""
+
 from __future__ import annotations
 
 import asyncio
@@ -48,8 +49,11 @@ from .sip_client.sip_client import SipCallbacks, SipClient, SipConfig, SipState
 
 def _sip_device_id(hass: HomeAssistant, entry_id: str) -> str | None:
     """Return the device registry id for a SIP config entry, if created yet."""
-    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, entry_id)})
+    device = dr.async_get(hass).async_get_device_by_identifier(
+        (DOMAIN, entry_id), config_entry_id=entry_id
+    )
     return device.id if device else None
+
 
 PLATFORMS = [
     Platform.SENSOR,
@@ -77,7 +81,9 @@ def load_contacts(hass: HomeAssistant) -> dict[str, Any]:
     return {}
 
 
-def get_contact_info_from_cache(contacts: dict[str, Any], number: str) -> tuple[str, bool]:
+def get_contact_info_from_cache(
+    contacts: dict[str, Any], number: str
+) -> tuple[str, bool]:
     """Look up friendly name and auto-answer settings from cached contacts."""
     info = contacts.get(str(number))
     if isinstance(info, dict):
@@ -85,6 +91,7 @@ def get_contact_info_from_cache(contacts: dict[str, Any], number: str) -> tuple[
     elif isinstance(info, str):
         return info, False
     return number, False
+
 
 # Service Schemas
 SERVICE_DIAL_SCHEMA = cv.make_entity_service_schema(
@@ -150,7 +157,6 @@ SERVICE_ASSIST_SCHEMA = cv.make_entity_service_schema(
 )
 
 
-
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up SIP Client from a config entry."""
     config = entry.data
@@ -189,7 +195,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ivr_session: IvrSession | None = None
     assist_bridge: AssistBridge | None = None
 
-    def fire_sip_event(event_type: str, extra_data: dict[str, Any] | None = None) -> None:
+    def fire_sip_event(
+        event_type: str, extra_data: dict[str, Any] | None = None
+    ) -> None:
         data = {
             "sip_account": sip_config.username,
             "server": sip_config.server,
@@ -224,11 +232,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     @callback
     def on_incoming_call(caller: str) -> None:
         LOGGER.info("[%s] Incoming call from %s", sip_config.username, caller)
-        
+
         # Reload contacts in background so any manual edits are picked up dynamically
         def reload_contacts_bg():
             contacts_data = load_contacts(hass)
             entry.runtime_data["contacts"] = contacts_data
+
         hass.async_add_executor_job(reload_contacts_bg)
 
         caller_name, auto_answer = get_contact_info_from_cache(
@@ -250,7 +259,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry.runtime_data["call_status"] = "missed"
 
         async_dispatcher_send(hass, f"{DOMAIN}_state_update_{entry.entry_id}")
-        fire_sip_event(EVENT_SIP_INCOMING_CALL, {"caller": caller, "caller_name": caller_name})
+        fire_sip_event(
+            EVENT_SIP_INCOMING_CALL, {"caller": caller, "caller_name": caller_name}
+        )
 
     @callback
     def on_call_connected() -> None:
@@ -559,7 +570,9 @@ async def async_register_services(hass: HomeAssistant) -> None:
                         "Specify a target entity/device to control a specific account.",
                         loaded_entries[0].runtime_data["config"].username,
                     )
-                matched_entries.append((loaded_entries[0].entry_id, loaded_entries[0].runtime_data))
+                matched_entries.append(
+                    (loaded_entries[0].entry_id, loaded_entries[0].runtime_data)
+                )
 
         return matched_entries
 
@@ -579,6 +592,7 @@ async def async_register_services(hass: HomeAssistant) -> None:
         if message:
             try:
                 from homeassistant.helpers import template
+
                 message = template.Template(message, hass).async_render()
             except Exception as err:
                 LOGGER.error("Failed to render dial message template: %s", err)
@@ -653,6 +667,7 @@ async def async_register_services(hass: HomeAssistant) -> None:
         if message:
             try:
                 from homeassistant.helpers import template
+
                 message = template.Template(message, hass).async_render()
             except Exception as err:
                 LOGGER.error("Failed to render answer message template: %s", err)
@@ -715,11 +730,17 @@ async def async_register_services(hass: HomeAssistant) -> None:
             if target_file:
                 try:
                     from homeassistant.helpers import template
+
                     target_file = template.Template(target_file, hass).async_render(
-                        variables={"username": data["config"].username, "entry_id": entry_id}
+                        variables={
+                            "username": data["config"].username,
+                            "entry_id": entry_id,
+                        }
                     )
                 except Exception as err:
-                    LOGGER.error("Failed to render recording file path template: %s", err)
+                    LOGGER.error(
+                        "Failed to render recording file path template: %s", err
+                    )
 
             # If there are multiple targets, append the username to avoid file clash
             if len(targets) > 1 and target_file:
@@ -732,7 +753,10 @@ async def async_register_services(hass: HomeAssistant) -> None:
             )
             client.set_sink(recorder)
             data["recorder"] = recorder
-            rec_data = {"sip_account": data["config"].username, "recording_file": target_file}
+            rec_data = {
+                "sip_account": data["config"].username,
+                "recording_file": target_file,
+            }
             device_id = _sip_device_id(hass, entry_id)
             if device_id:
                 rec_data["device_id"] = device_id
@@ -790,15 +814,28 @@ async def async_register_services(hass: HomeAssistant) -> None:
             await data["trigger_assist_fn"](**opts)
 
     # Register all services
-    hass.services.async_register(DOMAIN, "dial", handle_dial, schema=SERVICE_DIAL_SCHEMA)
-    hass.services.async_register(DOMAIN, "hangup", handle_hangup, schema=SERVICE_HANGUP_SCHEMA)
-    hass.services.async_register(DOMAIN, "answer", handle_answer, schema=SERVICE_ANSWER_SCHEMA)
-    hass.services.async_register(DOMAIN, "send_dtmf", handle_send_dtmf, schema=SERVICE_SEND_DTMF_SCHEMA)
+    hass.services.async_register(
+        DOMAIN, "dial", handle_dial, schema=SERVICE_DIAL_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, "hangup", handle_hangup, schema=SERVICE_HANGUP_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, "answer", handle_answer, schema=SERVICE_ANSWER_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, "send_dtmf", handle_send_dtmf, schema=SERVICE_SEND_DTMF_SCHEMA
+    )
 
     hass.services.async_register(
-        DOMAIN, "start_recording", handle_start_recording, schema=SERVICE_RECORDING_SCHEMA
+        DOMAIN,
+        "start_recording",
+        handle_start_recording,
+        schema=SERVICE_RECORDING_SCHEMA,
     )
-    hass.services.async_register(DOMAIN, "stop_recording", handle_stop_recording, schema=SERVICE_GENERIC_SCHEMA)
+    hass.services.async_register(
+        DOMAIN, "stop_recording", handle_stop_recording, schema=SERVICE_GENERIC_SCHEMA
+    )
     hass.services.async_register(
         DOMAIN, "start_assist", handle_start_assist, schema=SERVICE_ASSIST_SCHEMA
     )
