@@ -383,6 +383,56 @@ def test_info_dtmf_ignores_other_content():
     assert p("application/dtmf-relay", "Duration=160") is None
 
 
+def _info_dtmf_request(digit="1"):
+    body = f"Signal={digit}\r\nDuration=160\r\n"
+    return sm.parse_sip_message(
+        "INFO sip:alice@example SIP/2.0\r\n"
+        "Via: SIP/2.0/UDP pbx.example;branch=z9hG4bKinfo\r\n"
+        "From: <sip:bob@example>;tag=remote\r\n"
+        "To: <sip:alice@example>;tag=local\r\n"
+        "Call-ID: inbound@example\r\n"
+        "CSeq: 2 INFO\r\n"
+        "Content-Type: application/dtmf-relay\r\n"
+        f"Content-Length: {len(body)}\r\n\r\n" + body
+    )
+
+
+def _handle_info_dtmf(state):
+    """Feed one DTMF INFO to a client in `state`; return (digits, responses)."""
+    async def run():
+        got = []
+        client = sip_client.SipClient(
+            sip_client.SipConfig(server="pbx.example"),
+            sip_client.SipCallbacks(on_dtmf=got.append),
+        )
+        client.state = state
+        with patch.object(client, "_send_raw") as send:
+            client._handle_request(_info_dtmf_request())
+        return got, [c.args[0] for c in send.call_args_list]
+
+    return asyncio.run(run())
+
+
+def test_info_dtmf_fires_during_call():
+    if sip_client is None:
+        return
+    # ANSWERING too: the INFO can arrive before the ACK that ends it.
+    for state in (sip_client.SipState.IN_CALL, sip_client.SipState.ANSWERING):
+        digits, sent = _handle_info_dtmf(state)
+        assert digits == ["1"]
+        assert sent and sent[0].startswith("SIP/2.0 200 OK")
+
+
+def test_info_dtmf_outside_call_is_answered_but_not_delivered():
+    if sip_client is None:
+        return
+    # An INFO out of any call still gets its 200 OK, but must not inject a
+    # keypress into IVR menus / automations.
+    digits, sent = _handle_info_dtmf(sip_client.SipState.REGISTERED)
+    assert digits == []
+    assert sent and sent[0].startswith("SIP/2.0 200 OK")
+
+
 def test_response_copies_complete_via_chain():
     if sip_client is None:
         return
@@ -827,6 +877,11 @@ def test_rfc2833_rx_deduplicates_by_timestamp():
     packets = [_te_packet(101, False, 1000, 1) for _ in range(3)]
     packets += [_te_packet(101, False, 2000, 2) for _ in range(3)]
     assert _collect_dtmf(packets) == ["1", "2"]
+
+
+def test_rfc2833_rx_ignores_non_digit_events():
+    # Event 16 is hook flash, not a keypress: it must not reach on_dtmf.
+    assert _collect_dtmf([_te_packet(101, True, 1000, 16)]) == []
 
 
 def test_rfc2833_rx_marker_forces_new_event():

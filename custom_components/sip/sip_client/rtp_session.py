@@ -34,6 +34,19 @@ _DTMF_TONE_SAMPLES = 8 * SAMPLES_PER_FRAME  # ~160 ms, in CLOCK ticks
 _DTMF_END_PACKETS = 3
 
 
+def _dtmf_event_to_char(event: int) -> str | None:
+    """RFC 4733 event code -> DTMF character, or None for codes we do not expose."""
+    if event <= 9:
+        return chr(ord("0") + event)
+    if event == 10:
+        return "*"
+    if event == 11:
+        return "#"
+    if event <= 15:
+        return chr(ord("A") + (event - 12))
+    return None
+
+
 def _dtmf_char_to_event(c: str) -> int:
     if "0" <= c <= "9":
         return ord(c) - ord("0")
@@ -334,18 +347,10 @@ class RtpSession:
             timestamp = int.from_bytes(data[4:8], "big")
             if marker or timestamp != self._rx_dtmf_timestamp:
                 self._rx_dtmf_timestamp = timestamp
-                if self.on_dtmf is not None:
-                    event = data[header_len]
-                    if event <= 9:
-                        c = chr(ord("0") + event)
-                    elif event == 10:
-                        c = "*"
-                    elif event == 11:
-                        c = "#"
-                    elif event <= 15:
-                        c = chr(ord("A") + (event - 12))
-                    else:
-                        c = "?"
+                # Events above 15 (hook flash and up) are not DTMF digits;
+                # passing them on would hand IVR menus a bogus keypress.
+                c = _dtmf_event_to_char(data[header_len])
+                if c is not None and self.on_dtmf is not None:
                     self.on_dtmf(c)
             return
 
