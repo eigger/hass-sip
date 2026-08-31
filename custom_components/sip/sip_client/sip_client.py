@@ -949,9 +949,15 @@ class SipClient:
             # of RFC 2833 telephone-event packets.
             self._send_raw(self._build_response(m, 200, "OK", False))
             digit = _parse_info_dtmf(m.header("Content-Type"), m.body)
-            if digit is not None:
-                _LOGGER.debug("DTMF '%s' received via SIP INFO", digit)
-                self._on_rx_dtmf(digit)
+            if digit is None:
+                return
+            # A keypress only means something inside a call. ANSWERING counts:
+            # the INFO can arrive before the ACK that moves us to IN_CALL.
+            if self.state not in (SipState.IN_CALL, SipState.ANSWERING):
+                _LOGGER.debug("DTMF '%s' via SIP INFO ignored in state %s", digit, self.state)
+                return
+            _LOGGER.debug("DTMF '%s' received via SIP INFO", digit)
+            self._on_rx_dtmf(digit)
             return
 
         # OPTIONS / unknown in-dialog request: acknowledge.
