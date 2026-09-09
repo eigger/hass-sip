@@ -24,12 +24,46 @@ _LOGGER = logging.getLogger(__name__)
 PushFn = Callable[[bytes], None]
 ActiveFn = Callable[[], bool]
 
-_PCM_FRAME_SLEEP = 0.018
+# How far ahead of real time a source may run. RtpSession's TX buffer holds
+# one second and drops from the *front* when it overflows, so staying well
+# under that turns event-loop jitter into slack instead of dropped audio.
+_PCM_PREBUFFER_SEC = 0.5
 
 
 def default_pcm_frame_bytes(sample_rate: int) -> int:
     """Return 20 ms of s16le mono PCM at ``sample_rate``."""
     return sample_rate // 50 * 2
+
+
+class _RealtimePacer:
+    """Pace PCM against an absolute deadline rather than a fixed per-frame sleep.
+
+    Sleeping a fixed ~frame duration each iteration accumulates every
+    scheduling delay: on a busy event loop the source slips behind real time,
+    RtpSession finds nothing queued and transmits comfort silence instead,
+    which is heard as choppy audio. Tracking the deadline in absolute terms
+    lets the loop catch up after a stall, and the small prebuffer absorbs
+    ordinary jitter outright.
+    """
+
+    def __init__(self, sample_rate: int) -> None:
+        self._bytes_per_sec = sample_rate * 2
+        self._loop = asyncio.get_running_loop()
+        self._start = self._loop.time()
+        self._queued_sec = 0.0
+
+    def account(self, pcm_bytes: int) -> None:
+        """Record PCM handed to the RTP TX path."""
+        self._queued_sec += pcm_bytes / self._bytes_per_sec
+
+    async def wait(self) -> None:
+        ahead = self._queued_sec - (self._loop.time() - self._start)
+        if ahead > _PCM_PREBUFFER_SEC:
+            await asyncio.sleep(ahead - _PCM_PREBUFFER_SEC)
+        else:
+            # Inside the prebuffer window (or behind it): yield without
+            # stalling so a delayed loop can catch back up to real time.
+            await asyncio.sleep(0)
 
 
 class AudioSource(ABC):
@@ -109,10 +143,13 @@ class _ConfiguredPcmSource(AudioSource):
     ) -> None:
         offset = 0
         frame = self._pcm_frame_bytes
+        pacer = _RealtimePacer(self._sample_rate)
         while is_active() and offset < len(pcm):
-            push(pcm[offset : offset + frame])
+            chunk = pcm[offset : offset + frame]
+            push(chunk)
             offset += frame
-            await asyncio.sleep(_PCM_FRAME_SLEEP)
+            pacer.account(len(chunk))
+            await pacer.wait()
 
 
 class FfmpegAudioSource(_ConfiguredPcmSource):
@@ -171,12 +208,23 @@ class FfmpegAudioSource(_ConfiguredPcmSource):
 
             # Read ~20 ms at a time and pace to real time so the RTP buffer
             # never overflows and drops audio.
+            frame = self._pcm_frame_bytes
+            pacer = _RealtimePacer(self._sample_rate)
+            buf = bytearray()
             while is_active():
-                chunk = await proc.stdout.read(self._pcm_frame_bytes)
+                chunk = await proc.stdout.read(frame)
                 if not chunk:
                     break
-                push(chunk)
-                await asyncio.sleep(_PCM_FRAME_SLEEP)
+                # ``read`` returns *up to* ``frame`` bytes. Emit whole frames
+                # only, so a short read does not cost a full frame of pacing.
+                buf.extend(chunk)
+                while len(buf) >= frame:
+                    push(bytes(buf[:frame]))
+                    del buf[:frame]
+                    pacer.account(frame)
+                    await pacer.wait()
+            if buf and is_active():
+                push(bytes(buf))
         finally:
             if proc.returncode is None:
                 try:

@@ -7,6 +7,7 @@ Run with either:
 import os
 import struct
 import sys
+import tempfile
 
 # Load the standalone modules directly (they have no HA / relative-package deps).
 _SIP = os.path.join(
@@ -159,6 +160,129 @@ def test_tone_pcm_cache_reuses_rendered_bytes():
     second = audio._render_tone_pcm(**kwargs)
     assert first is second
     audio._TONE_PCM_CACHE.clear()
+
+
+# ------------------------------------------------------- realtime pacing
+class _FakeClock:
+    """Stand-in for the event loop clock so pacing is deterministic."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def time(self):
+        return self.now
+
+
+def _pacer(sample_rate=8000):
+    async def build():
+        return audio._RealtimePacer(sample_rate)
+
+    p = asyncio.run(build())
+    clock = _FakeClock()
+    p._loop = clock
+    p._start = 0.0
+    return p, clock
+
+
+def test_pacer_throttles_only_past_the_prebuffer_window():
+    """Queueing less than the prebuffer lead must not stall the source."""
+    p, clock = _pacer()
+    slept = []
+
+    async def fake_sleep(delay=0, result=None):
+        slept.append(delay)
+        return result
+
+    # 0.4 s of 8 kHz PCM queued, no time elapsed -> inside the 0.5 s window.
+    p.account(8000 * 2 * 4 // 10)
+    with patch.object(audio.asyncio, "sleep", fake_sleep):
+        asyncio.run(p.wait())
+    assert slept == [0]
+
+    # Push past the window: it must now throttle by exactly the excess.
+    p.account(8000 * 2 * 4 // 10)  # total 0.8 s queued
+    with patch.object(audio.asyncio, "sleep", fake_sleep):
+        asyncio.run(p.wait())
+    assert abs(slept[-1] - (0.8 - audio._PCM_PREBUFFER_SEC)) < 1e-6
+
+
+def test_pacer_catches_up_after_an_event_loop_stall():
+    """A stalled loop must not permanently cost audio (issue #45).
+
+    The old fixed per-frame sleep accumulated every delay, so the source fell
+    behind real time and RtpSession transmitted comfort silence in the gap.
+    """
+    p, clock = _pacer()
+    slept = []
+
+    async def fake_sleep(delay=0, result=None):
+        slept.append(delay)
+        return result
+
+    p.account(8000 * 2)          # 1.0 s of audio queued
+    clock.now = 3.0              # ...but 3 s of wall time went by: badly behind
+    with patch.object(audio.asyncio, "sleep", fake_sleep):
+        asyncio.run(p.wait())
+    # Must yield without stalling so the loop can catch back up.
+    assert slept == [0]
+
+
+def test_pacer_tracks_rate_for_wideband_codecs():
+    """G.722 runs at 16 kHz, so the same byte count is half the duration."""
+    p, clock = _pacer(sample_rate=16000)
+    slept = []
+
+    async def fake_sleep(delay=0, result=None):
+        slept.append(delay)
+        return result
+
+    p.account(16000 * 2)  # 1.0 s at 16 kHz
+    with patch.object(audio.asyncio, "sleep", fake_sleep):
+        asyncio.run(p.wait())
+    assert abs(slept[-1] - (1.0 - audio._PCM_PREBUFFER_SEC)) < 1e-6
+
+
+def test_ffmpeg_source_reassembles_short_reads_into_whole_frames():
+    """``StreamReader.read(n)`` may return fewer bytes; frames must stay aligned."""
+    # Deliberately not a frame multiple: 20 full 320 B frames + a 50 B tail,
+    # so the trailing partial-frame push is exercised too. Under the 0.5 s
+    # prebuffer window, so the test does no real waiting.
+    total = 6450
+    script = (
+        "#!" + sys.executable + "\n"
+        "import sys, time\n"
+        "out = sys.stdout.buffer\n"
+        "written = 0\n"
+        "while written < %d:\n"
+        "    n = min(100, %d - written)\n"  # deliberately not a frame multiple
+        "    out.write(b'\\x11\\x22' * (n // 2)); out.flush()\n"
+        "    written += (n // 2) * 2\n"
+        # Pause so the reader drains each burst: read() then returns a short
+        # chunk, which is exactly the case the frame reassembly must handle.
+        "    time.sleep(0.001)\n"
+    ) % (total, total)
+
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as fh:
+        fh.write(script)
+        path = fh.name
+    os.chmod(path, 0o755)
+
+    try:
+        chunks = []
+
+        async def main():
+            source = audio.FfmpegAudioSource(ffmpeg_bin=path, url="ignored")
+            source.configure(8000, 320)
+            await source.run(chunks.append, lambda: True)
+
+        asyncio.run(main())
+    finally:
+        os.unlink(path)
+
+    assert sum(len(c) for c in chunks) == total
+    # Every chunk but a possible remainder is exactly one 20 ms frame.
+    assert all(len(c) == 320 for c in chunks[:-1])
+    assert len(chunks[-1]) == total % 320  # the tail is emitted, not dropped
 
 
 # ------------------------------------------------------------ sip_message
