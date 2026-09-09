@@ -189,5 +189,7 @@ class SipMediaPlayer(MediaPlayerEntity):
 
     async def async_media_stop(self) -> None:
         """Stop playing the current audio source (does not end the call)."""
-        self._client.stop_audio()
+        # flush=True: sources run up to _PCM_PREBUFFER_SEC ahead of real time,
+        # so without discarding queued PCM a stop stays audible for that long.
+        self._client.stop_audio(flush=True)
         self.async_write_ha_state()

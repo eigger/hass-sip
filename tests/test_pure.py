@@ -244,7 +244,10 @@ def test_pacer_tracks_rate_for_wideband_codecs():
 
 def test_ffmpeg_source_reassembles_short_reads_into_whole_frames():
     """``StreamReader.read(n)`` may return fewer bytes; frames must stay aligned."""
-    total = 6400  # 0.4 s @ 8 kHz, inside the prebuffer window -> no real waiting
+    # Deliberately not a frame multiple: 20 full 320 B frames + a 50 B tail,
+    # so the trailing partial-frame push is exercised too. Under the 0.5 s
+    # prebuffer window, so the test does no real waiting.
+    total = 6450
     script = (
         "#!" + sys.executable + "\n"
         "import sys, time\n"
@@ -279,7 +282,7 @@ def test_ffmpeg_source_reassembles_short_reads_into_whole_frames():
     assert sum(len(c) for c in chunks) == total
     # Every chunk but a possible remainder is exactly one 20 ms frame.
     assert all(len(c) == 320 for c in chunks[:-1])
-    assert len(chunks[-1]) <= 320
+    assert len(chunks[-1]) == total % 320  # the tail is emitted, not dropped
 
 
 # ------------------------------------------------------------ sip_message
