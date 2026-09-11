@@ -57,9 +57,9 @@ def _build_schema(
 
     When `defaults` is given (editing an existing entry), every field is
     pre-filled with its current value instead of the fresh-entry defaults.
-    The password is a masked selector. On reconfigure, pass
-    ``omit_password_default=True`` so the stored secret is not placed in the
-    form; an empty submission keeps the current password.
+    The password is a masked selector. Reconfigure always passes
+    ``omit_password_default=True`` so a failed retry can still submit with a
+    blank password and keep the stored secret.
     """
 
     def _default(key: str, fallback: Any = vol.UNDEFINED) -> Any:
@@ -272,7 +272,7 @@ class SipConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_LOCAL_RTP_PORT, DEFAULT_LOCAL_RTP_PORT
                 ),
                 defaults=user_input or reconfigure_entry.data,
-                omit_password_default=user_input is None,
+                omit_password_default=True,
             ),
             errors=errors,
         )

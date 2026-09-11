@@ -5014,6 +5014,24 @@ def test_password_field_uses_password_selector():
     assert reconf.schema[reconf_markers["password"]].config.get("type") == "password"
 
 
+def test_reconfigure_retry_keeps_password_optional():
+    """After cannot_connect, the form must still accept a blank password."""
+    typed = {
+        "server": "pbx.invalid",
+        "username": "1001",
+        "password": "",
+        "port": 5061,
+    }
+    schema = config_flow._build_schema(
+        7080, defaults=typed, omit_password_default=True
+    )
+    markers = {str(k): k for k in schema.schema}
+    assert markers["password"].default is vol.UNDEFINED
+    assert markers["server"].default() == "pbx.invalid"
+    assert markers["username"].default() == "1001"
+    assert markers["port"].default() == 5061
+
+
 def test_sip_device_id_lookup():
     """_sip_device_id uses async_get_device_by_identifier."""
     import types
