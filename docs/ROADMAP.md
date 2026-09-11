@@ -255,7 +255,7 @@ ruff check custom_components/     # 린트
 
 ---
 
-### [ ] P0-2. symmetric RTP latching
+### [x] P0-2. symmetric RTP latching
 
 **근거** §1.3-2. one-way audio 1순위 원인, 수정 비용 최소.
 
@@ -275,6 +275,16 @@ ruff check custom_components/     # 린트
 - latch 후 제3의 주소에서 온 패킷은 목적지를 바꾸지 않는다.
 - SDP 주소와 실제 소스가 같으면 latch 로그가 남지 않고 동작이 변하지 않는다.
 - DTMF telephone-event 패킷으로도 latch가 동작한다.
+
+**추가된 테스트**
+- `test_rtp_latches_tx_dest_to_actual_source`
+- `test_rtp_latch_ignores_later_sources`
+- `test_rtp_same_source_does_not_latch`
+- `test_rtp_dtmf_packet_latches`
+- `test_rtp_start_resets_latch`
+- `test_rtp_set_remote_resets_latch`
+- `test_rtp_protocol_forwards_sender_addr`
+- `test_rtp_unknown_pt_does_not_latch`
 
 ---
 

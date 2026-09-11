@@ -61,11 +61,11 @@ def _dtmf_char_to_event(c: str) -> int:
 
 
 class _RtpProtocol(asyncio.DatagramProtocol):
-    def __init__(self, on_packet: Callable[[bytes], None]) -> None:
+    def __init__(self, on_packet: Callable[[bytes, tuple], None]) -> None:
         self._on_packet = on_packet
 
     def datagram_received(self, data: bytes, addr) -> None:  # noqa: D401
-        self._on_packet(data)
+        self._on_packet(data, addr)
 
     def error_received(self, exc) -> None:
         _LOGGER.debug("RTP socket error: %s", exc)
@@ -78,6 +78,9 @@ class RtpSession:
         self._sender_task: asyncio.Task | None = None
 
         self._remote: tuple[str, int] | None = None
+        self._sdp_remote: tuple[str, int] | None = None
+        self._latched_remote: tuple[str, int] | None = None
+        self._latch_done = False
         self.dtmf_pt = 101
         self.send_silence = True
         self.tx_enabled = True
@@ -120,7 +123,27 @@ class RtpSession:
 
     # -- configuration --------------------------------------------------
     def set_remote(self, ip: str, port: int) -> None:
-        self._remote = (ip, port)
+        dest = (ip, port)
+        self._sdp_remote = dest
+        self._remote = dest
+        # New SDP (initial or re-INVITE): allow one latch from the new peer.
+        self._reset_latch()
+
+    def _reset_latch(self) -> None:
+        self._latch_done = False
+        self._latched_remote = None
+        if self._sdp_remote is not None:
+            self._remote = self._sdp_remote
+
+    @property
+    def sdp_remote(self) -> tuple[str, int] | None:
+        """Remote RTP address from SDP ``c=`` / ``m=``, before latching."""
+        return self._sdp_remote
+
+    @property
+    def latched_remote(self) -> tuple[str, int] | None:
+        """Actual source address after symmetric RTP latch, or None if unused."""
+        return self._latched_remote
 
     def set_tx_enabled(self, enabled: bool) -> None:
         """Gate RTP transmission; on resume, catch up the RTP timestamp.
@@ -199,6 +222,7 @@ class RtpSession:
         self._tx_buffer.clear()
         self._clear_dtmf_tx()
         self._rx_dtmf_timestamp = -1
+        self._reset_latch()
         # Fresh codec state for this call (important for stateful codecs).
         self.set_codec(self._codec)
         self._sender_task = self._loop.create_task(self._sender())
@@ -348,14 +372,39 @@ class RtpSession:
                 # Running behind; resync so we don't spin.
                 next_t = self._loop.time()
 
+    def _maybe_latch(self, addr: tuple[str, int] | None) -> None:
+        """Once per call, retarget TX to the source of the first valid RTP packet.
+
+        Symmetric RTP / NAT: the SDP ``c=`` line often carries a private
+        address while packets actually arrive from a mapped public endpoint.
+        Later source changes are ignored (SSRC hijacking defence).
+        """
+        if self._latch_done or addr is None or self._remote is None:
+            return
+        src = (addr[0], int(addr[1]))
+        self._latch_done = True
+        if src == self._remote:
+            return
+        _LOGGER.info(
+            "RTP latched remote %s:%s -> %s:%s",
+            self._remote[0],
+            self._remote[1],
+            src[0],
+            src[1],
+        )
+        self._latched_remote = src
+        self._remote = src
+
     # -- RX -------------------------------------------------------------
-    def _receive(self, data: bytes) -> None:
+    def _receive(self, data: bytes, addr: tuple[str, int] | None = None) -> None:
         try:
-            self._receive_impl(data)
+            self._receive_impl(data, addr)
         except Exception:  # noqa: BLE001 - a bad RTP packet must not kill the session
             _LOGGER.exception("Error handling RTP packet (ignored)")
 
-    def _receive_impl(self, data: bytes) -> None:
+    def _receive_impl(
+        self, data: bytes, addr: tuple[str, int] | None = None
+    ) -> None:
         if len(data) < 12:
             return
         pt = data[1] & 0x7F
@@ -379,6 +428,7 @@ class RtpSession:
             is_dtmf = True
 
         if is_dtmf:
+            self._maybe_latch(addr)
             # Not every device sets the marker bit on the first packet of an
             # event, so key off the RTP timestamp instead: all packets of one
             # keypress repeat the same timestamp. The marker bit, when present,
@@ -399,5 +449,6 @@ class RtpSession:
         decode = self._decoder_for(pt)
         if decode is None:
             return
+        self._maybe_latch(addr)
         if self.on_audio is not None:
             self.on_audio(decode(data[header_len:]))
