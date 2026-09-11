@@ -25,6 +25,7 @@ from .assist_gate import (
     caller_is_allowed,
     take_pin_digit,
 )
+from .assist_user import ensure_assist_user, remove_assist_user
 from .const import (
     CONF_CALLER_ID,
     CONF_DOMAIN,
@@ -237,6 +238,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Load contacts asynchronously from file to avoid blocking event loop on startup
     contacts = await hass.async_add_executor_job(load_contacts, hass)
+    assist_user_id = await ensure_assist_user(hass, entry)
 
     entry.runtime_data = {
         "client": None,
@@ -579,6 +581,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hangup_on_end=hangup_on_end,
             stop_audio_fn=client.stop_audio,
             media_playing_fn=lambda: client.media_playing,
+            user_id=assist_user_id,
+            device_id=_sip_device_id(hass, entry.entry_id),
         )
 
         def on_assist_done() -> None:
@@ -672,6 +676,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     pass
 
     return unload_ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Delete the Assist system user created for this account."""
+    await remove_assist_user(hass, entry)
 
 
 async def async_register_services(hass: HomeAssistant) -> None:

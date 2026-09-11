@@ -4931,6 +4931,25 @@ def test_build_schema_reconfigure_prefills_current_entry_values():
     assert markers["outbound_proxy"].default is vol.UNDEFINED
 
 
+def test_reconfigure_preserves_assist_user():
+    merged = config_flow.merge_reconfigure_data(
+        {
+            "username": "1001",
+            "password": "old",
+            "assist_user": "keep-me",
+        },
+        {
+            "username": "1001",
+            "password": "new",
+            "local_rtp_port": 7080,
+        },
+    )
+    assert merged["assist_user"] == "keep-me"
+    assert merged["password"] == "new"
+    assert merged["local_rtp_port"] == 7080
+    assert merged["username"] == "1001"
+
+
 def test_sip_device_id_lookup():
     """_sip_device_id uses async_get_device_by_identifier."""
     import types

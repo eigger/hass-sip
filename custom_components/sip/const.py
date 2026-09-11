@@ -17,6 +17,7 @@ CONF_OUTBOUND_PROXY = "outbound_proxy"
 CONF_AUTH_USERNAME = "authentication_username"
 CONF_MEDIA_TIMEOUT = "media_timeout"
 CONF_MAX_CALL_DURATION = "max_call_duration"
+CONF_ASSIST_USER = "assist_user"
 
 # Defaults
 DEFAULT_PORT = 5060

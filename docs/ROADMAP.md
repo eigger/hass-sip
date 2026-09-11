@@ -795,19 +795,36 @@ Assist 경로의 별 문제였고 이미 가드했다. 수신 지터는 이 이�
 
 ---
 
-### [ ] P4-2. Assist 실행 주체 부여
+### [x] P4-2. Assist 실행 주체 부여
 
-**근거** §1.3-8. `assist.py:388`, `:473`의 빈 `Context()` 때문에 전화 발신자가 모든
-intent를 무제한 권한으로 실행하고 감사 로그에 주체가 없다.
+**근거** §1.3-8. 빈 `Context()` 때문에 전화 발신자가 모든 intent를 무제한 권한으로
+실행하고 감사 로그에 주체가 없었다.
 
-**작업** `Context`에 주체를 부여하는 방식을 조사해 결정한다. 후보:
-- config entry에 연결된 전용 HA 사용자를 지정하게 하고 그 `user_id`로 Context를 만든다
-- 최소한 `Context(id=...)`에 통화 식별자를 넣어 logbook에서 추적 가능하게 한다
+**조사 결과**
+- Assist pipeline은 받은 `Context`를 `conversation.async_converse`로 그대로 넘긴다.
+  `user_id`가 있으면 그 사용자로 서비스가 실행되고 logbook에 남는다. `id`가 같으면
+  한 세션의 턴이 한 원인으로 묶인다.
+- Core `voip`은 설정에서 사용자를 고르지 않고 `hass.auth.async_create_system_user`
+  (`GROUP_ID_USER`)로 "Voice over IP" 사용자를 만든 뒤 `Context(user_id=...)`를 쓴다.
+- 설정 UI에 사용자 선택을 넣으면 기존 엔트리가 깨지고, `Context(id=...)`만 넣으면
+  logbook 상관은 되지만 권한은 여전히 비어 있는 주체(관리자급)다.
 
-조사 결과를 이 문서에 기록하고, 권한 모델이 불가능하면 "이 조합은 권장하지 않음"을
-문서에 명시하는 것으로 대체한다.
+**작업** core `voip`과 같이 계정마다 `SIP Assist ({내선})` 시스템 사용자를 만들고
+Assist 세션당 `Context`를 하나 만들어 모든 턴·initial_prompt에 재사용한다.
+pipeline에는 SIP `device_id`도 넘긴다. 엔트리 삭제 시 사용자를 제거한다.
+Reconfigure는 폼 필드를 기존 `entry.data`에 병합해 `assist_user`가 지워지지 않게 한다.
 
-**수용 기준** Assist가 실행한 서비스 호출이 logbook에서 특정 통화로 귀속된다.
+**수용 기준** Assist가 실행한 서비스 호출이 logbook에서 해당 SIP 계정 사용자와
+그 Assist 세션(통화) context로 귀속된다.
+
+**추가된 테스트** (`tests/test_assist_context.py`)
+- `test_ensure_assist_user_reuses_existing`
+- `test_ensure_assist_user_creates_when_missing`
+- `test_remove_assist_user_deletes_existing`
+- `test_remove_assist_user_skips_when_absent`
+- `test_assist_reuses_session_context_and_forwards_user`
+- `test_assist_initial_prompt_uses_same_context`
+- `test_reconfigure_preserves_assist_user`
 
 ---
 
@@ -918,8 +935,10 @@ reconfigure에서 기존 비밀번호가 평문으로 표시되지 않게 한다
 
 1. **P0-3의 기본값**: media timeout 30초 / max duration 3600초가 적절한가?
    인터폰 용도에서는 더 짧아야 할 수 있다.
-2. **P4-2의 권한 모델**: Assist 실행에 전용 HA 사용자를 요구하는 것이 UX상 받아들여지나?
-   대안은 "권장하지 않음"을 문서화하는 것뿐이다.
+2. **P4-2의 권한 모델**: 전용 HA 사용자를 설정에서 고르게 하지 않는다. core `voip`과
+   같이 계정마다 Users 그룹 시스템 사용자를 자동 생성하고, Assist 세션은 그
+   `user_id`와 세션당 하나의 `Context`를 재사용한다. 권한은 그 사용자에게
+   엔티티 접근을 부여하는 쪽으로 문서화한다.
 3. **P2-2의 녹음 파일 경로 제한**: HA 설정 디렉터리 밖 쓰기를 막을 것인가?
    막으면 기존 사용자의 자동화가 깨질 수 있다.
 4. **P5-1의 PBX 검증 범위**: 실제로 Asterisk/FreePBX를 컨테이너로 띄워 CI에서 E2E를
