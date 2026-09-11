@@ -50,7 +50,9 @@ def async_describe_events(
 
     @callback
     def describe_ended(event: Event) -> dict[str, str]:
-        return {LOGBOOK_ENTRY_NAME: _name(event.data), LOGBOOK_ENTRY_MESSAGE: "call ended"}
+        reason = event.data.get("reason")
+        message = f"call ended ({reason})" if reason else "call ended"
+        return {LOGBOOK_ENTRY_NAME: _name(event.data), LOGBOOK_ENTRY_MESSAGE: message}
 
     @callback
     def describe_dtmf(event: Event) -> dict[str, str]:

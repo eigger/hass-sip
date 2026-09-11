@@ -14,7 +14,9 @@
           "caller_id": "발신자 ID (선택사항)",
           "outbound_proxy": "아웃바운드 프록시 (선택사항)",
           "register_expiration": "등록 유효 기간 (초 단위)",
-          "local_rtp_port": "로컬 RTP 포트 (선택사항)"
+          "local_rtp_port": "로컬 RTP 포트 (선택사항)",
+          "media_timeout": "미디어 타임아웃 (초, 0=사용 안 함)",
+          "max_call_duration": "최대 통화 시간 (초, 0=무제한)"
         }
       },
       "reconfigure": {
@@ -30,7 +32,9 @@
           "caller_id": "발신자 ID (선택사항)",
           "outbound_proxy": "아웃바운드 프록시 (선택사항)",
           "register_expiration": "등록 유효 기간 (초 단위)",
-          "local_rtp_port": "로컬 RTP 포트 (선택사항)"
+          "local_rtp_port": "로컬 RTP 포트 (선택사항)",
+          "media_timeout": "미디어 타임아웃 (초, 0=사용 안 함)",
+          "max_call_duration": "최대 통화 시간 (초, 0=무제한)"
         }
       }
     },

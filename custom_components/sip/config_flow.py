@@ -25,6 +25,10 @@ from .const import (
     DEFAULT_PORT,
     DEFAULT_REGISTER_EXPIRATION,
     DEFAULT_LOCAL_RTP_PORT,
+    CONF_MEDIA_TIMEOUT,
+    CONF_MAX_CALL_DURATION,
+    DEFAULT_MEDIA_TIMEOUT,
+    DEFAULT_MAX_CALL_DURATION,
 )
 
 def _build_schema(
@@ -67,6 +71,14 @@ def _build_schema(
                 CONF_LOCAL_RTP_PORT,
                 default=_default(CONF_LOCAL_RTP_PORT, rtp_port_default),
             ): cv.port,
+            vol.Optional(
+                CONF_MEDIA_TIMEOUT,
+                default=_default(CONF_MEDIA_TIMEOUT, DEFAULT_MEDIA_TIMEOUT),
+            ): vol.All(vol.Coerce(int), vol.Range(min=0)),
+            vol.Optional(
+                CONF_MAX_CALL_DURATION,
+                default=_default(CONF_MAX_CALL_DURATION, DEFAULT_MAX_CALL_DURATION),
+            ): vol.All(vol.Coerce(int), vol.Range(min=0)),
         }
     )
 
