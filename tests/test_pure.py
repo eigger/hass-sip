@@ -43,6 +43,7 @@ def _load_pkg_module(name):
 
 g722 = _load_pkg_module("g722")
 codecs = _load_pkg_module("codecs")
+trace = _load_pkg_module("trace")
 rtp_session = _load_pkg_module("rtp_session")
 audio = _load_pkg_module("audio")
 try:

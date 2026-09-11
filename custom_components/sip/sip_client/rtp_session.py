@@ -22,6 +22,7 @@ import struct
 from typing import Callable
 
 from . import codecs
+from . import trace
 from .codecs import Codec
 
 _LOGGER = logging.getLogger(__name__)
@@ -35,12 +36,20 @@ _DTMF_END_PACKETS = 3
 # Asterisk strictrtp-style consecutive learn count (typical 3–5).
 _LATCH_LEARN_COUNT = 4
 _LATCH_SEQ_GAP_MAX = 64
+_TRACE_INTERVAL = 5.0
+_TRACE_LOSS_GAP_MAX = 2000
 
 
 def _rtp_seq_follows(prev: int, seq: int) -> bool:
     """True if ``seq`` is a plausible next RTP sequence number after ``prev``."""
     delta = (seq - prev) & 0xFFFF
     return 1 <= delta <= _LATCH_SEQ_GAP_MAX
+
+
+def _fmt_endpoint(addr: tuple[str, int] | None) -> str:
+    if addr is None:
+        return "-"
+    return f"{addr[0]}:{addr[1]}"
 
 
 def _dtmf_event_to_char(event: int) -> str | None:
@@ -124,6 +133,8 @@ class RtpSession:
         self.expect_rx = True
         self._last_rx_at: float | None = None
         self._media_timeout_handle: asyncio.TimerHandle | None = None
+        self._trace_handle: asyncio.TimerHandle | None = None
+        self._reset_trace_stats()
 
         # Codec-derived pacing / encode state (defaults = G.711 PCMU).
         self._codec: Codec = codecs.DEFAULT
@@ -280,10 +291,13 @@ class RtpSession:
                 "will only work if the device sends it via SIP INFO"
             )
         self._note_rx()
+        self._reset_trace_stats()
+        self._arm_trace()
         return True
 
     async def stop(self) -> None:
         self._cancel_media_timeout()
+        self._cancel_trace()
         self._last_rx_at = None
         if self._sender_task is not None:
             self._sender_task.cancel()
@@ -348,6 +362,7 @@ class RtpSession:
     def _send(self, packet: bytes) -> None:
         if self._transport is not None and self._remote is not None:
             self._transport.sendto(packet, self._remote)
+            self._note_trace_tx(packet)
 
     def _send_audio_packet(self, frame: bytes) -> None:
         header = self._rtp_header(self._first_packet, self.payload_type, self._timestamp)
@@ -497,6 +512,61 @@ class RtpSession:
         except Exception:  # noqa: BLE001
             _LOGGER.exception("on_media_timeout raised")
 
+    def _reset_trace_stats(self) -> None:
+        self._trace_rx = 0
+        self._trace_tx = 0
+        self._trace_rx_pt: int | None = None
+        self._trace_tx_pt: int | None = None
+        self._trace_lost = 0
+        self._trace_rx_seq: int | None = None
+
+    def _arm_trace(self) -> None:
+        self._cancel_trace()
+        self._trace_handle = self._loop.call_later(
+            _TRACE_INTERVAL, self._trace_tick
+        )
+
+    def _cancel_trace(self) -> None:
+        if self._trace_handle is not None:
+            self._trace_handle.cancel()
+            self._trace_handle = None
+
+    def _trace_tick(self) -> None:
+        self._trace_handle = None
+        self._emit_rtp_trace()
+        if self._transport is not None:
+            self._arm_trace()
+
+    def _emit_rtp_trace(self) -> None:
+        if not trace.enabled():
+            return
+        trace.log_rtp(
+            "RTP %ss: rx=%s tx=%s pt=%s/%s lost~%s latch=%s sdp=%s",
+            int(_TRACE_INTERVAL),
+            self._trace_rx,
+            self._trace_tx,
+            "-" if self._trace_rx_pt is None else self._trace_rx_pt,
+            "-" if self._trace_tx_pt is None else self._trace_tx_pt,
+            self._trace_lost,
+            _fmt_endpoint(self._latched_remote),
+            _fmt_endpoint(self._sdp_remote),
+        )
+        self._reset_trace_stats()
+
+    def _note_trace_tx(self, packet: bytes) -> None:
+        self._trace_tx += 1
+        if len(packet) >= 2:
+            self._trace_tx_pt = packet[1] & 0x7F
+
+    def _note_trace_rx(self, seq: int, pt: int) -> None:
+        self._trace_rx += 1
+        self._trace_rx_pt = pt
+        if self._trace_rx_seq is not None:
+            delta = (seq - self._trace_rx_seq) & 0xFFFF
+            if 1 < delta <= _TRACE_LOSS_GAP_MAX:
+                self._trace_lost += delta - 1
+        self._trace_rx_seq = seq
+
     # -- RX -------------------------------------------------------------
     def _receive(self, data: bytes, addr: tuple[str, int] | None = None) -> None:
         try:
@@ -521,6 +591,7 @@ class RtpSession:
             return
         seq = int.from_bytes(data[2:4], "big")
         ssrc = int.from_bytes(data[8:12], "big")
+        self._note_trace_rx(seq, pt)
 
         payload_len = len(data) - header_len
         is_dtmf = pt == self.dtmf_pt if self.dtmf_pt >= 0 else False
