@@ -9,11 +9,18 @@ REASON_PIN_MISMATCH = "pin_mismatch"
 REASON_PIN_TIMEOUT = "pin_timeout"
 
 _PIN_WAIT_SECONDS = 15.0
-_USER_PART = re.compile(r"[+\d*]+")
+_PHONE_USER = re.compile(r"^\+?[\d*#]+$")
 
 
 def normalize_caller(value: str) -> str:
-    """Return a comparable caller identity (SIP URI user-part or extension)."""
+    """Return a comparable caller identity (SIP URI user-part or extension).
+
+    Phone-like user parts (optional ``+``, then digits / ``*`` / ``#``) are
+    compared after stripping spaces and dashes. Alphanumeric extensions
+    (``doorbird1``, ``kitchen1``, ``cam2``) keep the full lowercased user-part
+    so a shared trailing digit cannot collapse distinct names onto one allow
+    list entry.
+    """
     raw = (value or "").strip()
     if raw.startswith("<") and raw.endswith(">"):
         raw = raw[1:-1].strip()
@@ -24,9 +31,10 @@ def normalize_caller(value: str) -> str:
         raw = raw[5:]
     if "@" in raw:
         raw = raw.split("@", 1)[0]
-    raw = raw.replace(" ", "").replace("-", "")
-    match = _USER_PART.search(raw)
-    return match.group(0) if match else raw
+    ident = raw.replace(" ", "").replace("-", "").lower()
+    if _PHONE_USER.fullmatch(ident):
+        return ident
+    return ident
 
 
 def caller_is_allowed(
@@ -96,3 +104,15 @@ class PinCollector:
         except TimeoutError:
             self.fail()
             return REASON_PIN_TIMEOUT
+
+
+def take_pin_digit(collector: PinCollector | None, digit: str) -> bool:
+    """Consume ``digit`` for an active PIN wait.
+
+    Returns True when the digit was handled privately. The caller must not
+    log it or fire ``sip_dtmf_digit``.
+    """
+    if collector is None:
+        return False
+    collector.handle_digit(digit)
+    return True

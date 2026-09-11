@@ -762,8 +762,11 @@ Assist 경로의 별 문제였고 이미 가드했다. 수신 지터는 이 이�
    둘 다 켜면 교집합이다. 옵션을 생략하면 기존처럼 전원 허용.
 2. 선택 `pin` DTMF 게이트. `#` 또는 PIN 길이로 제출, 15초 타임아웃. 실패·끊김·
    타임아웃은 intent를 실행하지 않고 `pin_mismatch` / `pin_timeout`을 낸다.
-   PIN은 로그·이벤트에 넣지 않는다. 게이트는 `handle_start_assist`에만 있고
-   IVR `assist: true`는 통과하지 않는다.
+   PIN은 로그·이벤트에 넣지 않는다. `pin_collector`가 활성인 동안 DTMF는
+   수집기에만 들어가고 `sip_dtmf_digit`·logbook·IVR로 나가지 않는다.
+   게이트는 `handle_start_assist`에만 있고 IVR `assist: true`는 통과하지 않는다.
+   영숫자 내선(`cam2`, `doorbird1`)은 전체 사용자 파트로 비교한다. 전화번호
+   형태일 때만 구분자 제거 후 숫자 문자열로 맞춘다.
 3. README에 권장 경로를 명시: 도어락/보안 intent는 **화이트리스트 + PIN +
    전용 pipeline**. Caller ID 스푸핑을 경고한다.
 
@@ -772,6 +775,8 @@ Assist 경로의 별 문제였고 이미 가드했다. 수신 지터는 이 이�
 
 **추가된 테스트** (`tests/test_assist_gate.py`)
 - `test_normalize_caller_strips_sip_uri`
+- `test_normalize_caller_keeps_alphanumeric_user_part`
+- `test_alphanumeric_callers_do_not_collide_on_trailing_digit`
 - `test_caller_allowed_when_no_restriction`
 - `test_empty_allow_list_rejects_everyone`
 - `test_caller_rejected_when_not_on_allow_list`
@@ -782,6 +787,7 @@ Assist 경로의 별 문제였고 이미 가드했다. 수신 지터는 이 이�
 - `test_pin_collector_rejects_mismatch_without_exposing_digits`
 - `test_pin_collector_times_out`
 - `test_pin_collector_fail_is_mismatch`
+- `test_take_pin_digit_consumes_without_exposing`
 - `test_start_assist_rejects_unknown_caller`
 - `test_start_assist_allows_listed_caller`
 - `test_start_assist_pin_mismatch_does_not_start`

@@ -135,7 +135,7 @@ The session ends when:
 - `hangup_on_end` *(Optional)*: Hang up the call when the Assist session ends (default: `false`).
 - `allowed_callers` *(Optional)*: Caller IDs that may start Assist. Omitted means no restriction, so existing automations keep working. Matching uses the SIP user-part (`100`, `sip:100@pbx`, and `<sip:100@host>` all compare as `100`). An empty list allows nobody.
 - `contacts_only` *(Optional)*: Only callers listed in `sip_contacts.json` may start Assist (default: `false`). Combined with `allowed_callers`, the caller must match **both**.
-- `pin` *(Optional)*: DTMF PIN collected before Assist starts. The caller enters the digits and either presses `#` or matches the PIN length (15 s timeout). Failed, hung-up, or timed-out attempts fire `sip_assist_rejected` and do **not** run intents. The PIN is never logged or included in events.
+- `pin` *(Optional)*: DTMF PIN collected before Assist starts. The caller enters the digits and either presses `#` or matches the PIN length (15 s timeout). Failed, hung-up, or timed-out attempts fire `sip_assist_rejected` and do **not** run intents. While the PIN is collected, digits are not logged and `sip_dtmf_digit` is not fired, so the PIN cannot be reconstructed from Logbook or automations.
 
 > **Caller ID can be spoofed.** An allow-list alone is not a security boundary. For door-lock or other security intents, use **allow-list + PIN + a dedicated Assist pipeline** that only exposes those intents. IVR `assist: true` does not use this gate — give that menu its own PIN if needed.
 

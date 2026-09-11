@@ -23,6 +23,7 @@ from .assist_gate import (
     REASON_NOT_ALLOWED,
     PinCollector,
     caller_is_allowed,
+    take_pin_digit,
 )
 from .const import (
     CONF_CALLER_ID,
@@ -435,11 +436,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     @callback
     def on_dtmf(digit: str) -> None:
+        collector = entry.runtime_data.get("pin_collector")
+        if take_pin_digit(collector, digit):
+            return
         LOGGER.debug("[%s] DTMF digit received: %s", sip_config.username, digit)
         fire_sip_event(EVENT_SIP_DTMF_DIGIT, {"digit": digit})
-        collector = entry.runtime_data.get("pin_collector")
-        if collector is not None:
-            collector.handle_digit(digit)
         nonlocal ivr_session
         if ivr_session is not None:
             hass.async_create_task(ivr_session.handle_dtmf(digit))

@@ -22,6 +22,27 @@ def test_normalize_caller_strips_sip_uri():
     assert gate.normalize_caller("+82-10-1234-5678") == "+821012345678"
 
 
+def test_normalize_caller_keeps_alphanumeric_user_part():
+    assert gate.normalize_caller("cam2") == "cam2"
+    assert gate.normalize_caller("Doorbird1") == "doorbird1"
+    assert gate.normalize_caller("sip:kitchen1@pbx") == "kitchen1"
+    assert gate.normalize_caller("<sip:CAM2@192.0.2.1>") == "cam2"
+
+
+def test_alphanumeric_callers_do_not_collide_on_trailing_digit():
+    assert gate.caller_is_allowed("cam2", allowed_callers=["door2"]) is False
+    assert gate.caller_is_allowed("cam2", allowed_callers=["cam2"]) is True
+    assert gate.caller_is_allowed("sip:CAM2@pbx", allowed_callers=["cam2"]) is True
+    contacts = {"door2": "Gate", "kitchen1": "Kitchen"}
+    assert (
+        gate.caller_is_allowed("cam2", contacts=contacts, contacts_only=True) is False
+    )
+    assert (
+        gate.caller_is_allowed("kitchen1", contacts=contacts, contacts_only=True)
+        is True
+    )
+
+
 def test_caller_allowed_when_no_restriction():
     assert gate.caller_is_allowed("sip:999@pbx") is True
     assert gate.caller_is_allowed("") is True
@@ -140,6 +161,17 @@ def test_pin_collector_fail_is_mismatch():
         return await collector.wait(timeout=1)
 
     assert asyncio.run(run()) == gate.REASON_PIN_MISMATCH
+
+
+def test_take_pin_digit_consumes_without_exposing():
+    async def run():
+        collector = gate.PinCollector("47")
+        assert gate.take_pin_digit(collector, "4") is True
+        assert gate.take_pin_digit(collector, "7") is True
+        return await collector.wait(timeout=1)
+
+    assert asyncio.run(run()) == "ok"
+    assert gate.take_pin_digit(None, "4") is False
 
 
 def _load_sip_init():
