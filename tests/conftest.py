@@ -11,6 +11,16 @@ class MockBase:
     def __class_getitem__(cls, item):
         return cls
 
+    async def async_added_to_hass(self):
+        return None
+
+
+class MockRestoreEntity:
+    """Separate base so SwitchEntity + RestoreEntity is a valid MRO."""
+
+    async def async_added_to_hass(self):
+        return None
+
 
 def mock_callback(func):
     """Mock for homeassistant.core.callback decorator."""
@@ -47,6 +57,8 @@ for mod in [
     "homeassistant.helpers.entity_registry",
     "homeassistant.helpers.dispatcher",
     "homeassistant.helpers.event",
+    "homeassistant.helpers.restore_state",
+    "homeassistant.helpers.entity_platform",
     "homeassistant.components",
     "homeassistant.components.websocket_api",
     "homeassistant.components.sensor",
@@ -59,3 +71,6 @@ for mod in [
     "homeassistant.util.dt",
 ]:
     sys.modules[mod] = MagicMock()
+
+sys.modules["homeassistant.helpers.restore_state"].RestoreEntity = MockRestoreEntity
+sys.modules["homeassistant.components.switch"].SwitchEntity = MockBase

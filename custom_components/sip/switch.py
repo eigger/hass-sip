@@ -7,7 +7,9 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 
+from .dnd import apply_restored_dnd
 from .helpers import build_device_info
 from .sip_client.sip_client import SipClient
 
@@ -22,7 +24,7 @@ async def async_setup_entry(
     async_add_entities([SipDndSwitch(entry, entry_data)])
 
 
-class SipDndSwitch(SwitchEntity):
+class SipDndSwitch(SwitchEntity, RestoreEntity):
     """Representation of a DND switch for the SIP client."""
 
     _attr_has_entity_name = True
@@ -36,6 +38,11 @@ class SipDndSwitch(SwitchEntity):
         self._attr_unique_id = f"{entry.entry_id}_dnd"
         self._attr_translation_key = "dnd"
         self._attr_device_info = build_device_info(entry, self._config)
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        apply_restored_dnd(self._client, None if last is None else last.state)
 
     @property
     def icon(self) -> str:
