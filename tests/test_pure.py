@@ -228,6 +228,36 @@ def test_pacer_catches_up_after_an_event_loop_stall():
     assert slept == [0]
 
 
+def test_pacer_throttles_after_a_producer_stall_burst():
+    """A stalled streaming producer must not dump more than the TX buffer.
+
+    Cloud TTS often emits a first chunk, then a 1.5–2 s blob. After the first
+    chunk plays out, ffmpeg stdout stalls and RTP sends comfort silence. When
+    the blob arrives, unlimited catch-up would push ~1.8 s of PCM at once;
+    RtpSession's 1 s TX buffer then drops the oldest frames (speech lost).
+    Resyncing the deadline caps the dump at 1.0 s; the rest is paced.
+    """
+    p, clock = _pacer()
+    slept = []
+
+    async def fake_sleep(delay=0, result=None):
+        slept.append(delay)
+        return result
+
+    p.account(8000)              # 0.5 s first chunk
+    clock.now = 1.8              # producer gap: ahead ≈ -1.3 s
+    with patch.object(audio.asyncio, "sleep", fake_sleep):
+        asyncio.run(p.wait())
+    assert slept == [0]
+
+    p.account(8000 * 2 * 18 // 10)  # 1.8 s blob
+    with patch.object(audio.asyncio, "sleep", fake_sleep):
+        asyncio.run(p.wait())
+    # After resync the burst may fill -0.5 → +0.5 (1.0 s). Remaining 0.8 s
+    # of the blob must be throttled, not dumped (which would sleep(0)).
+    assert abs(slept[-1] - 0.8) < 1e-6
+
+
 def test_pacer_tracks_rate_for_wideband_codecs():
     """G.722 runs at 16 kHz, so the same byte count is half the duration."""
     p, clock = _pacer(sample_rate=16000)

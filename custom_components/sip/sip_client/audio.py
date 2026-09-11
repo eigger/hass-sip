@@ -33,6 +33,10 @@ ActiveFn = Callable[[], bool]
 # one second and drops from the *front* when it overflows, so staying well
 # under that turns event-loop jitter into slack instead of dropped audio.
 _PCM_PREBUFFER_SEC = 0.5
+# How far behind real time is still treated as catch-up rather than a stall
+# that needs a clock resync. Paired with the prebuffer this is the most PCM
+# a source may dump in one burst (0.5 + 0.5 = 1.0 s), matching the TX cap.
+_PCM_MAX_BEHIND_SEC = _PCM_PREBUFFER_SEC
 
 
 def default_pcm_frame_bytes(sample_rate: int) -> int:
@@ -63,11 +67,19 @@ class _RealtimePacer:
 
     async def wait(self) -> None:
         ahead = self._queued_sec - (self._loop.time() - self._start)
+        if ahead < -_PCM_MAX_BEHIND_SEC:
+            # Streaming TTS (and a long loop freeze) can stall ffmpeg stdout
+            # for well over a second, then dump a blob. Unlimited catch-up
+            # would overflow RtpSession's 1 s TX buffer and clip speech.
+            # Slide the deadline so the next burst fills at most
+            # prebuffer+behind = 1.0 s; the rest is paced.
+            self._start = self._loop.time() - self._queued_sec - _PCM_MAX_BEHIND_SEC
+            ahead = -_PCM_MAX_BEHIND_SEC
         if ahead > _PCM_PREBUFFER_SEC:
             await asyncio.sleep(ahead - _PCM_PREBUFFER_SEC)
         else:
-            # Inside the prebuffer window (or behind it): yield without
-            # stalling so a delayed loop can catch back up to real time.
+            # Inside the prebuffer window (or a little behind it): yield
+            # without stalling so ordinary jitter can catch back up.
             await asyncio.sleep(0)
 
 

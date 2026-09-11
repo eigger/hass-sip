@@ -613,6 +613,12 @@ media_player 속성: `call_duration`, `audio_path`, `bytes_received`, `bytes_sen
 **추가된 테스트**
 - `test_ffmpeg_source_streaming_emits_pcm_before_producer_finishes`
 - `test_assist_tts_starts_before_stream_completes`
+- `test_pacer_throttles_after_a_producer_stall_burst`
+
+스트리밍 공급이 멈췄다 몰아서 오면 `_RealtimePacer`가 한 번에 TX 버퍼(1초)를
+넘기는 PCM을 밀어 앞부분을 잘라냈다. `ahead`가 `−_PCM_MAX_BEHIND_SEC` 아래로
+떨어지면 `_start`를 재동기화해 catch-up을 버퍼 크기 이내로 제한한다. 문장 중간
+무음 구간은 남을 수 있고, 그 원인은 P3-4(#45)에서 재확인한다.
 
 ---
 
