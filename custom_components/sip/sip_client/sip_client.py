@@ -18,7 +18,7 @@ from typing import Callable
 from . import codecs
 from . import sip_message as sm
 from . import trace
-from .audio import AudioSink, AudioSource, NullSink
+from .audio import AudioSink, AudioSource, NullSink, TeeSink
 from .rtp_session import RtpSession
 from .sip_auth import digest_response
 
@@ -288,7 +288,7 @@ class SipClient:
         self.rtp = RtpSession()
         self.rtp.media_timeout = float(self.config.media_timeout)
         self.rtp.on_media_timeout = self._on_media_timeout
-        self.sink: AudioSink = NullSink()
+        self.sink: AudioSink = TeeSink()
         self._tx_source_task: asyncio.Task | None = None
         self._pending_source: AudioSource | None = None
         self._ring_timeout_handle: asyncio.TimerHandle | None = None
@@ -314,8 +314,32 @@ class SipClient:
     def media_playing(self) -> bool:
         return self._tx_source_task is not None and not self._tx_source_task.done()
 
+    def add_sink(self, sink: AudioSink) -> None:
+        """Register an RX listener without replacing the others."""
+        if not isinstance(self.sink, TeeSink):
+            self.sink = TeeSink(self.sink)
+        self.sink.add(sink)
+
+    def remove_sink(self, sink: AudioSink) -> None:
+        """Unregister one RX listener; remaining sinks keep receiving."""
+        if isinstance(self.sink, TeeSink):
+            self.sink.remove(sink)
+            return
+        if self.sink is sink:
+            self.sink = TeeSink()
+
+    def clear_sinks(self) -> None:
+        """Drop every RX listener (call end / shutdown). Does not close them."""
+        if isinstance(self.sink, TeeSink):
+            self.sink.clear()
+        else:
+            self.sink = TeeSink()
+
     def set_sink(self, sink: AudioSink) -> None:
-        self.sink = sink
+        """Replace the sink chain with ``sink`` (``NullSink`` clears it)."""
+        self.clear_sinks()
+        if not isinstance(sink, NullSink):
+            self.add_sink(sink)
 
     def diagnostics_snapshot(self) -> dict:
         """Runtime SIP/RTP state for the HA diagnostics download (no secrets)."""

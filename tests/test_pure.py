@@ -4099,14 +4099,14 @@ def test_assist_preroll_injected_into_stream():
 
 
 def test_assist_done_guard_skips_superseded_bridge():
-    """Regression: superseded bridge on_done must not clobber the active sink."""
-    state = {"assist_bridge": None, "sink": None}
+    """Regression: superseded bridge on_done must not detach the active assist."""
+    state = {"assist_bridge": None, "sinks": set()}
 
     def make_on_done(bridge):
         def on_assist_done() -> None:
             if state["assist_bridge"] is not bridge:
                 return
-            state["sink"] = "null"
+            state["sinks"].discard(bridge)
             state["assist_bridge"] = None
 
         return on_assist_done
@@ -4114,24 +4114,24 @@ def test_assist_done_guard_skips_superseded_bridge():
     bridge_a = object()
     bridge_b = object()
     state["assist_bridge"] = bridge_b
-    state["sink"] = "bridge_b"
+    state["sinks"] = {bridge_b, "recorder"}
     make_on_done(bridge_a)()
     assert state["assist_bridge"] is bridge_b
-    assert state["sink"] == "bridge_b"
+    assert state["sinks"] == {bridge_b, "recorder"}
 
 
-def test_call_ended_restores_sink_when_assist_bridge_cleared():
-    """Regression: call end must restore sink even if on_assist_done guard no-ops."""
-    state = {"assist_bridge": object(), "sink": "bridge"}
+def test_call_ended_clears_sinks_when_assist_bridge_cleared():
+    """Regression: call end must drop every sink even if on_assist_done guard no-ops."""
+    state = {"assist_bridge": object(), "sinks": {"bridge", "recorder"}}
 
     def on_call_ended() -> None:
         if state["assist_bridge"] is not None:
             state["assist_bridge"] = None
-            state["sink"] = "null"
+        state["sinks"].clear()
 
     on_call_ended()
     assert state["assist_bridge"] is None
-    assert state["sink"] == "null"
+    assert state["sinks"] == set()
 
 
 def _run_one_turn(assist_mod, mock_ap, PET, PE, **bridge_kwargs):

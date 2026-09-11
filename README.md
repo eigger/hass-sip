@@ -81,7 +81,7 @@ Sends DTMF digits to the active SIP call.
 > **Inbound DTMF:** digits pressed by the remote party are accepted both as RFC 2833 / RFC 4733 telephone-event packets and as SIP INFO (`application/dtmf-relay`), which is what many ATA/VoIP adapters send. **In-band DTMF (audio tones) is not detected** — set your ATA or PBX to RFC 2833 or SIP INFO if key presses are not recognised.
 
 ### `sip.start_recording`
-Starts recording call audio to a local WAV file.
+Starts recording call audio to a local WAV file. Can run at the same time as `sip.start_assist` — received audio is copied to both the WAV file and the Assist pipeline, and stopping one does not mute the other.
 - `entity_id` *(Required)*: The target SIP media player entity.
 - `recording_file` *(Required)*: Path of the WAV file to save. Relative paths are resolved against the Home Assistant config directory (e.g. `www/sip/last_msg.wav`). Absolute paths must stay inside an allowed directory:
   - the config directory

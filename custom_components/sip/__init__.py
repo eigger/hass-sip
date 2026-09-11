@@ -53,7 +53,7 @@ from .recording import (
     recording_allow_roots,
     resolve_recording_path,
 )
-from .sip_client.audio import FfmpegAudioSource, NullSink
+from .sip_client.audio import FfmpegAudioSource
 from .sip_client.sip_client import SipCallbacks, SipClient, SipConfig, SipState
 
 
@@ -369,7 +369,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             assist_bridge.close()
             assist_bridge = None
         recorder = close_recorder_slot(entry.runtime_data)
-        client.set_sink(NullSink())
+        client.clear_sinks()
         if recorder is not None:
             entry_id = entry.entry_id
 
@@ -448,8 +448,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Handle clean shutdown
     async def shutdown(event) -> None:
         recorder = close_recorder_slot(entry.runtime_data)
+        client.clear_sinks()
         if recorder is not None:
-            client.set_sink(NullSink())
             await recorder.wait_closed()
         await client.stop()
 
@@ -501,6 +501,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ) -> None:
         nonlocal assist_bridge
         if assist_bridge is not None:
+            client.remove_sink(assist_bridge)
             assist_bridge.close()
 
         bridge = AssistBridge(
@@ -528,14 +529,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if assist_bridge is not bridge:
                 return
             LOGGER.info("Assist pipeline bridge finished")
-            client.set_sink(NullSink())
+            client.remove_sink(bridge)
             assist_bridge = None
             if hangup_on_end:
                 client.hangup()
 
         bridge.on_done = on_assist_done
         assist_bridge = bridge
-        client.set_sink(assist_bridge)
+        client.add_sink(assist_bridge)
         assist_bridge.start()
 
     # Keep a dict of active IVR/Assist objects we can update
@@ -570,8 +571,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if entry_data:
         client: SipClient = entry_data["client"]
         recorder = close_recorder_slot(entry_data)
+        client.clear_sinks()
         if recorder is not None:
-            client.set_sink(NullSink())
             await recorder.wait_closed()
         await client.stop()
         # Clean up tasks
@@ -844,14 +845,14 @@ async def async_register_services(hass: HomeAssistant) -> None:
 
             old = close_recorder_slot(data)
             if old is not None:
-                client.set_sink(NullSink())
+                client.remove_sink(old)
                 await old.wait_closed()
                 _fire_recording_stopped(hass, entry_id, data)
 
             recorder = WavRecorderSink(
                 target_file, sample_rate=client.codec.sample_rate
             )
-            client.set_sink(recorder)
+            client.add_sink(recorder)
             data["recorder"] = recorder
             rec_data = {
                 "sip_account": data["config"].username,
@@ -875,7 +876,7 @@ async def async_register_services(hass: HomeAssistant) -> None:
             recorder = close_recorder_slot(data)
             if recorder is None:
                 continue
-            client.set_sink(NullSink())
+            client.remove_sink(recorder)
             await recorder.wait_closed()
             _fire_recording_stopped(hass, entry_id, data)
 
