@@ -358,6 +358,26 @@ def test_parse_sdp():
     assert sdp.offered_pts == {0, 8, 101}
 
 
+def test_parse_sdp_hold_attributes():
+    sendonly = sm.parse_sdp(
+        "c=IN IP4 192.168.0.5\r\nm=audio 4002 RTP/AVP 8\r\na=sendonly\r\n"
+    )
+    assert sendonly.direction == "sendonly"
+    assert sendonly.is_hold
+    inactive = sm.parse_sdp(
+        "c=IN IP4 192.168.0.5\r\nm=audio 4002 RTP/AVP 8\r\na=inactive\r\n"
+    )
+    assert inactive.is_hold
+    rfc2543 = sm.parse_sdp("c=IN IP4 0.0.0.0\r\nm=audio 4002 RTP/AVP 8\r\n")
+    assert rfc2543.connection_ip == "0.0.0.0"
+    assert rfc2543.is_hold
+    resume = sm.parse_sdp(
+        "c=IN IP4 192.168.0.5\r\nm=audio 4002 RTP/AVP 8\r\na=sendrecv\r\n"
+    )
+    assert resume.direction == "sendrecv"
+    assert not resume.is_hold
+
+
 def test_parse_sdp_offered_pts_from_rtpmap_only():
     # Dynamic PT advertised only via rtpmap still lands in offered_pts.
     body = (
@@ -967,6 +987,256 @@ def test_ringing_response_establishes_early_dialog():
     # 100 Trying is not dialog-establishing and must stay bare.
     assert "Record-Route:" not in trying
     assert "Contact:" not in trying
+
+
+# ------------------------------------------------------- in-dialog re-INVITE
+def _sdp_body(ip="198.51.100.10", port=4000, extra=""):
+    return (
+        "v=0\r\n"
+        f"c=IN IP4 {ip}\r\n"
+        f"m=audio {port} RTP/AVP 8\r\n"
+        "a=rtpmap:8 PCMA/8000\r\n"
+        f"{extra}"
+    )
+
+
+def _invite_request(
+    *,
+    call_id="dlg@example",
+    cseq=1,
+    branch="z9hG4bKorig",
+    frm="<sip:bob@example>;tag=remote",
+    to="<sip:alice@example>",
+    contact="<sip:bob@target.example>",
+    sdp_ip="198.51.100.10",
+    sdp_port=4000,
+    extra_sdp="",
+):
+    body = _sdp_body(sdp_ip, sdp_port, extra_sdp)
+    return sm.parse_sip_message(
+        "INVITE sip:alice@example SIP/2.0\r\n"
+        f"Via: SIP/2.0/UDP pbx.example;branch={branch}\r\n"
+        f"From: {frm}\r\n"
+        f"To: {to}\r\n"
+        f"Contact: {contact}\r\n"
+        f"Call-ID: {call_id}\r\n"
+        f"CSeq: {cseq} INVITE\r\n"
+        "Content-Type: application/sdp\r\n"
+        f"Content-Length: {len(body)}\r\n\r\n{body}"
+    )
+
+
+def _inbound_in_call():
+    """Drive an inbound INVITE through to IN_CALL and return (client, orig)."""
+    incoming = []
+    client = sip_client.SipClient(
+        sip_client.SipConfig(server="pbx.example"),
+        sip_client.SipCallbacks(on_incoming_call=incoming.append),
+    )
+    client.state = sip_client.SipState.REGISTERED
+    client._local_ip = "192.0.2.1"
+    client._local_port = 5060
+    orig = _invite_request()
+    with patch.object(client, "_send_raw"):
+        client._handle_request(orig)
+    client.state = sip_client.SipState.IN_CALL
+    client._media_active = True
+    return client, orig, incoming
+
+
+def _outbound_in_call():
+    incoming = []
+    client = sip_client.SipClient(
+        sip_client.SipConfig(server="pbx.example"),
+        sip_client.SipCallbacks(on_incoming_call=incoming.append),
+    )
+    client._local_ip = "192.0.2.1"
+    client._local_port = 5060
+    client._outbound = True
+    client._d_call_id = "out@example"
+    client._d_local_tag = "local"
+    client._d_local = "<sip:alice@example>;tag=local"
+    client._d_remote = "<sip:bob@example>;tag=remote"
+    client._d_remote_target = "sip:bob@target.example"
+    client._remote_rtp_ip = "198.51.100.10"
+    client._remote_rtp_port = 4000
+    client.last_caller = "keep-me"
+    client.registered = True
+    client.state = sip_client.SipState.IN_CALL
+    client._media_active = True
+    return client, incoming
+
+
+def test_inbound_reinvite_answers_with_new_transaction():
+    """re-INVITE 200 must echo the re-INVITE Via branch and CSeq, not the original."""
+    if sip_client is None:
+        return
+
+    async def run():
+        client, orig, incoming = _inbound_in_call()
+        last_caller = client.last_caller
+        reinvite = _invite_request(
+            cseq=2,
+            branch="z9hG4bKreinv",
+            to=f"<sip:alice@example>;tag={client._d_local_tag}",
+            contact="<sip:bob@new.example>",
+            sdp_ip="203.0.113.50",
+            sdp_port=5000,
+        )
+        with (
+            patch.object(client, "_send_raw") as send,
+            patch.object(client.rtp, "set_remote") as set_remote,
+            patch.object(client.rtp, "stop", new_callable=AsyncMock) as rtp_stop,
+        ):
+            client._handle_request(reinvite)
+        return client, orig, incoming, last_caller, send, set_remote, rtp_stop
+
+    client, orig, incoming, last_caller, send, set_remote, rtp_stop = asyncio.run(run())
+    sent = send.call_args_list[0].args[0]
+    assert sent.startswith("SIP/2.0 200 OK")
+    assert "CSeq: 2 INVITE\r\n" in sent
+    assert "branch=z9hG4bKreinv" in sent
+    assert "CSeq: 1 INVITE\r\n" not in sent
+    assert "branch=z9hG4bKorig" not in sent
+    assert "Content-Type: application/sdp" in sent
+    assert "m=audio" in sent
+    assert client.last_caller == last_caller
+    assert client.state == sip_client.SipState.IN_CALL
+    assert client._d_remote_target == "sip:bob@new.example"
+    assert incoming == ["bob"]  # original only; re-INVITE must not re-emit
+    set_remote.assert_called_once_with("203.0.113.50", 5000)
+    rtp_stop.assert_not_called()
+
+
+def test_outbound_reinvite_is_not_busy_here():
+    if sip_client is None:
+        return
+
+    async def run():
+        client, incoming = _outbound_in_call()
+        reinvite = _invite_request(
+            call_id="out@example",
+            cseq=1,
+            branch="z9hG4bKout-reinv",
+            to="<sip:alice@example>;tag=local",
+            sdp_ip="203.0.113.8",
+            sdp_port=6000,
+        )
+        with patch.object(client, "_send_raw") as send:
+            client._handle_request(reinvite)
+        return client, incoming, [c.args[0] for c in send.call_args_list]
+
+    client, incoming, sent = asyncio.run(run())
+    assert sent and sent[0].startswith("SIP/2.0 200 OK")
+    assert "486 Busy Here" not in sent[0]
+    assert "Content-Type: application/sdp" in sent[0]
+    assert "CSeq: 1 INVITE\r\n" in sent[0]
+    assert "branch=z9hG4bKout-reinv" in sent[0]
+    assert client.last_caller == "keep-me"
+    assert client.state == sip_client.SipState.IN_CALL
+    assert incoming == []
+
+
+def test_invite_retransmission_replays_prior_response():
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client.state = sip_client.SipState.REGISTERED
+        client._local_ip = "192.0.2.1"
+        orig = _invite_request()
+        with patch.object(client, "_send_raw") as send:
+            client._handle_request(orig)
+            ringing = [c.args[0] for c in send.call_args_list]
+            send.reset_mock()
+            client._handle_request(orig)
+            replay = [c.args[0] for c in send.call_args_list]
+            client.state = sip_client.SipState.IN_CALL
+            send.reset_mock()
+            client._handle_request(orig)
+            in_call_replay = [c.args[0] for c in send.call_args_list]
+        return ringing, replay, in_call_replay
+
+    ringing, replay, in_call_replay = asyncio.run(run())
+    assert any(s.startswith("SIP/2.0 180 Ringing") for s in ringing)
+    assert replay and replay[0].startswith("SIP/2.0 180 Ringing")
+    assert "CSeq: 1 INVITE\r\n" in replay[0]
+    assert "branch=z9hG4bKorig" in replay[0]
+    assert in_call_replay and in_call_replay[0].startswith("SIP/2.0 200 OK")
+    assert "CSeq: 1 INVITE\r\n" in in_call_replay[0]
+    assert "branch=z9hG4bKorig" in in_call_replay[0]
+
+
+def test_reinvite_hold_and_resume_toggles_tx():
+    if sip_client is None:
+        return
+
+    async def run():
+        client, _, _ = _inbound_in_call()
+        hold = _invite_request(
+            cseq=2,
+            branch="z9hG4bKhold",
+            to=f"<sip:alice@example>;tag={client._d_local_tag}",
+            extra_sdp="a=sendonly\r\n",
+        )
+        resume = _invite_request(
+            cseq=3,
+            branch="z9hG4bKresume",
+            to=f"<sip:alice@example>;tag={client._d_local_tag}",
+            extra_sdp="a=sendrecv\r\n",
+        )
+        with patch.object(client, "_send_raw") as send:
+            client._handle_request(hold)
+            held = client.rtp.send_silence, client._on_hold, send.call_args.args[0]
+            send.reset_mock()
+            client._handle_request(resume)
+            resumed = client.rtp.send_silence, client._on_hold, send.call_args.args[0]
+        return held, resumed, client.state
+
+    held, resumed, state = asyncio.run(run())
+    assert held[0] is False
+    assert held[1] is True
+    assert held[2].startswith("SIP/2.0 200 OK")
+    assert "a=recvonly" in held[2]
+    assert resumed[0] is True
+    assert resumed[1] is False
+    assert "a=sendrecv" in resumed[2]
+    assert state == sip_client.SipState.IN_CALL
+
+
+def test_update_with_sdp_returns_answer():
+    if sip_client is None:
+        return
+
+    async def run():
+        client, _, _ = _inbound_in_call()
+        body = _sdp_body("203.0.113.9", 7000)
+        update = sm.parse_sip_message(
+            "UPDATE sip:alice@example SIP/2.0\r\n"
+            "Via: SIP/2.0/UDP pbx.example;branch=z9hG4bKupd\r\n"
+            "From: <sip:bob@example>;tag=remote\r\n"
+            f"To: <sip:alice@example>;tag={client._d_local_tag}\r\n"
+            "Call-ID: dlg@example\r\n"
+            "CSeq: 4 UPDATE\r\n"
+            "Content-Type: application/sdp\r\n"
+            f"Content-Length: {len(body)}\r\n\r\n{body}"
+        )
+        with (
+            patch.object(client, "_send_raw") as send,
+            patch.object(client.rtp, "set_remote") as set_remote,
+            patch.object(client.rtp, "stop", new_callable=AsyncMock) as rtp_stop,
+        ):
+            client._handle_request(update)
+        return send.call_args.args[0], set_remote, rtp_stop, client.state
+
+    sent, set_remote, rtp_stop, state = asyncio.run(run())
+    assert sent.startswith("SIP/2.0 200 OK")
+    assert "CSeq: 4 UPDATE\r\n" in sent
+    assert "Content-Type: application/sdp" in sent
+    set_remote.assert_called_once_with("203.0.113.9", 7000)
+    rtp_stop.assert_not_called()
+    assert state == sip_client.SipState.IN_CALL
 
 
 # ------------------------------------------------------- RFC 2833 RX

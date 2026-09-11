@@ -201,7 +201,7 @@ ruff check custom_components/     # 린트
 
 ## P0 — 통화가 끊기는 결함 (릴리스 블로커)
 
-### [ ] P0-1. in-dialog re-INVITE 정상 응답
+### [x] P0-1. in-dialog re-INVITE 정상 응답
 
 **근거** §1.3-1. 확인된 결함. 기본 설정 PBX에서 통화가 끊기는 가장 유력한 경로.
 
@@ -241,6 +241,14 @@ ruff check custom_components/     # 린트
 - re-INVITE의 SDP가 원격 RTP 주소를 바꾸면 `rtp.set_remote`가 새 값으로 호출되고
   `rtp.stop()`이 호출되지 **않는다**.
 - hold(`a=sendonly`) → 재개 왕복 후 송신이 복구된다.
+
+**추가된 테스트**
+- `test_inbound_reinvite_answers_with_new_transaction`
+- `test_outbound_reinvite_is_not_busy_here`
+- `test_invite_retransmission_replays_prior_response`
+- `test_reinvite_hold_and_resume_toggles_tx`
+- `test_update_with_sdp_returns_answer`
+- `test_parse_sdp_hold_attributes`
 
 **리스크** 재전송과 re-INVITE의 구분을 CSeq로만 하면 CSeq를 증가시키지 않는 비표준
 구현에서 오판할 수 있다. Via branch 비교를 보조 조건으로 둔다.
