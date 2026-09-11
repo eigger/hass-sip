@@ -215,7 +215,7 @@
       "fields": {
         "recording_file": {
           "name": "Recording file path",
-          "description": "Absolute path of the WAV file to save (e.g. /media/recording.wav)."
+          "description": "Path of the WAV file. Relative paths are under the Home Assistant config directory. Must be inside an allowed directory (config, allowlist_external_dirs, /media, or /share)."
         }
       }
     },

@@ -14,7 +14,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import os
+import queue
 import struct
+import threading
 import wave
 from abc import ABC, abstractmethod
 from typing import Callable
@@ -98,23 +101,91 @@ class NullSink(AudioSink):
         self.bytes_received += len(pcm_le)
 
 
-class WavRecorderSink(AudioSink):
-    """Records received audio to a WAV file (handy for verifying the RX path)."""
+# ~5 s of 20 ms frames. Bound so a stalled disk cannot grow unbounded.
+_WAV_QUEUE_MAX_FRAMES = 250
 
-    def __init__(self, path: str, sample_rate: int = 8000) -> None:
-        self._wav = wave.open(path, "wb")
-        self._wav.setnchannels(1)
-        self._wav.setsampwidth(2)
-        self._wav.setframerate(sample_rate)
+
+class WavRecorderSink(AudioSink):
+    """Records received audio to a WAV file without blocking the RTP callback.
+
+    ``write`` only enqueues PCM. A worker thread opens the file, writes
+    frames, and closes the WAV so the event loop never waits on disk I/O.
+    """
+
+    def __init__(
+        self,
+        path: str,
+        sample_rate: int = 8000,
+        *,
+        max_queued_frames: int = _WAV_QUEUE_MAX_FRAMES,
+    ) -> None:
+        self.path = path
+        self._sample_rate = sample_rate
+        self._queue: queue.Queue[bytes] = queue.Queue(maxsize=max_queued_frames)
+        self._stop = threading.Event()
+        self._done = threading.Event()
+        self._closed = False
+        self._dropped = False
+        self._thread = threading.Thread(
+            target=self._run, name="sip-wav-recorder", daemon=True
+        )
+        self._thread.start()
 
     def write(self, pcm_le: bytes) -> None:
-        self._wav.writeframes(pcm_le)
+        if self._closed or not pcm_le:
+            return
+        try:
+            self._queue.put_nowait(pcm_le)
+        except queue.Full:
+            if not self._dropped:
+                self._dropped = True
+                _LOGGER.warning(
+                    "Recording queue full; dropping incoming PCM (%s)", self.path
+                )
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._stop.set()
+
+    async def wait_closed(self) -> None:
+        """Wait until queued PCM is flushed and the WAV header is finalized."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 10.0
+        while not self._done.is_set():
+            if loop.time() >= deadline:
+                _LOGGER.warning("Timed out waiting for WAV flush (%s)", self.path)
+                return
+            await asyncio.sleep(0.02)
+
+    def _run(self) -> None:
+        wav = None
         try:
-            self._wav.close()
+            parent = os.path.dirname(self.path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            wav = wave.open(self.path, "wb")
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(self._sample_rate)
+            while True:
+                try:
+                    chunk = self._queue.get(timeout=0.05)
+                except queue.Empty:
+                    if self._stop.is_set():
+                        break
+                    continue
+                wav.writeframes(chunk)
         except Exception:  # noqa: BLE001
-            pass
+            _LOGGER.exception("WAV recorder failed (%s)", self.path)
+        finally:
+            if wav is not None:
+                try:
+                    wav.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            self._done.set()
 
 
 class _ConfiguredPcmSource(AudioSource):
