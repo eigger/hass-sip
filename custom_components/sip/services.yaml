@@ -284,3 +284,27 @@ start_assist:
       default: false
       selector:
         boolean:
+    allowed_callers:
+      name: Allowed callers
+      description: Caller IDs that may start Assist. Omitted means no restriction. Caller ID can be spoofed; pair with PIN for door-lock intents.
+      required: false
+      example:
+        - "100"
+        - "101"
+      selector:
+        text:
+          multiple: true
+    contacts_only:
+      name: Contacts only
+      description: Only callers listed in sip_contacts.json may start Assist. Combined with Allowed callers, both must match.
+      required: false
+      default: false
+      selector:
+        boolean:
+    pin:
+      name: PIN
+      description: Optional DTMF PIN entered before Assist starts. Failed or timed-out attempts fire sip_assist_rejected and do not run intents.
+      required: false
+      selector:
+        text:
+          type: password

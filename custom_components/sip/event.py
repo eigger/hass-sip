@@ -12,6 +12,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .helpers import build_device_info
 from .const import (
     DOMAIN,
+    EVENT_SIP_ASSIST_REJECTED,
     EVENT_SIP_CALL_CONNECTED,
     EVENT_SIP_CALL_ENDED,
     EVENT_SIP_DTMF_DIGIT,
@@ -49,6 +50,7 @@ class SipTelephonyEventEntity(EventEntity):
         "recording_started",
         "recording_stopped",
         "registered",
+        "assist_rejected",
     ]
 
     def __init__(self, config_entry: ConfigEntry, entry_data: dict[str, Any]) -> None:
@@ -92,6 +94,8 @@ class SipTelephonyEventEntity(EventEntity):
             mapped_type = "recording_stopped"
         elif event_type == EVENT_SIP_REGISTERED:
             mapped_type = "registered"
+        elif event_type == EVENT_SIP_ASSIST_REJECTED:
+            mapped_type = "assist_rejected"
 
         if mapped_type in self._attr_event_types:
             self._trigger_event(mapped_type, extra_data or {})

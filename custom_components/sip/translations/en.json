@@ -121,7 +121,8 @@
               "ended": "Call Ended",
               "recording_started": "Recording Started",
               "recording_stopped": "Recording Stopped",
-              "registered": "Registered"
+              "registered": "Registered",
+              "assist_rejected": "Assist Rejected"
             }
           }
         }
@@ -270,6 +271,18 @@
         "hangup_on_end": {
           "name": "Hang up on end",
           "description": "Hang up the call when the Assist session ends."
+        },
+        "allowed_callers": {
+          "name": "Allowed callers",
+          "description": "Caller IDs that may start Assist. Omitted means no restriction. Caller ID can be spoofed; pair with PIN for door-lock intents."
+        },
+        "contacts_only": {
+          "name": "Contacts only",
+          "description": "Only callers listed in sip_contacts.json may start Assist. Combined with Allowed callers, both must match."
+        },
+        "pin": {
+          "name": "PIN",
+          "description": "Optional DTMF PIN. The caller must enter it (end with # or the PIN length) before Assist starts. Failed or timed-out attempts fire sip_assist_rejected and do not run intents."
         }
       }
     }

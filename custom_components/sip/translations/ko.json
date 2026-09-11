@@ -121,7 +121,8 @@
               "ended": "통화 종료됨",
               "recording_started": "녹음 시작됨",
               "recording_stopped": "녹음 중지됨",
-              "registered": "등록됨"
+              "registered": "등록됨",
+              "assist_rejected": "Assist 거부됨"
             }
           }
         }
@@ -270,6 +271,18 @@
         "hangup_on_end": {
           "name": "종료 시 끊기",
           "description": "Assist 세션 종료 시 통화를 끊습니다."
+        },
+        "allowed_callers": {
+          "name": "허용 발신자",
+          "description": "Assist를 시작할 수 있는 발신자 번호. 생략하면 제한 없음. Caller ID는 스푸핑될 수 있으므로 도어락 intent에는 PIN을 함께 쓰세요."
+        },
+        "contacts_only": {
+          "name": "연락처만 허용",
+          "description": "sip_contacts.json에 있는 발신자만 Assist를 시작할 수 있습니다. 허용 발신자와 함께 쓰면 둘 다 맞아야 합니다."
+        },
+        "pin": {
+          "name": "PIN",
+          "description": "선택 DTMF PIN. Assist 시작 전에 입력해야 합니다(# 또는 PIN 길이). 실패·타임아웃은 sip_assist_rejected를 내고 intent는 실행하지 않습니다."
         }
       }
     }

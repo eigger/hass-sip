@@ -751,22 +751,47 @@ Assist 경로의 별 문제였고 이미 가드했다. 수신 지터는 이 이�
 
 ## P4 — 보안 게이트
 
-### [ ] P4-1. Assist 발신자 인가
+### [x] P4-1. Assist 발신자 인가
 
 **근거** §1.3-8. `sip.start_assist`에 발신자 제한이 전무하다. Caller ID는 스푸핑
 가능하므로 화이트리스트만으로도 부족하다.
 
 **작업**
-1. `sip.start_assist`에 발신자 허용 목록 옵션을 추가한다(contacts 재사용 또는 명시 목록).
-   목록에 없으면 Assist를 시작하지 않고 이벤트로 거절 사실을 알린다.
-2. DTMF PIN 게이트를 선택 옵션으로 제공한다. IVR에 이미 `input: pin`이 있으므로
-   내부적으로 재사용 가능하다.
-3. **문서에 권장 경로를 명시한다**: 도어락/보안 관련 intent를 쓸 경우
-   "화이트리스트 + PIN + 전용 pipeline"을 기본으로 안내. 기본값이 없으면 사용자가
-   그냥 열어둔다.
+1. `sip.start_assist`에 `allowed_callers`와 `contacts_only`를 추가했다. 목록에
+   없으면 Assist를 시작하지 않고 `sip_assist_rejected`(`not_allowed`)를 낸다.
+   둘 다 켜면 교집합이다. 옵션을 생략하면 기존처럼 전원 허용.
+2. 선택 `pin` DTMF 게이트. `#` 또는 PIN 길이로 제출, 15초 타임아웃. 실패·끊김·
+   타임아웃은 intent를 실행하지 않고 `pin_mismatch` / `pin_timeout`을 낸다.
+   PIN은 로그·이벤트에 넣지 않는다. `pin_collector`가 활성인 동안 DTMF는
+   수집기에만 들어가고 `sip_dtmf_digit`·logbook·IVR로 나가지 않는다.
+   게이트는 `handle_start_assist`에만 있고 IVR `assist: true`는 통과하지 않는다.
+   영숫자 내선(`cam2`, `doorbird1`)은 전체 사용자 파트로 비교한다. 전화번호
+   형태일 때만 구분자 제거 후 숫자 문자열로 맞춘다.
+3. README에 권장 경로를 명시: 도어락/보안 intent는 **화이트리스트 + PIN +
+   전용 pipeline**. Caller ID 스푸핑을 경고한다.
 
 **수용 기준** 허용 목록에 없는 발신자가 `start_assist`에 도달하면 세션이 시작되지 않고
 거절 이벤트가 발생한다. PIN 옵션 활성 시 PIN 통과 전에는 intent가 실행되지 않는다.
+
+**추가된 테스트** (`tests/test_assist_gate.py`)
+- `test_normalize_caller_strips_sip_uri`
+- `test_normalize_caller_keeps_alphanumeric_user_part`
+- `test_alphanumeric_callers_do_not_collide_on_trailing_digit`
+- `test_caller_allowed_when_no_restriction`
+- `test_empty_allow_list_rejects_everyone`
+- `test_caller_rejected_when_not_on_allow_list`
+- `test_caller_rejected_when_contacts_only_and_unknown`
+- `test_caller_allow_list_and_contacts_only_intersect`
+- `test_pin_collector_accepts_matching_digits`
+- `test_pin_collector_hash_submits_early`
+- `test_pin_collector_rejects_mismatch_without_exposing_digits`
+- `test_pin_collector_times_out`
+- `test_pin_collector_fail_is_mismatch`
+- `test_take_pin_digit_consumes_without_exposing`
+- `test_start_assist_rejects_unknown_caller`
+- `test_start_assist_allows_listed_caller`
+- `test_start_assist_pin_mismatch_does_not_start`
+- `test_start_assist_pin_ok_starts_assist`
 
 ---
 

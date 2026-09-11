@@ -35,4 +35,5 @@ EVENT_SIP_DTMF_DIGIT = "sip_dtmf_digit"
 EVENT_SIP_PLAYBACK_DONE = "sip_playback_done"
 EVENT_SIP_RECORDING_STARTED = "sip_recording_started"
 EVENT_SIP_RECORDING_STOPPED = "sip_recording_stopped"
+EVENT_SIP_ASSIST_REJECTED = "sip_assist_rejected"
 

@@ -121,7 +121,8 @@
               "ended": "Вызов завершён",
               "recording_started": "Запись начата",
               "recording_stopped": "Запись остановлена",
-              "registered": "Зарегистрирован"
+              "registered": "Зарегистрирован",
+              "assist_rejected": "Assist отклонён"
             }
           }
         }
@@ -270,6 +271,18 @@
         "hangup_on_end": {
           "name": "Завершить вызов",
           "description": "Завершить вызов по окончании сессии Assist."
+        },
+        "allowed_callers": {
+          "name": "Разрешённые номера",
+          "description": "Номера, которым можно запускать Assist. Если не указано — без ограничений. Caller ID можно подделать; для замка используйте PIN."
+        },
+        "contacts_only": {
+          "name": "Только контакты",
+          "description": "Assist могут запускать только номера из sip_contacts.json. Вместе с разрешёнными номерами должны совпасть оба условия."
+        },
+        "pin": {
+          "name": "PIN",
+          "description": "Необязательный DTMF PIN. Нужно ввести до запуска Assist (# или длина PIN). Ошибка или таймаут вызывают sip_assist_rejected, intent не выполняется."
         }
       }
     }

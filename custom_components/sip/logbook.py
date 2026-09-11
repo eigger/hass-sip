@@ -16,6 +16,7 @@ from homeassistant.core import Event, HomeAssistant, callback
 
 from .const import (
     DOMAIN,
+    EVENT_SIP_ASSIST_REJECTED,
     EVENT_SIP_CALL_CONNECTED,
     EVENT_SIP_CALL_ENDED,
     EVENT_SIP_DTMF_DIGIT,
@@ -77,6 +78,16 @@ def async_describe_events(
     def describe_registered(event: Event) -> dict[str, str]:
         return {LOGBOOK_ENTRY_NAME: _name(event.data), LOGBOOK_ENTRY_MESSAGE: "registered"}
 
+    @callback
+    def describe_assist_rejected(event: Event) -> dict[str, str]:
+        data = event.data
+        who = data.get("caller") or "unknown"
+        reason = data.get("reason") or "rejected"
+        return {
+            LOGBOOK_ENTRY_NAME: _name(data),
+            LOGBOOK_ENTRY_MESSAGE: f"Assist rejected ({reason}) for {who}",
+        }
+
     async_describe_event(DOMAIN, EVENT_SIP_INCOMING_CALL, describe_incoming)
     async_describe_event(DOMAIN, EVENT_SIP_CALL_CONNECTED, describe_connected)
     async_describe_event(DOMAIN, EVENT_SIP_CALL_ENDED, describe_ended)
@@ -85,3 +96,4 @@ def async_describe_events(
     async_describe_event(DOMAIN, EVENT_SIP_RECORDING_STARTED, describe_recording_started)
     async_describe_event(DOMAIN, EVENT_SIP_RECORDING_STOPPED, describe_recording_stopped)
     async_describe_event(DOMAIN, EVENT_SIP_REGISTERED, describe_registered)
+    async_describe_event(DOMAIN, EVENT_SIP_ASSIST_REJECTED, describe_assist_rejected)
