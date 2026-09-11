@@ -17,6 +17,7 @@ from typing import Callable
 
 from . import codecs
 from . import sip_message as sm
+from . import trace
 from .audio import AudioSink, AudioSource, NullSink
 from .rtp_session import RtpSession
 from .sip_auth import digest_response
@@ -350,6 +351,7 @@ class SipClient:
     def _send_raw(self, msg: str) -> None:
         if self._transport is None:
             return
+        trace.log_sip("TX", msg)
         self._transport.sendto(msg.encode("utf-8"))
 
 
@@ -1390,6 +1392,7 @@ class SipClient:
         # take down the UDP listener or the integration.
         try:
             raw = data.decode("utf-8", errors="replace")
+            trace.log_sip("RX", raw)
 
             m = sm.parse_sip_message(raw)
             if m.is_request:

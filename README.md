@@ -675,3 +675,12 @@ action:
 - **Registration fails**: Double-check the SIP extension credentials and host IP address. Ensure your firewall or FreePBX settings permit UDP traffic on port `5060` from the Home Assistant host.
 - **No Audio / One-way Audio**: This is typically caused by NAT or routing issues. Ensure the RTP port range (defaults starting at `7078`) is open and routed properly.
 - **FFmpeg errors**: Ensure that the `ffmpeg` system binary is installed and accessible in your Home Assistant path, as it is utilized for audio transcoding.
+- **SIP / RTP protocol trace**: Off by default. To capture signalling (INVITE / 200 OK / REGISTER) and a 5-second RTP summary without putting digest credentials in the log, add this to `configuration.yaml` and restart:
+
+  ```yaml
+  logger:
+    logs:
+      custom_components.sip.sip_client.trace: debug
+  ```
+
+  `Authorization` / `Proxy-Authorization` values (`response`, `nonce`, `cnonce`) are masked as `****`. RTP is summarised (packet counts, payload type, estimated loss, latched address), not logged packet-by-packet. Turn the logger back to `info` when you are done.

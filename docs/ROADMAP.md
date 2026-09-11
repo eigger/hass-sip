@@ -38,7 +38,7 @@ DTMF 인식 실패, choppy live TTS(#45, 열림). **전부 안정성·PBX 호환
 
 ### 1.2 잘 되어 있는 것 (되돌리지 말 것)
 
-- **SIP core와 HA layer 분리 완료.** `custom_components/sip/sip_client/` 8개 모듈에
+- **SIP core와 HA layer 분리 완료.** `custom_components/sip/sip_client/` 9개 모듈에
   `homeassistant` import가 0건이다. 테스트가 HA 없이 코어를 로드한다(`tests/conftest.py`).
   추가 계층 분리 리팩터링은 순손실이다.
 - **G.722 clock/sample rate 분리가 정확하다.** `sip_client/codecs.py`에서 RTP clock 8000,
@@ -47,7 +47,9 @@ DTMF 인식 실패, choppy live TTS(#45, 열림). **전부 안정성·PBX 호환
 - **SIP 라우팅/트랜잭션 처리 상당 부분이 이미 견고하다.** Record-Route wire order 보존,
   strict/loose router 분기, CANCEL과 2xx 경합, forked 2xx의 ACK+BYE 정리,
   401 재인증 후 INVITE CSeq 유지, UDP INVITE 재전송 T1 백오프. 모두 테스트로 잠겨 있다.
-- **비밀번호 로그 노출 경로가 없다.** 원시 SIP 메시지를 로깅하는 코드가 아예 없다.
+- **비밀번호는 기본 로그에 노출되지 않는다.** 원시 SIP 메시지는 opt-in
+  `custom_components.sip.sip_client.trace` DEBUG에서만 남고, digest
+  `response`/`nonce`/`cnonce`는 마스킹된다 (P1-1).
 - **Assist 세션 상태 관리가 견고하다.** `_tts_epoch`로 stale TTS 무효화, tone/tts 대기
   이벤트 분리, silent/error streak 구분. 관련 테스트 40개 이상.
 
@@ -400,12 +402,13 @@ P0-2 latching은 RTP 단위 테스트로 `test_pure.py`에 남아 있다.
 
 이슈 대응 비용을 직접 줄이는 단계. P0 수정의 효과를 사용자 환경에서 확인할 수단도 된다.
 
-### [ ] P1-1. opt-in SIP/RTP 트레이스 (크리덴셜 마스킹)
+### [x] P1-1. opt-in SIP/RTP 트레이스 (크리덴셜 마스킹)
 
 **근거** §1.3-5. 현재 원시 메시지 로깅이 전혀 없어 비밀번호는 안전하지만
 원격 진단이 불가능하다. 필요한 것은 "트레이스 없음"이 아니라 "마스킹된 트레이스"다.
 
-**대상** `sip_client.py` `_send_raw`(:311), `_on_packet`(:1162), `rtp_session.py`
+**대상** `sip_client.py` `_send_raw`, `_on_packet`, `rtp_session.py`,
+새 파일 `sip_client/trace.py`
 
 **작업**
 1. `sip.trace` 전용 로거를 만들고 DEBUG 레벨에서만 송수신 SIP 메시지를 남긴다.
@@ -420,6 +423,23 @@ P0-2 latching은 RTP 단위 테스트로 `test_pure.py`에 남아 있다.
 - 트레이스 활성 시 INVITE/200 OK/REGISTER 왕복이 로그에 남는다.
 - `Authorization` 헤더가 포함된 메시지에서 `response=` 값이 마스킹된다(테스트).
 - 트레이스 비활성이 기본이고, 비활성 시 문자열 포맷 비용이 발생하지 않는다.
+
+**추가된 테스트** (`tests/test_trace.py`)
+- `test_trace_disabled_by_default`
+- `test_mask_sip_authorization_response`
+- `test_mask_sip_nonce_and_cnonce`
+- `test_mask_sip_proxy_authorization`
+- `test_mask_sip_unquoted_digest_params`
+- `test_mask_sip_leaves_www_authenticate`
+- `test_mask_sip_basic_authorization`
+- `test_mask_sip_password_param`
+- `test_log_sip_skips_masking_when_disabled`
+- `test_log_sip_masks_before_debug`
+- `test_sip_send_and_recv_traced_when_enabled`
+- `test_sip_send_raw_does_not_format_when_disabled`
+- `test_rtp_trace_summary_counts_loss_and_latch`
+- `test_rtp_trace_summary_silent_when_disabled`
+- `test_rtp_trace_timer_cancelled_on_stop`
 
 ---
 
