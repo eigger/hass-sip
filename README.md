@@ -8,7 +8,6 @@ hass-sip **registers as a SIP extension** on your PBX. It exposes the line as a 
 
 Transport is **SIP over UDP** with **G.711 (PCMU/PCMA) and G.722**. TLS, SRTP, and Opus are not implemented. **Internet exposure is unsupported.** Unverified PBXs are not labelled "supported".
 
-<!-- Absolute raw URLs so HACS `render_readme` can load images and docs. -->
 | Get registered | Automate | Reference |
 |---|---|---|
 | [Setup & Quick Start](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/setup.md) | [Examples](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/examples.md) | [Services, entities, events](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/services.md) |
