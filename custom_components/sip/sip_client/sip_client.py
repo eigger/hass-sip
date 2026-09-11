@@ -48,6 +48,8 @@ class SipConfig:
     register_expiration: int = 300
     local_rtp_port: int = 7078
     outbound_proxy: str = ""
+    media_timeout: int = 30
+    max_call_duration: int = 3600
 
 
 @dataclass
@@ -57,7 +59,7 @@ class SipCallbacks:
     on_register_failed: Callable[[str], None] | None = None
     on_incoming_call: Callable[[str], None] | None = None
     on_call_connected: Callable[[], None] | None = None
-    on_call_ended: Callable[[], None] | None = None
+    on_call_ended: Callable[[str], None] | None = None
     on_dtmf: Callable[[str], None] | None = None
     on_playback_done: Callable[[], None] | None = None
     on_codec_change: Callable[[codecs.Codec], None] | None = None
@@ -225,10 +227,13 @@ class SipClient:
         self._media_active = False
 
         self.rtp = RtpSession()
+        self.rtp.media_timeout = float(self.config.media_timeout)
+        self.rtp.on_media_timeout = self._on_media_timeout
         self.sink: AudioSink = NullSink()
         self._tx_source_task: asyncio.Task | None = None
         self._pending_source: AudioSource | None = None
         self._ring_timeout_handle: asyncio.TimerHandle | None = None
+        self._max_duration_handle: asyncio.TimerHandle | None = None
         # INVITE retransmission (RFC 3261 over unreliable UDP)
         self._invite_msg: str | None = None
         self._invite_retx_handle: asyncio.TimerHandle | None = None
@@ -363,6 +368,8 @@ class SipClient:
             _LOGGER.debug("state %s -> %s", self.state, state)
             self.state = state
             self._emit("on_state_change", state)
+            if state == SipState.IN_CALL:
+                self._arm_max_duration()
 
     # -- registration ---------------------------------------------------
     def _contact_uri(self) -> str:
@@ -605,7 +612,7 @@ class SipClient:
         try:
             if self.state in (SipState.INVITING, SipState.RINGING_OUT):
                 _LOGGER.info("Ring timeout reached; canceling call")
-                self.hangup()
+                self.hangup(reason="ring_timeout")
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Ring timeout handler error")
 
@@ -802,7 +809,7 @@ class SipClient:
         # >= 300 final failure
         self._send_raw(self._build_ack(m))
         _LOGGER.warning("Call failed: %s %s", m.status_code, m.reason)
-        self._end_call()
+        self._end_call("remote_reject")
 
     def _digest_auth_line(self, proxy, auth_user, realm, nonce, uri, resp, qop, nc, cnonce, opaque) -> str:
         head = "Proxy-Authorization: " if proxy else "Authorization: "
@@ -862,6 +869,7 @@ class SipClient:
 
         self._local_direction = _answer_direction(sdp)
         self._set_hold(sdp.is_hold)
+        self.rtp.set_expect_rx(self._local_direction != "sendonly")
         self._sync_media_endpoint(old_ip, old_port)
 
     def _begin_dialog_media(self) -> None:
@@ -877,6 +885,7 @@ class SipClient:
         self._local_direction = "sendrecv"
         self.rtp.send_silence = True
         self.rtp.clear_tx_pause()
+        self.rtp.set_expect_rx(True)
 
     def _sync_media_endpoint(self, old_ip: str, old_port: int) -> None:
         """Retarget a live RTP session, or start one once a real address arrives."""
@@ -1033,7 +1042,7 @@ class SipClient:
                 if self.dnd:
                     _LOGGER.info("Call rejected due to DND: Busy Here")
                     self._emit("on_incoming_call", caller)
-                    self._emit("on_call_ended")
+                    self._emit("on_call_ended", "local")
                 self._send_raw(self._build_response(m, 486, "Busy Here", False))
                 return
             self._outbound = False
@@ -1112,7 +1121,7 @@ class SipClient:
         if method == "BYE":
             self._send_raw(self._build_response(m, 200, "OK", False))
             _LOGGER.info("Remote hung up")
-            self._end_call()
+            self._end_call("remote_bye")
             return
 
         if method == "CANCEL":
@@ -1121,7 +1130,7 @@ class SipClient:
                 self._send_raw(
                     self._build_response(self._incoming_invite, 487, "Request Terminated", False)
                 )
-                self._end_call()
+                self._end_call("remote_cancel")
             return
 
         if method == "INFO":
@@ -1157,11 +1166,11 @@ class SipClient:
         self._set_state(SipState.ANSWERING)
         _LOGGER.info("Answered")
 
-    def hangup(self, sip_code: int | None = None) -> None:
+    def hangup(self, sip_code: int | None = None, *, reason: str = "local") -> None:
         if self.state in (SipState.IN_CALL, SipState.ANSWERING):
             self._d_cseq += 1
             self._send_raw(self._build_in_dialog("BYE"))
-            self._end_call()
+            self._end_call(reason)
         elif self.state in (SipState.INVITING, SipState.RINGING_OUT):
             msg = (
                 f"CANCEL {self._d_remote_target} SIP/2.0\r\n"
@@ -1174,7 +1183,7 @@ class SipClient:
                 "Content-Length: 0\r\n\r\n"
             )
             self._send_raw(msg)
-            self._end_call()
+            self._end_call(reason)
         elif self.state == SipState.INCOMING and self._incoming_invite is not None:
             code = sip_code or 603
             reasons = {
@@ -1185,9 +1194,9 @@ class SipClient:
                 486: "Busy Here",
                 603: "Decline",
             }
-            reason = reasons.get(code, "Decline")
-            self._send_raw(self._build_response(self._incoming_invite, code, reason, False))
-            self._end_call()
+            phrase = reasons.get(code, "Decline")
+            self._send_raw(self._build_response(self._incoming_invite, code, phrase, False))
+            self._end_call(reason)
 
     def _build_in_dialog(
         self,
@@ -1257,18 +1266,47 @@ class SipClient:
             return
         self.rtp.queue_dtmf(digits)
 
-    def _end_call(self) -> None:
+    def _end_call(self, reason: str = "local") -> None:
         self._cancel_invite_retx()
         if self._ring_timeout_handle is not None:
             self._ring_timeout_handle.cancel()
             self._ring_timeout_handle = None
+        self._cancel_max_duration()
+        self.rtp._cancel_media_timeout()
         self._on_hold = False
         self._local_direction = "sendrecv"
         self.rtp.send_silence = True
         self.rtp.clear_tx_pause()
         self._loop.create_task(self._stop_media())
         self._set_state(SipState.REGISTERED if self.registered else SipState.IDLE)
-        self._emit("on_call_ended")
+        self._emit("on_call_ended", reason)
+
+    def _arm_max_duration(self) -> None:
+        self._cancel_max_duration()
+        seconds = self.config.max_call_duration
+        if seconds <= 0:
+            return
+        self._max_duration_handle = self._loop.call_later(
+            seconds, self._on_max_duration
+        )
+
+    def _cancel_max_duration(self) -> None:
+        if self._max_duration_handle is not None:
+            self._max_duration_handle.cancel()
+            self._max_duration_handle = None
+
+    def _on_max_duration(self) -> None:
+        self._max_duration_handle = None
+        if self.state not in (SipState.IN_CALL, SipState.ANSWERING):
+            return
+        _LOGGER.warning("Max call duration reached (%ss)", self.config.max_call_duration)
+        self.hangup(reason="max_duration")
+
+    def _on_media_timeout(self) -> None:
+        if self.state not in (SipState.IN_CALL, SipState.ANSWERING):
+            return
+        _LOGGER.warning("RTP media timeout")
+        self.hangup(reason="media_timeout")
 
     # -- media ----------------------------------------------------------
     async def _start_media(self) -> None:

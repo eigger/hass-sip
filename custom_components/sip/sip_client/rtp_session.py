@@ -119,6 +119,11 @@ class RtpSession:
 
         self.on_audio: Callable[[bytes], None] | None = None
         self.on_dtmf: Callable[[str], None] | None = None
+        self.on_media_timeout: Callable[[], None] | None = None
+        self.media_timeout: float = 30.0
+        self.expect_rx = True
+        self._last_rx_at: float | None = None
+        self._media_timeout_handle: asyncio.TimerHandle | None = None
 
         # Codec-derived pacing / encode state (defaults = G.711 PCMU).
         self._codec: Codec = codecs.DEFAULT
@@ -183,11 +188,30 @@ class RtpSession:
                 self._first_packet = True
             self._tx_paused_at = None
             self.tx_enabled = True
+            # Hold ended: restart the RX watchdog so a long hold is not a timeout.
+            if self._transport is not None:
+                self._note_rx()
             return
         self._tx_paused_at = self._loop.time()
         self.tx_enabled = False
         self.flush_tx_buffer()
         self._clear_dtmf_tx()
+        self._cancel_media_timeout()
+
+    def set_expect_rx(self, expected: bool) -> None:
+        """Arm the RX watchdog only when the peer is supposed to send RTP.
+
+        A recvonly peer (paging speaker) never transmits, so a media timeout
+        would cut a long announcement. Hold already gates this via ``tx_enabled``.
+        """
+        if expected == self.expect_rx:
+            return
+        self.expect_rx = expected
+        if expected:
+            if self._transport is not None and self.tx_enabled:
+                self._note_rx()
+            return
+        self._cancel_media_timeout()
 
     def clear_tx_pause(self) -> None:
         """Re-enable TX without catching up a hold gap (new/ended call)."""
@@ -255,9 +279,12 @@ class RtpSession:
                 "Remote did not negotiate telephone-event (RFC 2833); inbound DTMF "
                 "will only work if the device sends it via SIP INFO"
             )
+        self._note_rx()
         return True
 
     async def stop(self) -> None:
+        self._cancel_media_timeout()
+        self._last_rx_at = None
         if self._sender_task is not None:
             self._sender_task.cancel()
             try:
@@ -433,6 +460,43 @@ class RtpSession:
         self._remote = src
         self._clear_latch_candidate()
 
+    def _note_rx(self) -> None:
+        self._last_rx_at = self._loop.time()
+        self._arm_media_timeout()
+
+    def _arm_media_timeout(self) -> None:
+        self._cancel_media_timeout()
+        if (
+            self.media_timeout <= 0
+            or self._transport is None
+            or not self.tx_enabled
+            or not self.expect_rx
+        ):
+            return
+        self._media_timeout_handle = self._loop.call_later(
+            self.media_timeout, self._fire_media_timeout
+        )
+
+    def _cancel_media_timeout(self) -> None:
+        if self._media_timeout_handle is not None:
+            self._media_timeout_handle.cancel()
+            self._media_timeout_handle = None
+
+    def _fire_media_timeout(self) -> None:
+        self._media_timeout_handle = None
+        if self._transport is None or not self.tx_enabled or not self.expect_rx:
+            return
+        _LOGGER.warning(
+            "RTP media timeout after %ss without RX", self.media_timeout
+        )
+        cb = self.on_media_timeout
+        if cb is None:
+            return
+        try:
+            cb()
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("on_media_timeout raised")
+
     # -- RX -------------------------------------------------------------
     def _receive(self, data: bytes, addr: tuple[str, int] | None = None) -> None:
         try:
@@ -447,6 +511,9 @@ class RtpSession:
             return
         if data[0] >> 6 != 2:
             return
+        # Comfort noise (PT 13) and other keepalives must reset the watchdog
+        # even when we cannot decode them. Latch still requires a known PT.
+        self._note_rx()
         pt = data[1] & 0x7F
         marker = (data[1] & 0x80) != 0
         header_len = 12 + 4 * (data[0] & 0x0F)  # CSRC count

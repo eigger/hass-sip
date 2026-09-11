@@ -14,7 +14,9 @@
           "caller_id": "Anrufer-ID (Optional)",
           "outbound_proxy": "Outbound-Proxy (Optional)",
           "register_expiration": "Registrierungs-Ablaufzeit (Sekunden)",
-          "local_rtp_port": "Lokaler RTP-Port (Optional)"
+          "local_rtp_port": "Lokaler RTP-Port (Optional)",
+          "media_timeout": "Medien-Timeout (Sekunden, 0=deaktiviert)",
+          "max_call_duration": "Maximale Gesprächsdauer (Sekunden, 0=unbegrenzt)"
         }
       },
       "reconfigure": {
@@ -30,7 +32,9 @@
           "caller_id": "Anrufer-ID (Optional)",
           "outbound_proxy": "Outbound-Proxy (Optional)",
           "register_expiration": "Registrierungs-Ablaufzeit (Sekunden)",
-          "local_rtp_port": "Lokaler RTP-Port (Optional)"
+          "local_rtp_port": "Lokaler RTP-Port (Optional)",
+          "media_timeout": "Medien-Timeout (Sekunden, 0=deaktiviert)",
+          "max_call_duration": "Maximale Gesprächsdauer (Sekunden, 0=unbegrenzt)"
         }
       }
     },

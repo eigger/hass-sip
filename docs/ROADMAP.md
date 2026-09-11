@@ -300,7 +300,7 @@ ruff check custom_components/     # 린트
 
 ---
 
-### [ ] P0-3. RTP 타임아웃 + 최대 통화 시간
+### [x] P0-3. RTP 타임아웃 + 최대 통화 시간
 
 **근거** §1.3-3. 죽은 미디어로 통화가 남고, 무한 통화가 가능하다. 외부 트렁크가
 붙으면 과금·DoS 문제가 된다.
@@ -314,10 +314,12 @@ ruff check custom_components/     # 린트
    - 주의: RTP core는 HA를 모른다. 타임아웃 값은 생성자/속성으로 주입받는다.
 2. `SipClient`가 media timeout을 받으면 `hangup()` 후 사유를 담아 `on_call_ended`를 emit한다.
    통화 종료 이벤트에 사유 필드(`reason`: `remote_bye` / `local` / `media_timeout` /
-   `max_duration`)를 추가한다.
+   `max_duration` / `remote_reject` / `remote_cancel` / `ring_timeout`)를 추가한다.
 3. 최대 통화 시간(기본 3600초, 0이면 무제한)을 config에 추가하고 IN_CALL 진입 시
    타이머를 걸어 초과 시 종료한다.
 4. 기본값은 보수적으로: media timeout 30초, max duration 3600초. 둘 다 설정 가능하게.
+   hold(`tx_enabled=False`)와 로컬 `sendonly`(상대 recvonly 페이징)에서는 미디어
+   타임아웃을 멈추고, 재개 시 다시 센다. RTP v2 패킷(CN PT 13 포함)은 워치독을 리셋한다.
 
 **수용 기준**
 - 미디어 무수신 N초 경과 → BYE 송신 + `on_call_ended(reason="media_timeout")`.
@@ -325,6 +327,25 @@ ruff check custom_components/     # 린트
 - max duration 초과 → BYE 송신 + `reason="max_duration"`.
 - 통화 종료 후 타이머가 정리되어 다음 통화에 누수되지 않는다.
 - `reason` 필드가 HA 이벤트(`EVENT_SIP_CALL_ENDED`)에 실려 자동화에서 쓸 수 있다.
+
+**추가된 테스트**
+- `test_local_hangup_emits_reason_and_bye`
+- `test_remote_bye_emits_reason`
+- `test_media_timeout_sends_bye_and_reason`
+- `test_max_duration_sends_bye_and_reason`
+- `test_call_timers_cleared_on_end`
+- `test_media_timeout_ignored_when_not_in_call`
+- `test_rtp_media_timeout_fires_without_rx`
+- `test_rtp_media_timeout_reset_on_rx`
+- `test_rtp_media_timeout_paused_on_hold`
+- `test_rtp_media_timeout_zero_disabled`
+- `test_rtp_media_timeout_cancelled_on_stop`
+- `test_rtp_cn_packet_resets_media_timeout`
+- `test_rtp_expect_rx_false_disables_watchdog`
+- `test_recvonly_peer_disables_media_watchdog`
+- `test_remote_reject_emits_reason`
+- `test_remote_cancel_emits_reason`
+- `test_ring_timeout_emits_reason`
 
 ---
 

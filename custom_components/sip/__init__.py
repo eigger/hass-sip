@@ -29,6 +29,10 @@ from .const import (
     CONF_USERNAME,
     CONF_OUTBOUND_PROXY,
     CONF_AUTH_USERNAME,
+    CONF_MEDIA_TIMEOUT,
+    CONF_MAX_CALL_DURATION,
+    DEFAULT_MEDIA_TIMEOUT,
+    DEFAULT_MAX_CALL_DURATION,
     DOMAIN,
     EVENT_SIP_CALL_CONNECTED,
     EVENT_SIP_CALL_ENDED,
@@ -171,6 +175,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         outbound_proxy=config.get(CONF_OUTBOUND_PROXY, ""),
         register_expiration=config.get(CONF_REGISTER_EXPIRATION, 300),
         local_rtp_port=config.get(CONF_LOCAL_RTP_PORT, 7078),
+        media_timeout=config.get(CONF_MEDIA_TIMEOUT, DEFAULT_MEDIA_TIMEOUT),
+        max_call_duration=config.get(CONF_MAX_CALL_DURATION, DEFAULT_MAX_CALL_DURATION),
     )
 
     # Load contacts asynchronously from file to avoid blocking event loop on startup
@@ -275,8 +281,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.async_create_task(ivr_session.start())
 
     @callback
-    def on_call_ended() -> None:
-        LOGGER.info("[%s] Call ended", sip_config.username)
+    def on_call_ended(reason: str = "local") -> None:
+        LOGGER.info("[%s] Call ended (%s)", sip_config.username, reason)
 
         # Save to call history log
         start_time = entry.runtime_data.get("call_start_time")
@@ -316,7 +322,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry.runtime_data["call_status"] = "missed"
             entry.runtime_data["call_number"] = ""
 
-        fire_sip_event(EVENT_SIP_CALL_ENDED)
+        fire_sip_event(EVENT_SIP_CALL_ENDED, {"reason": reason})
         nonlocal ivr_session, assist_bridge
         if ivr_session is not None:
             ivr_session.close()

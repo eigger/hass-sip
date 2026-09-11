@@ -1641,6 +1641,274 @@ def test_update_with_sdp_returns_answer():
     assert state == sip_client.SipState.IN_CALL
 
 
+# ---------------------------------------------- call end reasons (P0-3)
+def _bye_request(call_id="inbound@example"):
+    return sm.parse_sip_message(
+        "BYE sip:alice@example SIP/2.0\r\n"
+        "Via: SIP/2.0/UDP pbx.example;branch=z9hG4bKbye\r\n"
+        "From: <sip:bob@example>;tag=remote\r\n"
+        "To: <sip:alice@example>;tag=local\r\n"
+        f"Call-ID: {call_id}\r\n"
+        "CSeq: 2 BYE\r\n"
+        "Content-Length: 0\r\n\r\n"
+    )
+
+
+def test_local_hangup_emits_reason_and_bye():
+    if sip_client is None:
+        return
+
+    async def run():
+        client, _, _ = _inbound_in_call()
+        ended = []
+        client.cb.on_call_ended = ended.append
+        with patch.object(client, "_send_raw") as send:
+            client.hangup()
+            await asyncio.sleep(0)
+        return ended, [c.args[0] for c in send.call_args_list], client.state
+
+    ended, sent, state = asyncio.run(run())
+    assert ended == ["local"]
+    assert any(s.startswith("BYE ") for s in sent)
+    assert state == sip_client.SipState.IDLE
+
+
+def test_remote_bye_emits_reason():
+    if sip_client is None:
+        return
+
+    async def run():
+        client, orig, _ = _inbound_in_call()
+        ended = []
+        client.cb.on_call_ended = ended.append
+        with patch.object(client, "_send_raw") as send:
+            client._handle_request(_bye_request(orig.header("Call-ID")))
+            await asyncio.sleep(0)
+        return ended, [c.args[0] for c in send.call_args_list]
+
+    ended, sent = asyncio.run(run())
+    assert ended == ["remote_bye"]
+    assert sent and sent[0].startswith("SIP/2.0 200 OK")
+    assert not any(s.startswith("BYE ") for s in sent)
+
+
+def test_media_timeout_sends_bye_and_reason():
+    if sip_client is None:
+        return
+
+    async def run():
+        client, _, _ = _inbound_in_call()
+        ended = []
+        client.cb.on_call_ended = ended.append
+        with patch.object(client, "_send_raw") as send:
+            client._on_media_timeout()
+            await asyncio.sleep(0)
+        return ended, [c.args[0] for c in send.call_args_list], client.state
+
+    ended, sent, state = asyncio.run(run())
+    assert ended == ["media_timeout"]
+    assert any(s.startswith("BYE ") for s in sent)
+    assert state == sip_client.SipState.IDLE
+
+
+def test_max_duration_sends_bye_and_reason():
+    if sip_client is None:
+        return
+
+    async def run():
+        client, _, _ = _inbound_in_call()
+        ended = []
+        client.cb.on_call_ended = ended.append
+        client.config.max_call_duration = 0.05
+        client.state = sip_client.SipState.ANSWERING
+        with patch.object(client, "_send_raw") as send:
+            client._set_state(sip_client.SipState.IN_CALL)
+            await asyncio.sleep(0.12)
+            await asyncio.sleep(0)
+            sent = [c.args[0] for c in send.call_args_list]
+        return ended, sent, client._max_duration_handle, client.state
+
+    ended, sent, handle, state = asyncio.run(run())
+    assert ended == ["max_duration"]
+    assert any(s.startswith("BYE ") for s in sent)
+    assert handle is None
+    assert state == sip_client.SipState.IDLE
+
+
+def test_call_timers_cleared_on_end():
+    if sip_client is None:
+        return
+
+    async def run():
+        client, _, _ = _inbound_in_call()
+        client.config.max_call_duration = 3600
+        client.state = sip_client.SipState.ANSWERING
+        client._set_state(sip_client.SipState.IN_CALL)
+        armed = client._max_duration_handle is not None
+        with patch.object(client, "_send_raw"):
+            client._end_call("local")
+            await asyncio.sleep(0)
+        return armed, client._max_duration_handle
+
+    armed, handle = asyncio.run(run())
+    assert armed is True
+    assert handle is None
+
+
+def test_media_timeout_ignored_when_not_in_call():
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        ended = []
+        client.cb.on_call_ended = ended.append
+        with patch.object(client, "_send_raw") as send:
+            client._on_media_timeout()
+        return ended, send.call_count
+
+    ended, sends = asyncio.run(run())
+    assert ended == []
+    assert sends == 0
+
+
+def test_remote_reject_emits_reason():
+    if sip_client is None:
+        return
+
+    async def run():
+        ended = []
+        client = sip_client.SipClient(
+            sip_client.SipConfig(server="pbx.example"),
+            sip_client.SipCallbacks(on_call_ended=ended.append),
+        )
+        client._local_ip = "192.0.2.1"
+        client._local_port = 5060
+        client._outbound = True
+        client._d_call_id = "out@example"
+        client._invite_cseq = 1
+        client._d_cseq = 1
+        client._d_remote_target = "sip:bob@example"
+        client.registered = True
+        client.state = sip_client.SipState.RINGING_OUT
+        busy = sm.parse_sip_message(
+            "SIP/2.0 486 Busy Here\r\n"
+            "Via: SIP/2.0/UDP 192.0.2.1;branch=z9hG4bKx\r\n"
+            "From: <sip:alice@example>;tag=local\r\n"
+            "To: <sip:bob@example>;tag=remote\r\n"
+            "Call-ID: out@example\r\n"
+            "CSeq: 1 INVITE\r\n"
+            "Content-Length: 0\r\n\r\n"
+        )
+        with patch.object(client, "_send_raw") as send:
+            client._handle_invite_response(busy)
+            await asyncio.sleep(0)
+        return ended, [c.args[0] for c in send.call_args_list], client.state
+
+    ended, sent, state = asyncio.run(run())
+    assert ended == ["remote_reject"]
+    assert sent and sent[0].startswith("ACK ")
+    assert state == sip_client.SipState.REGISTERED
+
+
+def test_remote_cancel_emits_reason():
+    if sip_client is None:
+        return
+
+    async def run():
+        ended = []
+        client = sip_client.SipClient(
+            sip_client.SipConfig(server="pbx.example"),
+            sip_client.SipCallbacks(on_call_ended=ended.append),
+        )
+        client.registered = True
+        client.state = sip_client.SipState.REGISTERED
+        client._local_ip = "192.0.2.1"
+        invite = _invite_request()
+        cancel = sm.parse_sip_message(
+            "CANCEL sip:alice@example SIP/2.0\r\n"
+            "Via: SIP/2.0/UDP pbx.example;branch=z9hG4bKorig\r\n"
+            "From: <sip:bob@example>;tag=remote\r\n"
+            "To: <sip:alice@example>\r\n"
+            "Call-ID: dlg@example\r\n"
+            "CSeq: 1 CANCEL\r\n"
+            "Content-Length: 0\r\n\r\n"
+        )
+        with patch.object(client, "_send_raw"):
+            client._handle_request(invite)
+            client._handle_request(cancel)
+            await asyncio.sleep(0)
+        return ended, client.state
+
+    ended, state = asyncio.run(run())
+    assert ended == ["remote_cancel"]
+    assert state == sip_client.SipState.REGISTERED
+
+
+def test_ring_timeout_emits_reason():
+    if sip_client is None:
+        return
+
+    async def run():
+        ended = []
+        client = sip_client.SipClient(
+            sip_client.SipConfig(server="pbx.example"),
+            sip_client.SipCallbacks(on_call_ended=ended.append),
+        )
+        client._local_ip = "192.0.2.1"
+        client._local_port = 5060
+        client._outbound = True
+        client._d_call_id = "out@example"
+        client._d_local = "<sip:alice@example>;tag=local"
+        client._d_remote = "<sip:bob@example>"
+        client._d_remote_target = "sip:bob@example"
+        client._d_branch = "z9hG4bKinvite"
+        client._invite_cseq = 1
+        client.registered = True
+        client.state = sip_client.SipState.RINGING_OUT
+        with patch.object(client, "_send_raw") as send:
+            client._handle_ring_timeout()
+            await asyncio.sleep(0)
+        return ended, [c.args[0] for c in send.call_args_list], client.state
+
+    ended, sent, state = asyncio.run(run())
+    assert ended == ["ring_timeout"]
+    assert any(s.startswith("CANCEL ") for s in sent)
+    assert state == sip_client.SipState.REGISTERED
+
+
+def test_recvonly_peer_disables_media_watchdog():
+    if sip_client is None:
+        return
+
+    async def run():
+        client, _, _ = _inbound_in_call()
+        ended = []
+        client.cb.on_call_ended = ended.append
+        sdp = sm.parse_sdp(
+            "v=0\r\nc=IN IP4 203.0.113.8\r\nm=audio 5004 RTP/AVP 0\r\na=recvonly\r\n"
+        )
+        client._apply_remote_sdp(sdp)
+        direction = client._local_direction
+        expect_rx = client.rtp.expect_rx
+        held = client.rtp.tx_enabled
+        fired = []
+        client.rtp.on_media_timeout = lambda: fired.append(True)
+        await _start_rtp_for_timeout(client.rtp, 0.05)
+        await asyncio.sleep(0.12)
+        handle = client.rtp._media_timeout_handle
+        await client.rtp.stop()
+        return direction, expect_rx, held, fired, handle, ended
+
+    direction, expect_rx, held, fired, handle, ended = asyncio.run(run())
+    assert direction == "sendonly"
+    assert expect_rx is False
+    assert held is True
+    assert fired == []
+    assert handle is None
+    assert ended == []
+
+
 # ------------------------------------------------------- RFC 2833 RX
 def _te_packet(pt, marker, timestamp, event, seq=1):
     """Build one telephone-event RTP packet."""
@@ -1986,6 +2254,146 @@ def test_rtp_current_source_resets_candidate():
     assert after_peer == (("192.168.1.10", 10000), 0)
     assert still_sdp == ("192.168.1.10", 10000)
     assert remote == ("203.0.113.8", 20000)
+
+
+# ---------------------------------------------- RTP media timeout (P0-3)
+async def _start_rtp_for_timeout(session, timeout):
+    session.media_timeout = timeout
+    transport = MagicMock()
+    with patch.object(
+        session._loop,
+        "create_datagram_endpoint",
+        new=AsyncMock(return_value=(transport, MagicMock())),
+    ):
+        assert await session.start(4000)
+    return session
+
+
+def test_rtp_media_timeout_fires_without_rx():
+    async def run():
+        session = rtp_session.RtpSession()
+        fired = []
+        session.on_media_timeout = lambda: fired.append(True)
+        await _start_rtp_for_timeout(session, 0.05)
+        await asyncio.sleep(0.12)
+        handle = session._media_timeout_handle
+        await session.stop()
+        return fired, handle
+
+    fired, handle = asyncio.run(run())
+    assert fired == [True]
+    assert handle is None
+
+
+def test_rtp_media_timeout_reset_on_rx():
+    async def run():
+        session = rtp_session.RtpSession()
+        fired = []
+        session.on_media_timeout = lambda: fired.append(True)
+        await _start_rtp_for_timeout(session, 0.12)
+        await asyncio.sleep(0.05)
+        session._receive_impl(_pcmu_packet(), ("203.0.113.8", 20000))
+        await asyncio.sleep(0.05)
+        mid = list(fired)
+        await asyncio.sleep(0.12)
+        await session.stop()
+        return mid, fired
+
+    mid, fired = asyncio.run(run())
+    assert mid == []
+    assert fired == [True]
+
+
+def test_rtp_media_timeout_paused_on_hold():
+    async def run():
+        session = rtp_session.RtpSession()
+        fired = []
+        session.on_media_timeout = lambda: fired.append(True)
+        await _start_rtp_for_timeout(session, 0.05)
+        session.set_tx_enabled(False)
+        await asyncio.sleep(0.12)
+        held = list(fired)
+        session.set_tx_enabled(True)
+        await asyncio.sleep(0.12)
+        await session.stop()
+        return held, fired
+
+    held, fired = asyncio.run(run())
+    assert held == []
+    assert fired == [True]
+
+
+def test_rtp_media_timeout_zero_disabled():
+    async def run():
+        session = rtp_session.RtpSession()
+        fired = []
+        session.on_media_timeout = lambda: fired.append(True)
+        await _start_rtp_for_timeout(session, 0)
+        await asyncio.sleep(0.05)
+        handle = session._media_timeout_handle
+        await session.stop()
+        return fired, handle
+
+    fired, handle = asyncio.run(run())
+    assert fired == []
+    assert handle is None
+
+
+def test_rtp_media_timeout_cancelled_on_stop():
+    async def run():
+        session = rtp_session.RtpSession()
+        fired = []
+        session.on_media_timeout = lambda: fired.append(True)
+        await _start_rtp_for_timeout(session, 0.2)
+        await session.stop()
+        await asyncio.sleep(0.05)
+        return fired, session._media_timeout_handle
+
+    fired, handle = asyncio.run(run())
+    assert fired == []
+    assert handle is None
+
+
+def test_rtp_cn_packet_resets_media_timeout():
+    # VAD/silence-suppression peers send PT 13 CN instead of PCMU during quiet.
+    async def run():
+        session = rtp_session.RtpSession()
+        fired = []
+        session.on_media_timeout = lambda: fired.append(True)
+        await _start_rtp_for_timeout(session, 0.12)
+        await asyncio.sleep(0.05)
+        cn = bytes([0x80, 13]) + struct.pack("!HII", 1, 100, 0x1234) + b"\x7f"
+        session._receive_impl(cn, ("203.0.113.8", 20000))
+        await asyncio.sleep(0.05)
+        mid = list(fired)
+        latched = session._latch_count
+        await asyncio.sleep(0.12)
+        await session.stop()
+        return mid, fired, latched
+
+    mid, fired, latched = asyncio.run(run())
+    assert mid == []
+    assert fired == [True]
+    assert latched == 0
+
+
+def test_rtp_expect_rx_false_disables_watchdog():
+    async def run():
+        session = rtp_session.RtpSession()
+        fired = []
+        session.on_media_timeout = lambda: fired.append(True)
+        await _start_rtp_for_timeout(session, 0.05)
+        session.set_expect_rx(False)
+        await asyncio.sleep(0.12)
+        held = list(fired)
+        session.set_expect_rx(True)
+        await asyncio.sleep(0.12)
+        await session.stop()
+        return held, fired
+
+    held, fired = asyncio.run(run())
+    assert held == []
+    assert fired == [True]
 
 
 # ---------------------------------------------- rate-aware RTP (Stage 2)
@@ -3858,6 +4266,11 @@ def test_build_schema_new_entry_has_no_prefilled_values():
         markers["register_expiration"].default()
         == config_flow.DEFAULT_REGISTER_EXPIRATION
     )
+    assert markers["media_timeout"].default() == config_flow.DEFAULT_MEDIA_TIMEOUT
+    assert (
+        markers["max_call_duration"].default()
+        == config_flow.DEFAULT_MAX_CALL_DURATION
+    )
 
 
 def test_build_schema_reconfigure_prefills_current_entry_values():
@@ -3879,6 +4292,11 @@ def test_build_schema_reconfigure_prefills_current_entry_values():
     assert markers["caller_id"].default() == "Front Desk"
     assert markers["register_expiration"].default() == 600
     assert markers["local_rtp_port"].default() == 7080
+    assert markers["media_timeout"].default() == config_flow.DEFAULT_MEDIA_TIMEOUT
+    assert (
+        markers["max_call_duration"].default()
+        == config_flow.DEFAULT_MAX_CALL_DURATION
+    )
     # Fields never set on the original entry stay untouched (no forced "").
     assert markers["domain"].default is vol.UNDEFINED
     assert markers["authentication_username"].default is vol.UNDEFINED
