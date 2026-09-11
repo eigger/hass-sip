@@ -14,6 +14,7 @@ from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.service import async_extract_config_entry_ids
 
@@ -52,6 +53,11 @@ from .recording import (
     is_allowed_recording_path,
     recording_allow_roots,
     resolve_recording_path,
+)
+from .repairs import (
+    is_register_auth_failure,
+    register_auth_issue_id,
+    should_open_auth_repair,
 )
 from .sip_client.audio import FfmpegAudioSource
 from .sip_client.sip_client import SipCallbacks, SipClient, SipConfig, SipState
@@ -262,6 +268,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.runtime_data["registered"] = True
         entry.runtime_data["last_register_failed"] = None
         entry.runtime_data["last_registered_at"] = time.time()
+        ir.async_delete_issue(
+            hass, DOMAIN, register_auth_issue_id(entry.entry_id)
+        )
         async_dispatcher_send(hass, f"{DOMAIN}_state_update_{entry.entry_id}")
         fire_sip_event(EVENT_SIP_REGISTERED)
 
@@ -270,6 +279,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         LOGGER.warning("[%s] SIP registration failed: %s", sip_config.username, reason)
         entry.runtime_data["registered"] = False
         entry.runtime_data["last_register_failed"] = reason
+        if is_register_auth_failure(reason) and should_open_auth_repair(
+            client.register_auth_failures
+        ):
+            ir.async_create_issue(
+                hass,
+                DOMAIN,
+                register_auth_issue_id(entry.entry_id),
+                is_fixable=False,
+                severity=ir.IssueSeverity.ERROR,
+                translation_key="register_auth_failed",
+                translation_placeholders={
+                    "username": sip_config.username,
+                    "server": sip_config.server,
+                    "reason": reason,
+                },
+            )
         async_dispatcher_send(hass, f"{DOMAIN}_state_update_{entry.entry_id}")
 
     @callback
@@ -586,6 +611,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         set_assist = entry_data.get("set_assist")
         if set_assist:
             set_assist(None)
+        ir.async_delete_issue(
+            hass, DOMAIN, register_auth_issue_id(entry.entry_id)
+        )
 
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 

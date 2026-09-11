@@ -273,5 +273,11 @@
         }
       }
     }
+  },
+  "issues": {
+    "register_auth_failed": {
+      "title": "SIP 등록이 거부되었습니다",
+      "description": "`{server}` 가 `{username}` 등록을 거부했습니다 ({reason}). 통합 설정에서 사용자명과 비밀번호를 확인하세요. 재시도 간격은 자동으로 늘어나 서버가 이 IP를 차단하지 않습니다."
+    }
   }
 }

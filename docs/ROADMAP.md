@@ -374,7 +374,7 @@ ruff check custom_components/     # 린트
    - 등록 만료 전 갱신이 `register_expiration/2` 시점에 발생
    - 통화 중에는 갱신이 미뤄지고(`_register_tick`의 IN_CALL 분기) 통화 종료 후 재개
    - PBX 재시작(소켓 닫힘 → 재개) 후 자동 복구
-   - 403 무한 재시도가 백오프된다 (P2-4 이후 활성화)
+   - 403 재시도가 지수 백오프되고 30분에 상한 (P2-4)
 3. 타이머 대기를 실시간으로 하지 않는다. `loop.call_later`를 patch하거나
    `register_expiration`을 작게 잡아 테스트 시간을 초 단위로 유지한다.
 
@@ -560,16 +560,23 @@ media_player 속성: `call_duration`, `audio_path`, `bytes_received`, `bytes_sen
 
 ---
 
-### [ ] P2-4. 등록 실패 백오프
+### [x] P2-4. 등록 실패 백오프
 
 **근거** §1.3-8. 403 무한 10초 재시도 → fail2ban IP 차단.
 
-**작업** `_handle_register_response`(:472) 실패 분기에 지수 백오프를 넣는다.
-인증 실패(401/403 반복, 407)는 별도로 더 공격적으로 백오프하고 상한(예: 30분)을 둔다.
-연속 인증 실패 시 HA `repairs` 이슈를 띄워 사용자가 크리덴셜을 고치도록 유도한다.
+**작업** `_handle_register_response` 실패 분기에 지수 백오프를 넣는다.
+인증 실패(401/403 반복, 407)는 ×3으로 더 공격적으로 백오프하고 상한 30분을 둔다.
+기타 실패는 ×2, 상한 5분. 연속 인증 실패 3회 시 HA `repairs` 이슈를 띄운다.
+성공 시 간격과 이슈가 초기화된다.
 
 **수용 기준** 403 연속 수신 시 재시도 간격이 증가하고 상한에서 멈춘다(테스트).
 성공 시 간격이 초기화된다.
+
+**추가된 테스트**
+- `test_register_403_exponential_backoff_caps_and_resets`
+- `test_register_500_backoff_is_slower_than_auth`
+- `test_register_401_challenge_does_not_count_as_failure`
+- `test_auth_repair_opens_after_three_failures`
 
 ---
 
