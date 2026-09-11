@@ -137,7 +137,7 @@ The session ends when:
 - `contacts_only` *(Optional)*: Only callers listed in `sip_contacts.json` may start Assist (default: `false`). Combined with `allowed_callers`, the caller must match **both**.
 - `pin` *(Optional)*: DTMF PIN collected before Assist starts. The caller enters the digits and either presses `#` or matches the PIN length (15 s timeout). Failed, hung-up, or timed-out attempts fire `sip_assist_rejected` and do **not** run intents. While the PIN is collected, digits are not logged and `sip_dtmf_digit` is not fired, so the PIN cannot be reconstructed from Logbook or automations.
 
-> **Caller ID can be spoofed.** An allow-list alone is not a security boundary. For door-lock or other security intents, use **allow-list + PIN + a dedicated Assist pipeline** that only exposes those intents. IVR `assist: true` does not use this gate — give that menu its own PIN if needed.
+> **Caller ID can be spoofed.** An allow-list alone is not a security boundary. For door-lock or other security intents, use **allow-list + PIN + a dedicated Assist pipeline** that only exposes those intents. IVR `assist: true` does not use this gate — give that menu its own PIN if needed. SIP INFO DTMF digits can still appear in DEBUG logs and opt-in SIP traces (`Signal=` in INFO bodies); do not attach those logs to an issue if a PIN was entered.
 
 ```yaml
   - service: sip.start_assist
@@ -708,4 +708,4 @@ action:
       custom_components.sip.sip_client.trace: debug
   ```
 
-  `Authorization` / `Proxy-Authorization` values (`response`, `nonce`, `cnonce`) are masked as `****`. RTP is summarised (packet counts, payload type, estimated loss, latched address), not logged packet-by-packet. That YAML logger is the narrow switch; the integration's **Enable debug logging** button also turns this on, because it sets `custom_components.sip` (and therefore this child logger) to DEBUG — credentials stay masked, but phone numbers and SDP will be in the log you download for an issue. Turn the logger back to `info` when you are done.
+  `Authorization` / `Proxy-Authorization` values (`response`, `nonce`, `cnonce`) are masked as `****`. RTP is summarised (packet counts, payload type, estimated loss, latched address), not logged packet-by-packet. That YAML logger is the narrow switch; the integration's **Enable debug logging** button also turns this on, because it sets `custom_components.sip` (and therefore this child logger) to DEBUG — credentials stay masked, but phone numbers, SDP, and SIP INFO DTMF digits (including an Assist PIN) will be in the log you download for an issue. Turn the logger back to `info` when you are done.

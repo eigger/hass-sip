@@ -2,24 +2,21 @@
 from __future__ import annotations
 
 import asyncio
-import re
 
 REASON_NOT_ALLOWED = "not_allowed"
 REASON_PIN_MISMATCH = "pin_mismatch"
 REASON_PIN_TIMEOUT = "pin_timeout"
 
 _PIN_WAIT_SECONDS = 15.0
-_PHONE_USER = re.compile(r"^\+?[\d*#]+$")
 
 
 def normalize_caller(value: str) -> str:
     """Return a comparable caller identity (SIP URI user-part or extension).
 
-    Phone-like user parts (optional ``+``, then digits / ``*`` / ``#``) are
-    compared after stripping spaces and dashes. Alphanumeric extensions
-    (``doorbird1``, ``kitchen1``, ``cam2``) keep the full lowercased user-part
-    so a shared trailing digit cannot collapse distinct names onto one allow
-    list entry.
+    Strips SIP wrapping, spaces, and dashes, then lowercases the user-part.
+    Phone numbers stay numbers (``100``, ``+821012345678``). Alphanumeric
+    extensions (``doorbird1``, ``kitchen1``, ``cam2``) keep the full name so a
+    shared trailing digit cannot collapse distinct identities.
     """
     raw = (value or "").strip()
     if raw.startswith("<") and raw.endswith(">"):
@@ -31,10 +28,7 @@ def normalize_caller(value: str) -> str:
         raw = raw[5:]
     if "@" in raw:
         raw = raw.split("@", 1)[0]
-    ident = raw.replace(" ", "").replace("-", "").lower()
-    if _PHONE_USER.fullmatch(ident):
-        return ident
-    return ident
+    return raw.replace(" ", "").replace("-", "").lower()
 
 
 def caller_is_allowed(
