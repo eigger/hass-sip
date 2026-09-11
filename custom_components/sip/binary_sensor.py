@@ -1,6 +1,7 @@
 """Binary sensor platforms for the SIP Client integration."""
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from homeassistant.components.binary_sensor import BinarySensorEntity
@@ -11,6 +12,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .helpers import build_device_info
+from .media_status import media_view
 from .sip_client.sip_client import SipClient, SipState
 
 
@@ -24,6 +26,7 @@ async def async_setup_entry(
 
     binary_sensors = [
         SipCallActiveSensor(entry, entry_data),
+        SipAudioBidirectionalSensor(entry, entry_data),
     ]
 
     async_add_entities(binary_sensors)
@@ -80,4 +83,48 @@ class SipCallActiveSensor(BinarySensorEntity):
             "sip_state": str(state),
             "in_call": self._client.in_call,
             "username": self._config.username,
+        }
+
+
+class SipAudioBidirectionalSensor(BinarySensorEntity):
+    """On when the last/current call had audio in both directions."""
+
+    _attr_icon = "mdi:ear-hearing"
+    _attr_has_entity_name = True
+
+    def __init__(self, entry: ConfigEntry, entry_data: dict[str, Any]) -> None:
+        self.entry = entry
+        self.entry_data = entry_data
+        self._client: SipClient = entry_data["client"]
+        self._config = entry_data["config"]
+        self._attr_unique_id = f"{entry.entry_id}_audio_bidirectional"
+        self._attr_translation_key = "audio_bidirectional"
+        self._attr_device_info = build_device_info(entry, self._config)
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                f"{DOMAIN}_state_update_{self.entry.entry_id}",
+                self._update_callback,
+            )
+        )
+
+    @callback
+    def _update_callback(self) -> None:
+        self.async_write_ha_state()
+
+    @property
+    def is_on(self) -> bool:
+        return bool(
+            media_view(self._client, self.entry_data, time.time())["audio_confirmed"]
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        view = media_view(self._client, self.entry_data, time.time())
+        return {
+            "audio_path": view["audio_path"],
+            "bytes_received": view["bytes_received"],
+            "bytes_sent": view["bytes_sent"],
         }

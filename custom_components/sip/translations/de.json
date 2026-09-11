@@ -65,11 +65,29 @@
           "incoming": "Eingehend",
           "outgoing": "Ausgehend"
         }
+      },
+      "negotiated_codec": {
+        "name": "Verhandelter Codec"
+      },
+      "call_audio": {
+        "name": "Anruf-Audio",
+        "state": {
+          "none": "Kein Medium",
+          "no_rx": "Kein Empfang (einseitig)",
+          "no_tx": "Kein Senden (einseitig)",
+          "bidirectional": "Bidirektional"
+        }
+      },
+      "last_call_reason": {
+        "name": "Letzter Auflegegrund"
       }
     },
     "binary_sensor": {
       "call_active": {
         "name": "Anruf aktiv"
+      },
+      "audio_bidirectional": {
+        "name": "Bidirektionales Audio"
       }
     },
     "switch": {

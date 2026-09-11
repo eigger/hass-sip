@@ -65,11 +65,29 @@
           "incoming": "수신",
           "outgoing": "발신"
         }
+      },
+      "negotiated_codec": {
+        "name": "협상 코덱"
+      },
+      "call_audio": {
+        "name": "통화 음성",
+        "state": {
+          "none": "미디어 없음",
+          "no_rx": "수신 없음 (편도)",
+          "no_tx": "송신 없음 (편도)",
+          "bidirectional": "양방향"
+        }
+      },
+      "last_call_reason": {
+        "name": "최근 통화 종료 사유"
       }
     },
     "binary_sensor": {
       "call_active": {
         "name": "통화 활성화"
+      },
+      "audio_bidirectional": {
+        "name": "양방향 음성"
       }
     },
     "switch": {

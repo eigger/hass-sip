@@ -65,11 +65,29 @@
           "incoming": "Incoming",
           "outgoing": "Outgoing"
         }
+      },
+      "negotiated_codec": {
+        "name": "Negotiated Codec"
+      },
+      "call_audio": {
+        "name": "Call Audio",
+        "state": {
+          "none": "No media",
+          "no_rx": "No receive (one-way)",
+          "no_tx": "No send (one-way)",
+          "bidirectional": "Bidirectional"
+        }
+      },
+      "last_call_reason": {
+        "name": "Last Call Reason"
       }
     },
     "binary_sensor": {
       "call_active": {
         "name": "Call Active"
+      },
+      "audio_bidirectional": {
+        "name": "Bidirectional Audio"
       }
     },
     "switch": {

@@ -1,6 +1,7 @@
 """Media Player platform for SIP Client integration."""
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from homeassistant.components import media_source
@@ -20,6 +21,7 @@ from homeassistant.helpers.network import get_url
 
 from .const import DOMAIN, LOGGER
 from .helpers import build_device_info, get_ffmpeg_bin
+from .media_status import media_view
 from .sip_client.audio import FfmpegAudioSource
 from .sip_client.sip_client import SipClient, SipState
 
@@ -130,11 +132,18 @@ class SipMediaPlayer(MediaPlayerEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Expose call details for dashboards/automations."""
         state = self.entry_data.get("state", SipState.IDLE)
+        view = media_view(self._client, self.entry_data, time.time())
         return {
             "sip_state": str(state),
             "remote_party": self.entry_data.get("call_number") or "",
             "remote_name": self.entry_data.get("last_caller") or "",
             "call_direction": self.entry_data.get("call_direction"),
+            "call_duration": view["call_duration"],
+            "codec": view["codec"],
+            "bytes_received": view["bytes_received"],
+            "bytes_sent": view["bytes_sent"],
+            "audio_path": view["audio_path"],
+            "last_end_reason": view["last_end_reason"],
         }
 
     # -- controls -------------------------------------------------------
