@@ -273,5 +273,11 @@
         }
       }
     }
+  },
+  "issues": {
+    "register_auth_failed": {
+      "title": "SIP registration was rejected",
+      "description": "The SIP server at `{server}` rejected registration for `{username}` ({reason}). Check the username and password in the integration settings. Retries slow down automatically so the server does not block this IP."
+    }
   }
 }

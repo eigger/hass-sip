@@ -10,7 +10,7 @@ import asyncio
 from unittest.mock import AsyncMock, patch
 
 from mock_pbx import MockPbx
-from test_pure import sip_client
+from test_pure import _load_component_module, sip_client, sm
 
 if sip_client is None:  # enum.StrEnum needs Python 3.11+
     def _skip():
@@ -306,7 +306,7 @@ def test_register_recovers_after_pbx_restart():
 
 
 def test_register_403_retries_without_reconnect():
-    """403 currently retries at 10s without reconnect; exponential backoff is P2-4."""
+    """403 retries with backoff and does not reconnect the socket."""
     if _skip():
         return
 
@@ -342,8 +342,141 @@ def test_register_403_retries_without_reconnect():
     registered, failed, delays, reconnects = asyncio.run(run())
     assert registered == []
     assert failed and failed[0].startswith("403")
-    assert delays[-1] == 10
+    assert delays[-1] == sip_client.REGISTER_RETRY_MIN
     assert reconnects == []
+
+
+def _reg_response(code: int, reason: str, cseq: int = 1):
+    return sm.parse_sip_message(
+        f"SIP/2.0 {code} {reason}\r\nCSeq: {cseq} REGISTER\r\n\r\n"
+    )
+
+
+def test_register_403_exponential_backoff_caps_and_resets():
+    """Consecutive 403s grow ×3 to 30 min; a 200 OK resets the interval."""
+    if _skip():
+        return
+
+    async def run():
+        delays: list[float] = []
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client._schedule_register = delays.append
+        client._reg_cseq = 1
+        expected: list[float] = []
+        delay = sip_client.REGISTER_RETRY_MIN
+        for _ in range(8):
+            expected.append(delay)
+            client._handle_register_response(_reg_response(403, "Forbidden"))
+            delay = min(delay * 3, sip_client.REGISTER_AUTH_RETRY_MAX)
+        after_fail = (
+            list(delays),
+            client.register_auth_failures,
+            client._register_backoff,
+        )
+        client._handle_register_response(_reg_response(200, "OK"))
+        return after_fail + (
+            expected,
+            client._register_backoff,
+            client.register_auth_failures,
+            delays[-1],
+        )
+
+    (
+        fail_delays,
+        auth_fails,
+        next_backoff,
+        expected,
+        reset_backoff,
+        reset_fails,
+        last_delay,
+    ) = asyncio.run(run())
+    assert fail_delays == expected
+    assert fail_delays[0] == sip_client.REGISTER_RETRY_MIN
+    assert fail_delays[-1] == sip_client.REGISTER_AUTH_RETRY_MAX
+    assert auth_fails == 8
+    assert next_backoff == sip_client.REGISTER_AUTH_RETRY_MAX
+    assert reset_backoff == sip_client.REGISTER_RETRY_MIN
+    assert reset_fails == 0
+    assert last_delay == max(300 // 2, 30)
+
+
+def test_register_500_backoff_is_slower_than_auth():
+    if _skip():
+        return
+
+    async def run():
+        delays: list[float] = []
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client._schedule_register = delays.append
+        client._reg_cseq = 1
+        for _ in range(8):
+            client._handle_register_response(_reg_response(500, "Server Error"))
+        return delays, client.register_auth_failures, client._register_backoff
+
+    delays, auth_fails, backoff = asyncio.run(run())
+    assert delays[0] == sip_client.REGISTER_RETRY_MIN
+    assert delays[1] == 20
+    assert delays[-1] == sip_client.REGISTER_RETRY_MAX
+    assert auth_fails == 0
+    assert backoff == sip_client.REGISTER_RETRY_MAX
+
+
+def test_register_401_challenge_does_not_count_as_failure():
+    """First 401/407 is a digest challenge, not a failed register."""
+    if _skip():
+        return
+
+    async def run():
+        sent: list[str] = []
+        delays: list[float] = []
+        failed: list[str] = []
+        client = sip_client.SipClient(
+            sip_client.SipConfig(server="pbx.example", password="secret"),
+            sip_client.SipCallbacks(on_register_failed=failed.append),
+        )
+        client._send_raw = sent.append
+        client._schedule_register = delays.append
+        client._reg_cseq = 1
+        client._handle_register_response(
+            sm.parse_sip_message(
+                "SIP/2.0 401 Unauthorized\r\n"
+                "CSeq: 1 REGISTER\r\n"
+                'WWW-Authenticate: Digest realm="ex", nonce="n", algorithm=MD5\r\n'
+                "\r\n"
+            )
+        )
+        after_challenge = (list(failed), list(delays), client.register_auth_failures)
+        client._handle_register_response(
+            _reg_response(401, "Unauthorized", client._reg_cseq)
+        )
+        return after_challenge + (list(failed), list(delays), client.register_auth_failures)
+
+    (
+        failed1,
+        delays1,
+        auth1,
+        failed2,
+        delays2,
+        auth2,
+    ) = asyncio.run(run())
+    assert failed1 == []
+    assert delays1 == []
+    assert auth1 == 0
+    assert failed2 == ["401 Unauthorized"]
+    assert delays2 == [sip_client.REGISTER_RETRY_MIN]
+    assert auth2 == 1
+
+
+def test_auth_repair_opens_after_three_failures():
+    repairs = _load_component_module("repairs")
+    assert repairs.is_register_auth_failure("403 Forbidden") is True
+    assert repairs.is_register_auth_failure("401 Unauthorized") is True
+    assert repairs.is_register_auth_failure("407 Proxy Authentication Required") is True
+    assert repairs.is_register_auth_failure("500 Server Error") is False
+    assert repairs.is_register_auth_failure("Connection failed") is False
+    assert repairs.should_open_auth_repair(2) is False
+    assert repairs.should_open_auth_repair(3) is True
+    assert repairs.register_auth_issue_id("abc") == "register_auth_failed_abc"
 
 
 def test_harness_reinvite_answers_with_new_transaction():

@@ -273,5 +273,11 @@
         }
       }
     }
+  },
+  "issues": {
+    "register_auth_failed": {
+      "title": "SIP-Registrierung wurde abgelehnt",
+      "description": "Der SIP-Server `{server}` hat die Registrierung für `{username}` abgelehnt ({reason}). Benutzername und Passwort in den Integrationseinstellungen prüfen. Wiederholungen werden automatisch verlangsamt, damit der Server diese IP nicht sperrt."
+    }
   }
 }

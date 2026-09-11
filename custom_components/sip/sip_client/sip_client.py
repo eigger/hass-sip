@@ -25,6 +25,13 @@ from .sip_auth import digest_response
 _LOGGER = logging.getLogger(__name__)
 USER_AGENT = "HomeAssistant-sip_client"
 
+# REGISTER retry: start at 10 s. Non-auth doubles to 5 min; 401/403/407
+# triples to 30 min so a bad password cannot trip fail2ban.
+REGISTER_RETRY_MIN = 10.0
+REGISTER_RETRY_MAX = 300.0
+REGISTER_AUTH_RETRY_MAX = 1800.0
+REGISTER_AUTH_CODES = frozenset({401, 403, 407})
+
 
 class SipState(enum.StrEnum):
     IDLE = "idle"
@@ -243,6 +250,8 @@ class SipClient:
         self._remote_offered_names: list[str] = []
         self._register_handle: asyncio.TimerHandle | None = None
         self._reg_attempts = 0
+        self._register_backoff = REGISTER_RETRY_MIN
+        self._register_auth_failures = 0
 
         # registration transaction
         self._reg_call_id = ""
@@ -313,6 +322,11 @@ class SipClient:
     @property
     def media_playing(self) -> bool:
         return self._tx_source_task is not None and not self._tx_source_task.done()
+
+    @property
+    def register_auth_failures(self) -> int:
+        """Consecutive 401/403/407 REGISTER failures since the last success."""
+        return self._register_auth_failures
 
     def add_sink(self, sink: AudioSink) -> None:
         """Register an RX listener without replacing the others."""
@@ -627,12 +641,10 @@ class SipClient:
                 min_expires,
                 self.config.register_expiration,
             )
-            self.registered = False
-            self._reg_attempts = 0
-            self._register_failed(
-                f"423 Interval Too Brief (Min-Expires={min_expires})"
+            self._retry_after_register_failure(
+                423,
+                f"423 Interval Too Brief (Min-Expires={min_expires})",
             )
-            self._schedule_register(10)
             return
         if 200 <= m.status_code < 300:
             was = self.registered
@@ -640,6 +652,8 @@ class SipClient:
             self.last_register_failed = None
             self.last_registered_at = time.time()
             self._reg_attempts = 0
+            self._register_backoff = REGISTER_RETRY_MIN
+            self._register_auth_failures = 0
             self._set_state(SipState.REGISTERED)
             self._schedule_register(max(self.config.register_expiration // 2, 30))
             if sr := m.header("Service-Route"):
@@ -649,11 +663,36 @@ class SipClient:
                 self._emit("on_registered")
             return
         _LOGGER.warning("REGISTER failed: %s %s", m.status_code, m.reason)
+        self._retry_after_register_failure(
+            m.status_code, f"{m.status_code} {m.reason}"
+        )
+
+    def _retry_after_register_failure(self, status: int, reason: str) -> None:
+        """Schedule the next REGISTER with exponential backoff.
+
+        Auth rejections grow faster (×3, cap 30 min) so a wrong password
+        cannot hammer the registrar. Other failures double up to 5 min.
+        """
+        auth = status in REGISTER_AUTH_CODES
+        delay = self._register_backoff
+        if auth:
+            self._register_auth_failures += 1
+            cap = REGISTER_AUTH_RETRY_MAX
+            factor = 3.0
+        else:
+            cap = REGISTER_RETRY_MAX
+            factor = 2.0
+        self._register_backoff = min(delay * factor, cap)
         self.registered = False
-        # The server responded, so the socket is alive: gentle retry, no reconnect.
         self._reg_attempts = 0
-        self._register_failed(f"{m.status_code} {m.reason}")
-        self._schedule_register(10)
+        self._register_failed(reason)
+        self._schedule_register(delay)
+        _LOGGER.info(
+            "REGISTER retry in %.0fs (next %.0fs, auth_failures=%s)",
+            delay,
+            self._register_backoff,
+            self._register_auth_failures,
+        )
 
     def _register_failed(self, reason: str) -> None:
         self.last_register_failed = reason
