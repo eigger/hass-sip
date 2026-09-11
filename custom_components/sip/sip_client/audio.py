@@ -21,6 +21,7 @@ import struct
 import threading
 import wave
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterable
 from typing import Callable
 
 _LOGGER = logging.getLogger(__name__)
@@ -275,6 +276,10 @@ class FfmpegAudioSource(_ConfiguredPcmSource):
 
     ``sample_rate`` / ``pcm_frame_bytes`` default to G.711 (8 kHz / 320 B). Call
     :meth:`configure` after negotiation when a different rate is active.
+
+    Provide exactly one of ``url``, ``data``, or ``chunks``. ``chunks`` is the
+    streaming-stdin mode: bytes are written to ffmpeg as they arrive so the
+    first PCM can leave before the producer has finished.
     """
 
     def __init__(
@@ -283,18 +288,22 @@ class FfmpegAudioSource(_ConfiguredPcmSource):
         *,
         url: str | None = None,
         data: bytes | None = None,
+        chunks: AsyncIterable[bytes] | None = None,
         sample_rate: int = 8000,
         pcm_frame_bytes: int | None = None,
     ) -> None:
         super().__init__(sample_rate=sample_rate, pcm_frame_bytes=pcm_frame_bytes)
-        if (url is None) == (data is None):
-            raise ValueError("Provide exactly one of url/data")
+        provided = sum(v is not None for v in (url, data, chunks))
+        if provided != 1:
+            raise ValueError("Provide exactly one of url/data/chunks")
         self._bin = ffmpeg_bin
         self._url = url
         self._data = data
+        self._chunks = chunks
 
     async def run(self, push: PushFn, is_active: ActiveFn) -> None:
         src = self._url if self._url is not None else "pipe:0"
+        use_stdin = self._data is not None or self._chunks is not None
         proc = await asyncio.create_subprocess_exec(
             self._bin,
             "-hide_banner",
@@ -309,13 +318,16 @@ class FfmpegAudioSource(_ConfiguredPcmSource):
             "-f",
             "s16le",
             "pipe:1",
-            stdin=asyncio.subprocess.PIPE if self._data is not None else None,
+            stdin=asyncio.subprocess.PIPE if use_stdin else None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
         assert proc.stdout is not None
+        feeder: asyncio.Task | None = None
         try:
-            if self._data is not None and proc.stdin is not None:
+            if self._chunks is not None and proc.stdin is not None:
+                feeder = asyncio.create_task(self._feed_stdin(proc.stdin))
+            elif self._data is not None and proc.stdin is not None:
                 proc.stdin.write(self._data)
                 proc.stdin.write_eof()
 
@@ -339,12 +351,39 @@ class FfmpegAudioSource(_ConfiguredPcmSource):
             if buf and is_active():
                 push(bytes(buf))
         finally:
+            if feeder is not None:
+                feeder.cancel()
+                try:
+                    await feeder
+                except asyncio.CancelledError:
+                    pass
             if proc.returncode is None:
                 try:
                     proc.kill()
                 except ProcessLookupError:
                     pass
             await proc.wait()
+
+    async def _feed_stdin(self, stdin: asyncio.StreamWriter) -> None:
+        """Write streaming chunks to ffmpeg; close stdin when the producer ends."""
+        chunks = self._chunks
+        assert chunks is not None
+        try:
+            async for chunk in chunks:
+                if not chunk:
+                    continue
+                stdin.write(chunk)
+                await stdin.drain()
+            stdin.write_eof()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            aclose = getattr(chunks, "aclose", None)
+            if callable(aclose):
+                try:
+                    await aclose()
+                except Exception:  # noqa: BLE001
+                    pass
 
 
 _TONE_PCM_CACHE: dict[tuple[int, int, int, float, int], bytes] = {}
