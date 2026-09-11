@@ -429,6 +429,17 @@ def test_codecs_keep_or_choose_prefers_current_if_still_offered():
     assert switched.payload_type == 8
 
 
+def test_codecs_keep_or_choose_dynamic_pt_matches_by_name():
+    pcmu96 = codecs.PCMU.with_payload_type(96)
+    still_pcmu = codecs.keep_or_choose(pcmu96, _sdp({96, 97}, pcmu=96))
+    assert still_pcmu.name == "PCMU"
+    assert still_pcmu.payload_type == 96
+    # Same number, different codec: must not keep PCMU@96.
+    switched = codecs.keep_or_choose(pcmu96, _sdp({96}, g722=96))
+    assert switched.name == "G722"
+    assert switched.payload_type == 96
+
+
 def test_codecs_sdp_offer_includes_g722():
     assert codecs.sdp_media_line(7078) == "m=audio 7078 RTP/AVP 9 0 8 101\r\n"
     assert codecs.sdp_rtpmaps() == (
@@ -1489,6 +1500,107 @@ def test_reinvite_starts_media_if_never_started():
     assert port == 5300
 
 
+def test_telephone_event_pt_does_not_leak_across_calls():
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client.registered = True
+        client.state = sip_client.SipState.REGISTERED
+        client._local_ip = "192.0.2.1"
+        with_te = _invite_request(
+            call_id="first@example",
+            pts="8 101",
+            rtpmap="a=rtpmap:8 PCMA/8000\r\na=rtpmap:101 telephone-event/8000\r\n",
+        )
+        without_te = _invite_request(call_id="second@example", branch="z9hG4bKsecond")
+        with patch.object(client, "_send_raw"):
+            client._handle_request(with_te)
+            first_pt = client._remote_dtmf_pt, client.rtp.dtmf_pt
+            client._end_call()
+            await asyncio.sleep(0)
+            client.state = sip_client.SipState.REGISTERED
+            client._handle_request(without_te)
+            second_pt = client._remote_dtmf_pt, client.rtp.dtmf_pt
+        return first_pt, second_pt
+
+    first_pt, second_pt = asyncio.run(run())
+    assert first_pt == (101, 101)
+    assert second_pt == (-1, -1)
+
+
+def test_new_call_chooses_preferred_codec_not_previous():
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client.registered = True
+        client.state = sip_client.SipState.REGISTERED
+        client._local_ip = "192.0.2.1"
+        pcma_only = _invite_request(call_id="pcma@example")
+        g722_offer = _invite_request(
+            call_id="g722@example",
+            branch="z9hG4bKg722",
+            pts="9 8",
+            rtpmap="a=rtpmap:9 G722/8000\r\na=rtpmap:8 PCMA/8000\r\n",
+        )
+        with patch.object(client, "_send_raw"):
+            client._handle_request(pcma_only)
+            first = client.codec.name
+            client._end_call()
+            await asyncio.sleep(0)
+            client.state = sip_client.SipState.REGISTERED
+            client._handle_request(g722_offer)
+            second = client.codec.name
+        return first, second
+
+    first, second = asyncio.run(run())
+    assert first == "PCMA"
+    assert second == "G722"
+
+
+def test_sample_rate_change_flushes_tx_and_cancels_source():
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client.state = sip_client.SipState.REGISTERED
+        client._local_ip = "192.0.2.1"
+        orig = _invite_request(
+            pts="9",
+            rtpmap="a=rtpmap:9 G722/8000\r\n",
+        )
+        with patch.object(client, "_send_raw"):
+            client._handle_request(orig)
+        client.state = sip_client.SipState.IN_CALL
+        client._media_active = True
+        client.rtp._tx_buffer.extend(b"\x00" * 640)
+        task = MagicMock()
+        client._tx_source_task = task
+        drop = _invite_request(
+            cseq=2,
+            branch="z9hG4bKdrop",
+            to=f"<sip:alice@example>;tag={client._d_local_tag}",
+        )
+        with patch.object(client, "_send_raw"):
+            client._handle_request(drop)
+        return (
+            client.codec.name,
+            bytes(client.rtp._tx_buffer),
+            client._tx_source_task,
+            task.cancel.called,
+        )
+
+    name, buffered, source_task, cancelled = asyncio.run(run())
+    assert name == "PCMA"
+    assert buffered == b""
+    assert source_task is None
+    assert cancelled is True
+
+
 def test_update_with_sdp_returns_answer():
     if sip_client is None:
         return
@@ -1679,6 +1791,26 @@ def test_rtp_flush_tx_buffer():
         assert not session._tx_buffer
 
     asyncio.run(run())
+
+
+def test_rtp_hold_resume_catches_up_timestamp():
+    async def run():
+        session = rtp_session.RtpSession()
+        session._timestamp = 1000
+        session._ts_increment = 160
+        session._first_packet = False
+        clock = {"t": 10.0}
+        session._loop.time = lambda: clock["t"]
+        session.set_tx_enabled(False)
+        clock["t"] = 12.0
+        session.set_tx_enabled(True)
+        return session._timestamp, session._first_packet, session.tx_enabled
+
+    timestamp, marked, enabled = asyncio.run(run())
+    # 2.0 s / 20 ms = 100 frames × 160 ticks.
+    assert timestamp == 1000 + 100 * 160
+    assert marked is True
+    assert enabled is True
 
 
 def test_rtp_g722_frame_size_and_timestamp():

@@ -221,6 +221,7 @@ class SipClient:
         self._codec: codecs.Codec = codecs.DEFAULT
         self._chosen_pt = self._codec.payload_type
         self._remote_dtmf_pt = -1
+        self._sdp_negotiated = False
         self._media_active = False
 
         self.rtp = RtpSession()
@@ -548,10 +549,7 @@ class SipClient:
         self._accepted_dialog_to = ""
         self._remote_invite_cseq = 0
         self._remote_invite_branch = ""
-        self._on_hold = False
-        self._local_direction = "sendrecv"
-        self.rtp.send_silence = True
-        self.rtp.tx_enabled = True
+        self._begin_dialog_media()
         self._d_call_id = sm.gen_call_id(self._local_ip)
         self._d_local_tag = sm.gen_tag()
         self._d_branch = sm.gen_branch()
@@ -826,18 +824,30 @@ class SipClient:
         if sdp.audio_port:
             self._remote_rtp_port = sdp.audio_port
 
-        new_codec = codecs.keep_or_choose(self._codec, sdp)
+        old_codec = self._codec
+        # First SDP of a dialog picks the preferred codec. Later re-INVITE /
+        # UPDATE keep the current one when it is still offered.
+        if self._sdp_negotiated:
+            new_codec = codecs.keep_or_choose(self._codec, sdp)
+        else:
+            new_codec = codecs.choose(sdp)
         codec_changed = (
-            new_codec.name != self._codec.name
-            or new_codec.payload_type != self._codec.payload_type
+            new_codec.name != old_codec.name
+            or new_codec.payload_type != old_codec.payload_type
         )
         self._codec = new_codec
         self._chosen_pt = self._codec.payload_type
-        if sdp.telephone_event_pt >= 0:
+        if sdp.valid:
+            self._sdp_negotiated = True
+            # Including -1: a new offer without telephone-event must not
+            # inherit the previous call's DTMF payload type.
             self._remote_dtmf_pt = sdp.telephone_event_pt
             self.rtp.dtmf_pt = self._remote_dtmf_pt
         if codec_changed:
             self.rtp.set_codec(self._codec)
+            if old_codec.sample_rate != new_codec.sample_rate:
+                self.rtp.flush_tx_buffer()
+                self._cancel_source()
             _LOGGER.info(
                 "Negotiated codec %s (pt=%s, %s Hz)",
                 self._codec.name, self._codec.payload_type, self._codec.sample_rate,
@@ -847,6 +857,20 @@ class SipClient:
         self._local_direction = _answer_direction(sdp)
         self._set_hold(sdp.is_hold)
         self._sync_media_endpoint(old_ip, old_port)
+
+    def _begin_dialog_media(self) -> None:
+        """Clear per-call media state so the previous dialog cannot leak."""
+        self._codec = codecs.DEFAULT
+        self._chosen_pt = self._codec.payload_type
+        self._remote_dtmf_pt = -1
+        self.rtp.dtmf_pt = -1
+        self._sdp_negotiated = False
+        self._remote_rtp_ip = ""
+        self._remote_rtp_port = 0
+        self._on_hold = False
+        self._local_direction = "sendrecv"
+        self.rtp.send_silence = True
+        self.rtp.clear_tx_pause()
 
     def _sync_media_endpoint(self, old_ip: str, old_port: int) -> None:
         """Retarget a live RTP session, or start one once a real address arrives."""
@@ -867,9 +891,7 @@ class SipClient:
             return
         self._on_hold = held
         self.rtp.send_silence = not held
-        self.rtp.tx_enabled = not held
-        if held:
-            self.rtp.flush_tx_buffer()
+        self.rtp.set_tx_enabled(not held)
         _LOGGER.info("Remote %s the call", "held" if held else "resumed")
 
     # -- inbound requests ----------------------------------------------
@@ -1024,10 +1046,7 @@ class SipClient:
                 self._d_cseq = 1
             self._remote_invite_cseq = self._d_cseq
             self._remote_invite_branch = _via_branch(m.header("Via"))
-            self._on_hold = False
-            self._local_direction = "sendrecv"
-            self.rtp.send_silence = True
-            self.rtp.tx_enabled = True
+            self._begin_dialog_media()
             self._apply_remote_sdp(sm.parse_sdp(m.body))
 
             # Check for standard Intercom/Doorbell auto-answer headers
@@ -1240,7 +1259,7 @@ class SipClient:
         self._on_hold = False
         self._local_direction = "sendrecv"
         self.rtp.send_silence = True
-        self.rtp.tx_enabled = True
+        self.rtp.clear_tx_pause()
         self._loop.create_task(self._stop_media())
         self._set_state(SipState.REGISTERED if self.registered else SipState.IDLE)
         self._emit("on_call_ended")

@@ -81,6 +81,7 @@ class RtpSession:
         self.dtmf_pt = 101
         self.send_silence = True
         self.tx_enabled = True
+        self._tx_paused_at: float | None = None
 
         self._seq = 0
         self._timestamp = 0
@@ -120,6 +121,36 @@ class RtpSession:
     # -- configuration --------------------------------------------------
     def set_remote(self, ip: str, port: int) -> None:
         self._remote = (ip, port)
+
+    def set_tx_enabled(self, enabled: bool) -> None:
+        """Gate RTP transmission; on resume, catch up the RTP timestamp.
+
+        While TX is paused the sender loop does not advance ``_timestamp``.
+        Jumping it by the elapsed 20 ms frames (and re-marking the next
+        packet) keeps a long hold from looking like a burst of late packets.
+        """
+        if enabled == self.tx_enabled:
+            return
+        if enabled:
+            if self._tx_paused_at is not None:
+                elapsed = max(0.0, self._loop.time() - self._tx_paused_at)
+                frames = int(elapsed / FRAME_SEC)
+                if frames:
+                    self._timestamp = (
+                        self._timestamp + frames * self._ts_increment
+                    ) & 0xFFFFFFFF
+                self._first_packet = True
+            self._tx_paused_at = None
+            self.tx_enabled = True
+            return
+        self._tx_paused_at = self._loop.time()
+        self.tx_enabled = False
+        self.flush_tx_buffer()
+
+    def clear_tx_pause(self) -> None:
+        """Re-enable TX without catching up a hold gap (new/ended call)."""
+        self.tx_enabled = True
+        self._tx_paused_at = None
 
     def set_codec(self, codec: Codec) -> None:
         """Bind the negotiated codec and (re)create encoder/decoder state."""

@@ -141,15 +141,21 @@ def keep_or_choose(current: Codec, sdp: SdpInfo) -> Codec:
     A mid-dialog refresh that still advertises the negotiated codec must not
     switch (or rebuild encoder state). An offer with no audio payloads — an
     offerless re-INVITE or a session-timer refresh — also leaves ``current``.
+
+    Dynamic payload types (>= 96) are matched by codec name, not number:
+    the same PT can be PCMU in one offer and G.722 in the next.
     """
-    if current.payload_type in sdp.offered_pts:
-        return current
     named = {
         "G722": sdp.g722_pt,
         "PCMU": sdp.pcmu_pt,
         "PCMA": sdp.pcma_pt,
     }
     npt = named.get(current.name, -1)
+    if current.payload_type >= 96:
+        if npt >= 0:
+            return current.with_payload_type(npt)
+    elif current.payload_type in sdp.offered_pts:
+        return current
     if npt >= 0:
         return current.with_payload_type(npt)
     if not sdp.offered_pts and sdp.pcmu_pt < 0 and sdp.pcma_pt < 0 and sdp.g722_pt < 0:
