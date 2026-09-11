@@ -646,17 +646,27 @@ FIR 히스토리는 `AssistBridge`가 프레임 사이에 유지한다.
 
 ---
 
-### [ ] P3-3. 턴 경계 발화 유실 제거
+### [x] P3-3. 턴 경계 발화 유실 제거
 
-**근거** §1.3-7. 턴 사이 `_listening=False` 구간 + `asyncio.sleep(0.2)`(`assist.py:543`)
-+ 톤 대기에서 발화가 잘린다. preroll은 실패 경로에서만 주입된다.
+**근거** §1.3-7. 턴 사이 `_listening=False` 구간 + `asyncio.sleep(0.2)` + 톤 대기에서
+발화가 잘린다. preroll은 실패 경로(barge-in, 톤 타임아웃)에서만 주입됐다.
 
-**작업** 턴 사이에도 RX를 링버퍼에 계속 담고, 다음 턴 시작 시 정상 경로에서도 preroll로
-주입한다. 현재 barge-in/톤 타임아웃 전용인 `_ring_buffer` 로직을 상시화하는 방향.
-TTS 재생 중 캡처한 오디오를 그대로 넣으면 자기 음성이 들어가므로, 재생 종료 이후
-구간만 담도록 경계를 명확히 한다.
+**작업** TTS가 끝난 뒤(`_speaking=False`) RX를 링버퍼에 담아 다음 턴 시작 시 정상
+경로에서도 preroll로 넣는다. TTS 재생 중에는 barge-in이 켜진 경우에만 캡처한다.
+barge-in preroll이 있을 때만 톤을 건너뛴다. 완료된 턴 시작 톤은 링을 비워
+비프/TTS 꼬리 에코가 STT로 들어가지 않게 하고, MicroVad가 있으면 발화가 아닌
+갭 캡처는 주입하지 않는다. 톤 타임아웃 시의 발화는 그대로 남긴다.
 
-**수용 기준** TTS 종료 직후 100 ms 안에 시작된 발화가 다음 턴 STT 스트림 앞부분에 포함된다.
+**수용 기준** TTS 종료 직후 100 ms 안에 시작된 발화가 다음 턴 STT 스트림 앞부분에
+포함된다. `turn_tone`이 켜진 구성에서는 톤 완료 시 링을 비우므로 이 기준은 톤이
+꺼진(기본) 구성에서만 성립하고, 발화는 비프 이후에 시작한다.
+
+**추가된 테스트**
+- `test_assist_speech_after_tts_is_prerolled_into_next_turn`
+- `test_assist_does_not_capture_rx_during_tts_without_barge_in`
+- `test_assist_turn_tone_success_drops_echo_capture`
+- `test_assist_gap_preroll_skipped_when_vad_hears_no_speech`
+- `test_assist_gap_preroll_kept_when_vad_hears_speech`
 
 ---
 

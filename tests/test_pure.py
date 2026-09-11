@@ -4333,6 +4333,176 @@ def test_assist_preroll_injected_into_stream():
     assert stream.queue.qsize() == 1
 
 
+def test_assist_does_not_capture_rx_during_tts_without_barge_in():
+    """Own TTS must not be prerolled into the next STT turn."""
+    assist_mod, _, _, _ = _assist_ctx()
+    bridge = assist_mod.AssistBridge(
+        MagicMock(),
+        play_source_fn=MagicMock(),
+        on_done_fn=MagicMock(),
+        sample_rate=16000,
+    )
+    bridge._speaking = True
+    bridge.write(b"\x11\x22" * 80)
+    assert not bridge._ring_buffer
+
+
+def test_assist_speech_after_tts_is_prerolled_into_next_turn():
+    """Speech 100 ms after TTS ends must be at the front of the next STT stream."""
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    mock_tts = sys.modules["homeassistant.components.tts"]
+    original_get_stream = mock_tts.async_get_stream.return_value
+    streams = []
+    play_source = MagicMock()
+
+    async def stream_result():
+        yield b"RIFF...."
+
+    stream = MagicMock()
+    stream.async_stream_result = stream_result
+    mock_tts.async_get_stream.return_value = stream
+    marker = b"\x11\x22" * 800  # 100 ms @ 16 kHz s16le
+    during_tts = b"\x33\x44" * 80
+
+    async def mock_pipeline(hass, **kwargs):
+        streams.append(kwargs["stt_stream"])
+        cb = kwargs["event_callback"]
+        if len(streams) == 1:
+            cb(PE(PET.TTS_END, {"tts_output": {"token": "tok"}}))
+        else:
+            cb(PE(PET.ERROR, {"code": "stt-no-text-recognized"}))
+
+    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
+    bridge = assist_mod.AssistBridge(
+        MagicMock(),
+        play_source_fn=play_source,
+        on_done_fn=MagicMock(),
+        sample_rate=16000,
+        max_turns=2,
+        max_silent_turns=99,
+    )
+
+    async def run():
+        bridge.start()
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            if play_source.called:
+                break
+        assert play_source.called
+        bridge.write(during_tts)
+        bridge.on_playback_done()
+        await asyncio.sleep(0.05)
+        bridge.write(marker)
+        if bridge.session_task:
+            await asyncio.wait_for(bridge.session_task, timeout=3)
+
+    try:
+        asyncio.run(run())
+    finally:
+        mock_tts.async_get_stream.return_value = original_get_stream
+
+    assert len(streams) == 2
+    chunks = []
+    while not streams[1].queue.empty():
+        chunks.append(streams[1].queue.get_nowait())
+    preroll = b"".join(chunks)
+    assert marker in preroll
+    assert during_tts not in preroll
+
+
+def _assist_gap_preroll_after_tts(assist_mod, mock_ap, PET, PE, marker: bytes) -> bytes:
+    """Run two turns: TTS on the first, ``marker`` written 50 ms after it ends."""
+    mock_tts = sys.modules["homeassistant.components.tts"]
+    original_get_stream = mock_tts.async_get_stream.return_value
+    streams = []
+    play_source = MagicMock()
+
+    async def stream_result():
+        yield b"RIFF...."
+
+    stream = MagicMock()
+    stream.async_stream_result = stream_result
+    mock_tts.async_get_stream.return_value = stream
+
+    async def mock_pipeline(hass, **kwargs):
+        streams.append(kwargs["stt_stream"])
+        cb = kwargs["event_callback"]
+        if len(streams) == 1:
+            cb(PE(PET.TTS_END, {"tts_output": {"token": "tok"}}))
+        else:
+            cb(PE(PET.ERROR, {"code": "stt-no-text-recognized"}))
+
+    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
+    bridge = assist_mod.AssistBridge(
+        MagicMock(),
+        play_source_fn=play_source,
+        on_done_fn=MagicMock(),
+        sample_rate=16000,
+        max_turns=2,
+        max_silent_turns=99,
+    )
+
+    async def run():
+        bridge.start()
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            if play_source.called:
+                break
+        assert play_source.called
+        bridge.on_playback_done()
+        await asyncio.sleep(0.05)
+        bridge.write(marker)
+        if bridge.session_task:
+            await asyncio.wait_for(bridge.session_task, timeout=3)
+
+    try:
+        asyncio.run(run())
+    finally:
+        mock_tts.async_get_stream.return_value = original_get_stream
+
+    assert len(streams) == 2
+    chunks = []
+    while not streams[1].queue.empty():
+        chunks.append(streams[1].queue.get_nowait())
+    return b"".join(chunks)
+
+
+def test_assist_gap_preroll_skipped_when_vad_hears_no_speech():
+    """Speakerphone echo of TTS must not become the next command."""
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    original_micro_vad = assist_mod.MicroVad
+
+    class SilentVad:
+        def Process10ms(self, frame: bytes) -> float:
+            return 0.0
+
+    assist_mod.MicroVad = lambda: SilentVad()
+    marker = b"\x11\x22" * 800
+    try:
+        preroll = _assist_gap_preroll_after_tts(assist_mod, mock_ap, PET, PE, marker)
+    finally:
+        assist_mod.MicroVad = original_micro_vad
+    assert marker not in preroll
+
+
+def test_assist_gap_preroll_kept_when_vad_hears_speech():
+    """A 100 ms-class utterance after TTS still reaches the next STT stream."""
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    original_micro_vad = assist_mod.MicroVad
+
+    class SpeechVad:
+        def Process10ms(self, frame: bytes) -> float:
+            return 0.9
+
+    assist_mod.MicroVad = lambda: SpeechVad()
+    marker = b"\x11\x22" * 800
+    try:
+        preroll = _assist_gap_preroll_after_tts(assist_mod, mock_ap, PET, PE, marker)
+    finally:
+        assist_mod.MicroVad = original_micro_vad
+    assert marker in preroll
+
+
 def test_assist_done_guard_skips_superseded_bridge():
     """Regression: superseded bridge on_done must not detach the active assist."""
     state = {"assist_bridge": None, "sinks": set()}
@@ -4570,7 +4740,8 @@ def test_assist_turn_tone_timeout_preserves_captured_speech():
     assert b"\xab\xcd" in captured_chunks[0]
 
 
-def test_assist_turn_tone_success_does_not_inject_captured_speech():
+def test_assist_turn_tone_success_drops_echo_capture():
+    """A completed turn-start tone must not preroll beep / TTS-tail echo."""
     assist_mod, mock_ap, PET, PE = _assist_ctx()
     queue_sizes_at_pipeline = []
 
@@ -4586,6 +4757,7 @@ def test_assist_turn_tone_success_does_not_inject_captured_speech():
         on_done_fn=MagicMock(),
         max_silent_turns=1,
         turn_tone=True,
+        sample_rate=16000,
     )
     marker = b"\xef\xbe" * 80
 
