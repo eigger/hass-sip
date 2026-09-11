@@ -29,6 +29,8 @@ target:
   entity_id: media_player.phone_line
 ```
 
+![Phone to Assist storyboard — not a live capture](docs/demo/phone-assist.gif)
+
 Full flow: [Voice Assist Automation Example](#voice-assist-automation-example). For door locks, add the [allow-list + PIN](#security) gate.
 
 ### Intercom auto-answer
@@ -40,6 +42,8 @@ A door station rings the extension; hass-sip answers immediately and opens two-w
   "102": { "name": "Front Doorbell", "auto_answer": true }
 }
 ```
+
+![Intercom auto-answer storyboard — not a live capture](docs/demo/intercom-autoanswer.gif)
 
 Put that in `sip_contacts.json` (or send SIP auto-answer headers). Auto-answer only opens the channel — pair it with Assist, TTS, or recording. Details: [Intercom & Auto-Answer Mode](#intercom--auto-answer-mode).
 
@@ -55,6 +59,8 @@ data:
   number: "100"
   message: "The garage door has been open for ten minutes."
 ```
+
+![Sensor event to phone TTS storyboard — not a live capture](docs/demo/sensor-tts-call.gif)
 
 More TTS options: [Announce a TTS message, then hang up](#example-announce-a-tts-message-then-hang-up).
 

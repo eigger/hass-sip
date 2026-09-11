@@ -886,12 +886,17 @@ reconfigure 첫 화면과 검증 실패 후 재시도 모두 비밀번호를 넣
 
 ---
 
-### [ ] P5-3. 데모 자료
+### [x] P5-3. 데모 자료
 
-**작업** P0 완료 후에 만든다. GIF/영상 3개: 전화→Assist 왕복, 인터폰 자동응답,
-센서 이벤트 알림 전화. HA Community 게시글은 데모가 준비된 다음에 올린다.
+**작업** README "What it is for" 시나리오 3개 아래에 스토리보드 GIF를 넣었다
+(`docs/demo/phone-assist.gif`, `intercom-autoanswer.gif`, `sensor-tts-call.gif`).
+실캡처가 아니라 매 프레임에 "STORYBOARD · NOT A LIVE CAPTURE"가 있다.
+재생성은 `python docs/demo/render.py`(Pillow). 폰트는 Arial → DejaVu/Liberation →
+`ImageFont.load_default` 순으로 고른다. HA Community 게시글은 이 카드 밖이다.
 
 **의존성** P0 전체. 안정성이 확보되기 전 유입은 이탈로 이어진다.
+
+**추가된 테스트** 없음 (문서·에셋 카드).
 
 ---
 
