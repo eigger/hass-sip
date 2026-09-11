@@ -254,7 +254,6 @@ class AssistBridge(AudioSink):
         self._vad_speech_frames = 0
         self._post_barge_in_capture = False
         self._tts_epoch = 0
-        self._tone_capture = bytearray()
         self._upsampler = _Upsampler2x()
         self._micro_vad = MicroVad() if self.barge_in else None
 
@@ -269,16 +268,23 @@ class AssistBridge(AudioSink):
         return self._upsampler.process(pcm_le)
 
     def write(self, pcm_le: bytes) -> None:
-        """Receive incoming PCM from SIP client and feed it to Assist."""
+        """Receive incoming PCM from SIP client and feed it to Assist.
+
+        While a turn is live, PCM goes to STT. Between turns (after TTS has
+        finished, during the post-TTS guard, and during the turn-start tone)
+        it is kept in the ring buffer and injected as preroll so speech that
+        starts before ``_listening`` is not lost. TTS playback itself is not
+        captured unless barge-in is armed (that path must hear the caller).
+        """
         pcm_16k = self._to_16k(pcm_le)
         if self._listening:
             self.audio_stream.feed_audio(pcm_16k, 16000)
-        elif self._tx_wait == "tone":
-            self._append_tone_capture(pcm_16k)
         elif self._post_barge_in_capture:
             self._append_rx_to_ring(pcm_16k)
         elif self.barge_in and self._speaking:
             self._monitor_barge_in(pcm_16k)
+        elif not self._speaking:
+            self._append_rx_to_ring(pcm_16k)
 
     def on_playback_done(self) -> None:
         """Signal that TX playback has finished (see IvrSession for the same pattern).
@@ -310,10 +316,13 @@ class AssistBridge(AudioSink):
         if len(self._ring_buffer) > _PREROLL_MAX_BYTES:
             del self._ring_buffer[: len(self._ring_buffer) - _PREROLL_MAX_BYTES]
 
-    def _append_tone_capture(self, pcm_16k: bytes) -> None:
-        self._tone_capture.extend(pcm_16k)
-        if len(self._tone_capture) > _PREROLL_MAX_BYTES:
-            del self._tone_capture[: len(self._tone_capture) - _PREROLL_MAX_BYTES]
+    def _take_preroll(self) -> bytes:
+        """Return buffered RX (barge-in + turn-gap) and clear capture state."""
+        preroll = self._barge_in_preroll + bytes(self._ring_buffer)
+        self._barge_in_preroll = b""
+        self._post_barge_in_capture = False
+        self._reset_barge_in_state()
+        return preroll
 
     def _cancel_inflight_tts(self, *, stop_audio: bool = False) -> None:
         """Drop in-flight TTS fetch/play tasks (barge-in, timeout, close)."""
@@ -434,25 +443,19 @@ class AssistBridge(AudioSink):
 
             while self._running:
                 self.audio_stream = AssistAudioStream()
-                preroll = self._barge_in_preroll
-                self._barge_in_preroll = b""
-                if self._post_barge_in_capture:
-                    if self._ring_buffer:
-                        preroll = preroll + bytes(self._ring_buffer)
-                    self._post_barge_in_capture = False
-                if preroll:
-                    self.audio_stream.inject_preroll(preroll)
                 self._turn_error = None
                 self._continue_conversation = False
                 self._turn_index = turns + 1
-                self._reset_barge_in_state()
-                tone_preroll = b""
-                if not preroll:
-                    tone_preroll = await self._play_turn_tone()
+                # Barge-in already has the caller talking; skip the beep so it
+                # does not talk over them. Gap preroll after TTS must not skip
+                # the tone — that cue is for the normal turn boundary.
+                if not self._barge_in_preroll:
+                    await self._play_turn_tone()
                     if not self._running:
                         break
-                if tone_preroll:
-                    self.audio_stream.inject_preroll(tone_preroll)
+                preroll = self._take_preroll()
+                if preroll:
+                    self.audio_stream.inject_preroll(preroll)
                 LOGGER.debug(
                     "Assist turn %d listening (conversation_id=%s, preroll=%d B)",
                     self._turn_index,
@@ -561,41 +564,34 @@ class AssistBridge(AudioSink):
             await pipeline_input.validate()
             await pipeline_input.execute()
 
-    async def _play_turn_tone(self) -> bytes:
+    async def _play_turn_tone(self) -> None:
         """Play the turn-start beep and wait until it finishes.
 
         Failures and timeouts must not block the listening turn. The wait uses
         a dedicated event so tone completion cannot unblock TTS playback wait.
-        On timeout, any caller audio captured during the wait is returned as
-        preroll so speech is not lost on failure paths.
+        Caller audio during the wait is stored in the ring buffer and injected
+        as preroll when the listening turn starts.
         """
         if not self.turn_tone or self.play_source is None:
-            return b""
+            return
         self._tx_wait = "tone"
         self._tx_done.clear()
-        self._tone_capture = bytearray()
-        timed_out = False
         try:
             await self._wait_for_tx_idle()
             if not self._running:
-                return b""
+                return
             self.play_source(ToneAudioSource())
             try:
                 async with asyncio.timeout(_TONE_WAIT_TIMEOUT_SECONDS):
                     await self._tx_done.wait()
             except TimeoutError:
-                timed_out = True
                 LOGGER.debug("Assist: turn tone playback-done timeout")
                 if self.stop_audio_fn:
                     self.stop_audio_fn(flush=True)
         except Exception:
             LOGGER.exception("Assist: failed to play turn tone")
-            timed_out = True
         finally:
             self._tx_wait = None
-        if timed_out and self._tone_capture:
-            return bytes(self._tone_capture)
-        return b""
 
     async def _wait_playback_done(self) -> None:
         """Wait for TTS playback to finish before starting the next turn."""
@@ -617,6 +613,9 @@ class AssistBridge(AudioSink):
         self._tx_wait = None
         self._speaking = False
         if not ended_by_barge_in:
+            # Drop barge-in residue, then settle so speakerphone echo of the
+            # response is less likely to look like the next command. write()
+            # keeps RX in the ring during this window (P3-3).
             self._reset_barge_in_state()
             await asyncio.sleep(0.2)
 
