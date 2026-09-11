@@ -1441,6 +1441,10 @@ class SipClient:
         async with self._media_lock:
             session = self._media_session
             if self._media_active:
+                # Same dialog: ACK/UPDATE/re-INVITE can schedule a second
+                # start while the first is still binding. Do not bounce RTP.
+                if self._media_owner == session:
+                    return
                 await self._stop_media_unlocked()
             if not self._remote_rtp_ip or not self._remote_rtp_port:
                 _LOGGER.warning("No remote RTP endpoint; media not started")

@@ -1607,6 +1607,49 @@ def test_late_media_stop_does_not_kill_new_session():
     assert stops == [1]
 
 
+def test_duplicate_start_media_same_session_does_not_restart():
+    """ACK/re-INVITE must not tear down RTP that this dialog just started."""
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client._remote_rtp_ip = "198.51.100.10"
+        client._remote_rtp_port = 4000
+        starts: list[int] = []
+        stops: list[int] = []
+        bound = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_start(port):
+            starts.append(port)
+            bound.set()
+            await release.wait()
+            return True
+
+        async def track_stop():
+            stops.append(1)
+
+        with (
+            patch.object(client.rtp, "stop", side_effect=track_stop),
+            patch.object(client.rtp, "start", side_effect=slow_start),
+        ):
+            first = client._loop.create_task(client._start_media())
+            await bound.wait()
+            second = client._loop.create_task(client._start_media())
+            release.set()
+            await first
+            await second
+            await client._start_media()
+        return starts, stops, client._media_active, client._media_owner
+
+    starts, stops, active, owner = asyncio.run(run())
+    assert starts == [7078]
+    assert stops == []
+    assert active is True
+    assert owner == 0
+
+
 def test_auto_answer_right_after_bye_starts_media():
     """Intercom: BYE then a new auto-answer INVITE before stop finishes."""
     if sip_client is None:
