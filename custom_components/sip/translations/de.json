@@ -21,7 +21,7 @@
       },
       "reconfigure": {
         "title": "SIP-Client bearbeiten",
-        "description": "Aktualisiere deine SIP-Nebenstellendaten und Serverdetails.",
+        "description": "Aktualisiere deine SIP-Nebenstellendaten und Serverdetails. Passwort leer lassen, um das aktuelle zu behalten.",
         "data": {
           "server": "SIP-Server / Host",
           "port": "Port",

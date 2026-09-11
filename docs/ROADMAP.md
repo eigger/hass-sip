@@ -828,12 +828,18 @@ Reconfigure는 폼 필드를 기존 `entry.data`에 병합해 `assist_user`가 �
 
 ---
 
-### [ ] P4-3. config_flow password 마스킹
+### [x] P4-3. config_flow password 마스킹
 
-**작업** `config_flow.py:49`의 `cv.string`을 `TextSelector(type=PASSWORD)`로 바꾼다.
-reconfigure에서 기존 비밀번호가 평문으로 표시되지 않게 한다.
+**작업** `config_flow.py` 비밀번호 필드를 `TextSelector(type=PASSWORD)`로 바꿨다.
+reconfigure 첫 화면과 검증 실패 후 재시도 모두 비밀번호를 넣지 않고, 빈 제출은
+기존 값을 유지한다.
 
 **수용 기준** 설정/재설정 폼에서 비밀번호가 마스킹된다. 기존 엔트리 편집이 계속 동작한다.
+
+**추가된 테스트**
+- `test_password_field_uses_password_selector`
+- `test_reconfigure_keeps_password_when_blank`
+- `test_reconfigure_retry_keeps_password_optional`
 
 ---
 

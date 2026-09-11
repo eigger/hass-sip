@@ -21,7 +21,7 @@
       },
       "reconfigure": {
         "title": "SIP 클라이언트 편집",
-        "description": "SIP 내선 정보 및 서버 설정을 수정해 주세요.",
+        "description": "SIP 내선 정보 및 서버 설정을 수정해 주세요. 비밀번호를 비워 두면 기존 값을 유지합니다.",
         "data": {
           "server": "SIP 서버 주소 / 호스트",
           "port": "포트",

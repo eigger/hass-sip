@@ -1,5 +1,6 @@
 """pytest configuration — mock Home Assistant modules to allow testing without HA installed."""
 import sys
+import types
 from unittest.mock import MagicMock
 
 
@@ -74,3 +75,33 @@ for mod in [
 
 sys.modules["homeassistant.helpers.restore_state"].RestoreEntity = MockRestoreEntity
 sys.modules["homeassistant.components.switch"].SwitchEntity = MockBase
+
+
+class _TextSelectorType:
+    PASSWORD = "password"
+    TEXT = "text"
+
+
+class _TextSelectorConfig(dict):
+    def __init__(self, type=None, autocomplete=None, **kwargs):
+        super().__init__()
+        if type is not None:
+            self["type"] = type
+        if autocomplete is not None:
+            self["autocomplete"] = autocomplete
+        self.update(kwargs)
+
+
+class _TextSelector:
+    def __init__(self, config=None):
+        self.config = dict(config) if config is not None else {}
+
+    def __call__(self, data):
+        return data
+
+
+_selector_mod = types.ModuleType("homeassistant.helpers.selector")
+_selector_mod.TextSelector = _TextSelector
+_selector_mod.TextSelectorConfig = _TextSelectorConfig
+_selector_mod.TextSelectorType = _TextSelectorType
+sys.modules["homeassistant.helpers.selector"] = _selector_mod

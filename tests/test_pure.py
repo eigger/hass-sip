@@ -68,6 +68,36 @@ for _mod_name in (
 sys.modules.setdefault("homeassistant.data_entry_flow", MagicMock(FlowResult=dict))
 sys.modules.setdefault("homeassistant.helpers.config_validation", MagicMock())
 
+
+class _TextSelectorType:
+    PASSWORD = "password"
+    TEXT = "text"
+
+
+class _TextSelectorConfig(dict):
+    def __init__(self, type=None, autocomplete=None, **kwargs):
+        super().__init__()
+        if type is not None:
+            self["type"] = type
+        if autocomplete is not None:
+            self["autocomplete"] = autocomplete
+        self.update(kwargs)
+
+
+class _TextSelector:
+    def __init__(self, config=None):
+        self.config = dict(config) if config is not None else {}
+
+    def __call__(self, data):
+        return data
+
+
+_selector_mod = types.ModuleType("homeassistant.helpers.selector")
+_selector_mod.TextSelector = _TextSelector
+_selector_mod.TextSelectorConfig = _TextSelectorConfig
+_selector_mod.TextSelectorType = _TextSelectorType
+sys.modules["homeassistant.helpers.selector"] = _selector_mod
+
 _COMPONENT = os.path.join(os.path.dirname(__file__), "..", "custom_components", "sip")
 _CC_PKG = "custom_components.sip"
 sys.modules.setdefault(
@@ -4911,11 +4941,11 @@ def test_build_schema_reconfigure_prefills_current_entry_values():
         "register_expiration": 600,
         "local_rtp_port": 7080,
     }
-    schema = config_flow._build_schema(7078, defaults=current)
+    schema = config_flow._build_schema(7078, defaults=current, omit_password_default=True)
     markers = {str(k): k for k in schema.schema}
     assert markers["server"].default() == "pbx.example.com"
     assert markers["username"].default() == "1001"
-    assert markers["password"].default() == "s3cret"
+    assert markers["password"].default is vol.UNDEFINED
     assert markers["port"].default() == 5061
     assert markers["caller_id"].default() == "Front Desk"
     assert markers["register_expiration"].default() == 600
@@ -4948,6 +4978,58 @@ def test_reconfigure_preserves_assist_user():
     assert merged["password"] == "new"
     assert merged["local_rtp_port"] == 7080
     assert merged["username"] == "1001"
+
+
+def test_reconfigure_keeps_password_when_blank():
+    merged = config_flow.merge_reconfigure_data(
+        {
+            "username": "1001",
+            "password": "old-secret",
+            "assist_user": "keep-me",
+        },
+        {
+            "username": "1001",
+            "local_rtp_port": 7080,
+        },
+    )
+    assert merged["password"] == "old-secret"
+    assert merged["assist_user"] == "keep-me"
+    blank = config_flow.merge_reconfigure_data(
+        {"password": "old-secret"},
+        {"password": "  "},
+    )
+    assert blank["password"] == "old-secret"
+
+
+def test_password_field_uses_password_selector():
+    schema = config_flow._build_schema(7078)
+    markers = {str(k): k for k in schema.schema}
+    selector = schema.schema[markers["password"]]
+    assert selector.config.get("type") == "password"
+    reconf = config_flow._build_schema(
+        7078, defaults={"password": "s3cret"}, omit_password_default=True
+    )
+    reconf_markers = {str(k): k for k in reconf.schema}
+    assert reconf_markers["password"].default is vol.UNDEFINED
+    assert reconf.schema[reconf_markers["password"]].config.get("type") == "password"
+
+
+def test_reconfigure_retry_keeps_password_optional():
+    """After cannot_connect, the form must still accept a blank password."""
+    typed = {
+        "server": "pbx.invalid",
+        "username": "1001",
+        "password": "",
+        "port": 5061,
+    }
+    schema = config_flow._build_schema(
+        7080, defaults=typed, omit_password_default=True
+    )
+    markers = {str(k): k for k in schema.schema}
+    assert markers["password"].default is vol.UNDEFINED
+    assert markers["server"].default() == "pbx.invalid"
+    assert markers["username"].default() == "1001"
+    assert markers["port"].default() == 5061
 
 
 def test_sip_device_id_lookup():
