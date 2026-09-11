@@ -264,27 +264,39 @@ ruff check custom_components/     # 린트
 
 **작업**
 1. `datagram_received`가 버리는 송신자 `addr`를 `_receive`까지 전달한다.
-2. 첫 유효 RTP 패킷(길이 ≥ 12, 알려진 PT)의 소스 주소가 SDP로 받은 `_remote`와
-   다르면 실제 소스로 latch하고 `_LOGGER.info`로 한 번 남긴다.
-3. latch는 통화당 1회만 한다. 이후 소스가 또 바뀌어도 무시한다(SSRC 하이재킹 방어).
-4. `RtpSession.start()`에서 latch 상태를 초기화한다.
+2. RTP v2 + 알려진 PT(오디오 또는 telephone-event)인 패킷이 **같은 소스에서
+   SSRC가 같고 seq가 증가하며 N개(`_LATCH_LEARN_COUNT=4`) 연속**일 때만 TX
+   목적지를 latch한다. 한 패킷으로는 바뀌지 않는다(노출된 RTP 포트 스캐너 방어).
+3. latch 후에도 학습을 반복한다. 현재 dest의 패킷은 경쟁 candidate를 리셋하고,
+   새 소스가 N연속이면 NAT 리매핑으로 전환한다. (최초 계획의 "통화당 1회"는
+   스캐너에 약하고 NAT 리매핑에 과도해서 리뷰 후 폐기.)
+4. `RtpSession.start()` / `set_remote()`에서 latch·학습 상태를 초기화한다.
 5. SDP 주소와 latch 주소를 둘 다 보관해 P1-3에서 노출할 수 있게 한다.
 
 **수용 기준**
-- SDP `c=`가 사설 IP인데 실제 RTP가 다른 주소에서 오면 송신 목적지가 실제 소스로 바뀐다.
-- latch 후 제3의 주소에서 온 패킷은 목적지를 바꾸지 않는다.
+- SDP `c=`가 사설 IP인데 실제 RTP가 다른 주소에서 N연속이면 송신 목적지가 실제 소스로 바뀐다.
+- 한 패킷(또는 N-1)으로는 목적지가 바뀌지 않는다.
+- latch 후 제3의 주소에서 온 패킷이 N개 미만이면 목적지를 바꾸지 않는다.
+- 제3의 주소에서 정상 형식 패킷이 N연속이면 NAT 리매핑으로 다시 전환한다.
 - SDP 주소와 실제 소스가 같으면 latch 로그가 남지 않고 동작이 변하지 않는다.
 - DTMF telephone-event 패킷으로도 latch가 동작한다.
+- RTP version ≠ 2, 미지 PT, 학습 중 SSRC 변경, 비증가 seq는 latch하지 않는다.
 
 **추가된 테스트**
 - `test_rtp_latches_tx_dest_to_actual_source`
+- `test_rtp_one_packet_does_not_latch`
 - `test_rtp_latch_ignores_later_sources`
+- `test_rtp_relatch_after_consecutive_new_source`
 - `test_rtp_same_source_does_not_latch`
 - `test_rtp_dtmf_packet_latches`
 - `test_rtp_start_resets_latch`
 - `test_rtp_set_remote_resets_latch`
 - `test_rtp_protocol_forwards_sender_addr`
 - `test_rtp_unknown_pt_does_not_latch`
+- `test_rtp_non_v2_does_not_latch`
+- `test_rtp_ssrc_change_resets_learn`
+- `test_rtp_non_increasing_seq_resets_learn`
+- `test_rtp_current_source_resets_candidate`
 
 ---
 

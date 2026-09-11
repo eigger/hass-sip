@@ -32,6 +32,15 @@ FRAME_BYTES = SAMPLES_PER_FRAME * 2  # s16le @ 8 kHz
 FRAME_SEC = 0.02
 _DTMF_TONE_SAMPLES = 8 * SAMPLES_PER_FRAME  # ~160 ms, in CLOCK ticks
 _DTMF_END_PACKETS = 3
+# Asterisk strictrtp-style consecutive learn count (typical 3–5).
+_LATCH_LEARN_COUNT = 4
+_LATCH_SEQ_GAP_MAX = 64
+
+
+def _rtp_seq_follows(prev: int, seq: int) -> bool:
+    """True if ``seq`` is a plausible next RTP sequence number after ``prev``."""
+    delta = (seq - prev) & 0xFFFF
+    return 1 <= delta <= _LATCH_SEQ_GAP_MAX
 
 
 def _dtmf_event_to_char(event: int) -> str | None:
@@ -80,7 +89,10 @@ class RtpSession:
         self._remote: tuple[str, int] | None = None
         self._sdp_remote: tuple[str, int] | None = None
         self._latched_remote: tuple[str, int] | None = None
-        self._latch_done = False
+        self._latch_candidate: tuple[str, int] | None = None
+        self._latch_ssrc: int | None = None
+        self._latch_seq: int | None = None
+        self._latch_count = 0
         self.dtmf_pt = 101
         self.send_silence = True
         self.tx_enabled = True
@@ -126,12 +138,18 @@ class RtpSession:
         dest = (ip, port)
         self._sdp_remote = dest
         self._remote = dest
-        # New SDP (initial or re-INVITE): allow one latch from the new peer.
+        # New SDP (initial or re-INVITE): learn the new peer from scratch.
         self._reset_latch()
 
+    def _clear_latch_candidate(self) -> None:
+        self._latch_candidate = None
+        self._latch_ssrc = None
+        self._latch_seq = None
+        self._latch_count = 0
+
     def _reset_latch(self) -> None:
-        self._latch_done = False
         self._latched_remote = None
+        self._clear_latch_candidate()
         if self._sdp_remote is not None:
             self._remote = self._sdp_remote
 
@@ -372,18 +390,37 @@ class RtpSession:
                 # Running behind; resync so we don't spin.
                 next_t = self._loop.time()
 
-    def _maybe_latch(self, addr: tuple[str, int] | None) -> None:
-        """Once per call, retarget TX to the source of the first valid RTP packet.
+    def _maybe_latch(self, addr, seq: int, ssrc: int) -> None:
+        """Retarget TX after N consecutive valid packets from a new source.
 
         Symmetric RTP / NAT: the SDP ``c=`` line often carries a private
         address while packets actually arrive from a mapped public endpoint.
-        Later source changes are ignored (SSRC hijacking defence).
+        A single datagram must not pin TX (RTP scanners on an exposed port).
+        Learning is allowed again later so a mid-call NAT remap can recover:
+        the same new source must deliver RTP v2, a stable SSRC, and an
+        increasing sequence for ``_LATCH_LEARN_COUNT`` packets. Traffic from
+        the current dest resets any competing candidate.
         """
-        if self._latch_done or addr is None or self._remote is None:
+        if addr is None or self._remote is None:
             return
         src = (addr[0], int(addr[1]))
-        self._latch_done = True
         if src == self._remote:
+            self._clear_latch_candidate()
+            return
+        if (
+            self._latch_candidate == src
+            and self._latch_ssrc == ssrc
+            and self._latch_seq is not None
+            and _rtp_seq_follows(self._latch_seq, seq)
+        ):
+            self._latch_seq = seq
+            self._latch_count += 1
+        else:
+            self._latch_candidate = src
+            self._latch_ssrc = ssrc
+            self._latch_seq = seq
+            self._latch_count = 1
+        if self._latch_count < _LATCH_LEARN_COUNT:
             return
         _LOGGER.info(
             "RTP latched remote %s:%s -> %s:%s",
@@ -394,6 +431,7 @@ class RtpSession:
         )
         self._latched_remote = src
         self._remote = src
+        self._clear_latch_candidate()
 
     # -- RX -------------------------------------------------------------
     def _receive(self, data: bytes, addr: tuple[str, int] | None = None) -> None:
@@ -407,11 +445,15 @@ class RtpSession:
     ) -> None:
         if len(data) < 12:
             return
+        if data[0] >> 6 != 2:
+            return
         pt = data[1] & 0x7F
         marker = (data[1] & 0x80) != 0
         header_len = 12 + 4 * (data[0] & 0x0F)  # CSRC count
         if len(data) <= header_len:
             return
+        seq = int.from_bytes(data[2:4], "big")
+        ssrc = int.from_bytes(data[8:12], "big")
 
         payload_len = len(data) - header_len
         is_dtmf = pt == self.dtmf_pt if self.dtmf_pt >= 0 else False
@@ -428,7 +470,7 @@ class RtpSession:
             is_dtmf = True
 
         if is_dtmf:
-            self._maybe_latch(addr)
+            self._maybe_latch(addr, seq, ssrc)
             # Not every device sets the marker bit on the first packet of an
             # event, so key off the RTP timestamp instead: all packets of one
             # keypress repeat the same timestamp. The marker bit, when present,
@@ -449,6 +491,6 @@ class RtpSession:
         decode = self._decoder_for(pt)
         if decode is None:
             return
-        self._maybe_latch(addr)
+        self._maybe_latch(addr, seq, ssrc)
         if self.on_audio is not None:
             self.on_audio(decode(data[header_len:]))
