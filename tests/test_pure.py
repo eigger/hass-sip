@@ -1531,6 +1531,225 @@ def test_telephone_event_pt_does_not_leak_across_calls():
     assert second_pt == (-1, -1)
 
 
+def test_media_start_after_hangup_does_not_early_return():
+    """Hangup's fire-and-forget stop must not make the next start a no-op."""
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client._remote_rtp_ip = "198.51.100.10"
+        client._remote_rtp_port = 4000
+        order: list[str] = []
+
+        async def slow_stop():
+            order.append("stop")
+            await asyncio.sleep(0.02)
+
+        async def fake_start(port):
+            order.append("start")
+            return True
+
+        with (
+            patch.object(client.rtp, "stop", side_effect=slow_stop),
+            patch.object(client.rtp, "start", side_effect=fake_start),
+        ):
+            await client._start_media()
+            first_owner = client._media_owner
+            client._end_call("local")
+            client._remote_rtp_ip = "203.0.113.8"
+            client._remote_rtp_port = 5004
+            await client._start_media()
+            await asyncio.sleep(0.05)
+        return order, client._media_active, first_owner, client._media_owner
+
+    order, active, first_owner, second_owner = asyncio.run(run())
+    assert order == ["start", "stop", "start"]
+    assert active is True
+    assert first_owner == 0
+    assert second_owner == 1
+
+
+def test_late_media_stop_does_not_kill_new_session():
+    """A delayed stop for call A must not tear down call B's RTP."""
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client._remote_rtp_ip = "198.51.100.10"
+        client._remote_rtp_port = 4000
+        stops: list[int] = []
+
+        async def track_stop():
+            stops.append(1)
+
+        async def fake_start(port):
+            return True
+
+        with (
+            patch.object(client.rtp, "stop", side_effect=track_stop),
+            patch.object(client.rtp, "start", side_effect=fake_start),
+        ):
+            await client._start_media()
+            old = client._media_session
+            client._media_session += 1
+            client._remote_rtp_ip = "203.0.113.8"
+            await client._start_media()
+            await client._stop_media_session(old)
+        return client._media_active, client._media_owner, stops
+
+    active, owner, stops = asyncio.run(run())
+    assert active is True
+    assert owner == 1
+    # First start has no prior session; second start stops leftover A, late
+    # stop_session(0) is a no-op so rtp.stop ran once.
+    assert stops == [1]
+
+
+def test_duplicate_start_media_same_session_does_not_restart():
+    """ACK/re-INVITE must not tear down RTP that this dialog just started."""
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client._remote_rtp_ip = "198.51.100.10"
+        client._remote_rtp_port = 4000
+        starts: list[int] = []
+        stops: list[int] = []
+        bound = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_start(port):
+            starts.append(port)
+            bound.set()
+            await release.wait()
+            return True
+
+        async def track_stop():
+            stops.append(1)
+
+        with (
+            patch.object(client.rtp, "stop", side_effect=track_stop),
+            patch.object(client.rtp, "start", side_effect=slow_start),
+        ):
+            first = client._loop.create_task(client._start_media())
+            await bound.wait()
+            second = client._loop.create_task(client._start_media())
+            release.set()
+            await first
+            await second
+            await client._start_media()
+        return starts, stops, client._media_active, client._media_owner
+
+    starts, stops, active, owner = asyncio.run(run())
+    assert starts == [7078]
+    assert stops == []
+    assert active is True
+    assert owner == 0
+
+
+def test_start_media_retargets_if_endpoint_changes_during_bind():
+    """re-INVITE during bind must not keep sending to the first SDP dest."""
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client.state = sip_client.SipState.IN_CALL
+        client._remote_rtp_ip = "198.51.100.10"
+        client._remote_rtp_port = 4000
+        starts: list[int] = []
+        stops: list[int] = []
+        bound = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_start(port):
+            starts.append(port)
+            bound.set()
+            await release.wait()
+            return True
+
+        async def track_stop():
+            stops.append(1)
+
+        with (
+            patch.object(client.rtp, "stop", side_effect=track_stop),
+            patch.object(client.rtp, "start", side_effect=slow_start),
+        ):
+            first = client._loop.create_task(client._start_media())
+            await bound.wait()
+            client._remote_rtp_ip = "203.0.113.8"
+            client._remote_rtp_port = 5004
+            client._sync_media_endpoint("198.51.100.10", 4000)
+            release.set()
+            await first
+            await asyncio.sleep(0)
+        return starts, stops, client.rtp.sdp_remote, client._media_active
+
+    starts, stops, remote, active = asyncio.run(run())
+    assert starts == [7078]
+    assert stops == []
+    assert remote == ("203.0.113.8", 5004)
+    assert active is True
+
+
+def test_auto_answer_right_after_bye_starts_media():
+    """Intercom: BYE then a new auto-answer INVITE before stop finishes."""
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client.registered = True
+        client.state = sip_client.SipState.REGISTERED
+        client._local_ip = "192.0.2.1"
+        client._local_port = 5060
+        starts: list[str] = []
+
+        async def slow_stop():
+            await asyncio.sleep(0.02)
+
+        async def fake_start(port):
+            starts.append(client._remote_rtp_ip)
+            return True
+
+        first = _invite_request(call_id="a@example", sdp_ip="198.51.100.10")
+        first.headers["call-info"] = "<sip:door>;answer-after=0"
+        second = _invite_request(
+            call_id="b@example", branch="z9hG4bKb", sdp_ip="203.0.113.8"
+        )
+        second.headers["call-info"] = "<sip:door>;answer-after=0"
+        bye = sm.parse_sip_message(
+            "BYE sip:alice@example SIP/2.0\r\n"
+            "Via: SIP/2.0/UDP pbx.example;branch=z9hG4bKbye\r\n"
+            "From: <sip:bob@example>;tag=remote\r\n"
+            "To: <sip:alice@example>;tag=placeholder\r\n"
+            "Call-ID: a@example\r\n"
+            "CSeq: 2 BYE\r\n"
+            "Content-Length: 0\r\n\r\n"
+        )
+        with (
+            patch.object(client, "_send_raw"),
+            patch.object(client.rtp, "stop", side_effect=slow_stop),
+            patch.object(client.rtp, "start", side_effect=fake_start),
+        ):
+            client._handle_request(first)
+            await asyncio.sleep(0.05)
+            bye.headers["to"] = client._d_local
+            client._handle_request(bye)
+            client._handle_request(second)
+            await asyncio.sleep(0.08)
+        return starts, client._media_active, client.state, client._remote_rtp_ip
+
+    starts, active, state, remote = asyncio.run(run())
+    assert starts == ["198.51.100.10", "203.0.113.8"]
+    assert active is True
+    assert state == sip_client.SipState.IN_CALL
+    assert remote == "203.0.113.8"
+
+
 def test_new_call_chooses_preferred_codec_not_previous():
     if sip_client is None:
         return

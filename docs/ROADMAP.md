@@ -499,10 +499,10 @@ media_player 속성: `call_duration`, `audio_path`, `bytes_received`, `bytes_sen
 
 ## P2 — 자원 관리·동시성
 
-### [ ] P2-1. 미디어 생명주기 직렬화
+### [x] P2-1. 미디어 생명주기 직렬화
 
-**근거** §1.3-6. `_end_call`(:1076)이 `_stop_media`를 fire-and-forget으로 던지고 즉시
-상태를 전이시켜 `_start_media`(:1086)와 경합한다.
+**근거** §1.3-6. `_end_call`이 `_stop_media`를 fire-and-forget으로 던지고 즉시
+상태를 전이시켜 `_start_media`와 경합한다.
 
 **작업** `SipClient`에 `asyncio.Lock`을 두고 `_start_media`/`_stop_media`를 직렬화한다.
 `_end_call`이 던지는 태스크가 완료되기 전에 새 통화가 시작되어도 순서가 보장되게 한다.
@@ -510,6 +510,13 @@ media_player 속성: `call_duration`, `audio_path`, `bytes_received`, `bytes_sen
 
 **수용 기준** 통화 종료 직후 즉시 새 착신을 auto-answer하는 시나리오에서
 새 통화의 RTP 세션이 정상 시작된다(테스트).
+
+**추가된 테스트**
+- `test_media_start_after_hangup_does_not_early_return`
+- `test_late_media_stop_does_not_kill_new_session`
+- `test_duplicate_start_media_same_session_does_not_restart`
+- `test_start_media_retargets_if_endpoint_changes_during_bind`
+- `test_auto_answer_right_after_bye_starts_media`
 
 ---
 

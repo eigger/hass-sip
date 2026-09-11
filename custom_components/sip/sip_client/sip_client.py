@@ -281,6 +281,9 @@ class SipClient:
         self._remote_dtmf_pt = -1
         self._sdp_negotiated = False
         self._media_active = False
+        self._media_lock = asyncio.Lock()
+        self._media_session = 0
+        self._media_owner: int | None = None
 
         self.rtp = RtpSession()
         self.rtp.media_timeout = float(self.config.media_timeout)
@@ -1400,7 +1403,9 @@ class SipClient:
         self.last_call_reason = reason
         self.last_call_bytes_rx = self.rtp.bytes_received
         self.last_call_bytes_tx = self.rtp.bytes_sent
-        self._loop.create_task(self._stop_media())
+        ended_session = self._media_session
+        self._media_session += 1
+        self._loop.create_task(self._stop_media_session(ended_session))
         self._set_state(SipState.REGISTERED if self.registered else SipState.IDLE)
         self._emit("on_call_ended", reason)
 
@@ -1432,32 +1437,67 @@ class SipClient:
         self.hangup(reason="media_timeout")
 
     # -- media ----------------------------------------------------------
-    async def _start_media(self) -> None:
-        if self._media_active:
-            return
+    def _apply_rtp_dest_if_changed(self) -> None:
+        """Retarget RTP if SDP moved the peer while a start was in flight."""
         if not self._remote_rtp_ip or not self._remote_rtp_port:
-            _LOGGER.warning("No remote RTP endpoint; media not started")
             return
-        self.rtp.set_codec(self._codec)
-        self.rtp.dtmf_pt = self._remote_dtmf_pt
-        self.rtp.set_remote(self._remote_rtp_ip, self._remote_rtp_port)
-        self.rtp.on_audio = self._on_rx_audio
-        self.rtp.on_dtmf = self._on_rx_dtmf
-        if not await self.rtp.start(self.config.local_rtp_port):
-            return
-        self._media_active = True
-        _LOGGER.info(
-            "Media started: remote %s:%s pt=%s dtmf_pt=%s",
-            self._remote_rtp_ip, self._remote_rtp_port, self._chosen_pt, self._remote_dtmf_pt,
-        )
+        dest = (self._remote_rtp_ip, self._remote_rtp_port)
+        if self.rtp.sdp_remote != dest:
+            self.rtp.set_remote(self._remote_rtp_ip, self._remote_rtp_port)
+
+    async def _start_media(self) -> None:
+        async with self._media_lock:
+            session = self._media_session
+            if self._media_active:
+                # Same dialog: ACK/UPDATE/re-INVITE can schedule a second
+                # start while the first is still binding. Do not bounce RTP.
+                if self._media_owner == session:
+                    self._apply_rtp_dest_if_changed()
+                    return
+                await self._stop_media_unlocked()
+            if not self._remote_rtp_ip or not self._remote_rtp_port:
+                _LOGGER.warning("No remote RTP endpoint; media not started")
+                return
+            self.rtp.set_codec(self._codec)
+            self.rtp.dtmf_pt = self._remote_dtmf_pt
+            self.rtp.set_remote(self._remote_rtp_ip, self._remote_rtp_port)
+            self.rtp.on_audio = self._on_rx_audio
+            self.rtp.on_dtmf = self._on_rx_dtmf
+            if not await self.rtp.start(self.config.local_rtp_port):
+                return
+            if session != self._media_session:
+                await self.rtp.stop()
+                return
+            # SDP may have moved the peer during create_datagram_endpoint.
+            self._apply_rtp_dest_if_changed()
+            self._media_active = True
+            self._media_owner = session
+            _LOGGER.info(
+                "Media started: remote %s:%s pt=%s dtmf_pt=%s",
+                self._remote_rtp_ip, self._remote_rtp_port, self._chosen_pt, self._remote_dtmf_pt,
+            )
 
     async def _stop_media(self) -> None:
+        async with self._media_lock:
+            await self._stop_media_unlocked()
+
+    async def _stop_media_session(self, session: int) -> None:
+        """Stop RTP only if this session still owns the socket.
+
+        A hangup schedules this as a background task. The next call may
+        already have started media under a newer ``_media_session``; a late
+        stop must not tear that down.
+        """
+        async with self._media_lock:
+            if self._media_owner is not None and self._media_owner != session:
+                return
+            await self._stop_media_unlocked()
+
+    async def _stop_media_unlocked(self) -> None:
         self._cancel_source()
-        if not self._media_active:
-            await self.rtp.stop()
-            return
         await self.rtp.stop()
         self._media_active = False
+        self._media_owner = None
 
     def _on_rx_audio(self, pcm_le: bytes) -> None:
         try:
