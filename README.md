@@ -8,10 +8,11 @@ hass-sip **registers as a SIP extension** on your PBX. It exposes the line as a 
 
 Transport is **SIP over UDP** with **G.711 (PCMU/PCMA) and G.722**. TLS, SRTP, and Opus are not implemented. **Internet exposure is unsupported.** Unverified PBXs are not labelled "supported".
 
+<!-- Absolute raw URLs so HACS `render_readme` can load images and docs. -->
 | Get registered | Automate | Reference |
 |---|---|---|
-| [Setup & Quick Start](docs/setup.md) | [Examples](docs/examples.md) | [Services, entities, events](docs/services.md) |
-| [PBX compatibility](docs/setup.md#pbx-compatibility) | [Security](docs/security.md) | [Troubleshooting](docs/troubleshooting.md) |
+| [Setup & Quick Start](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/setup.md) | [Examples](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/examples.md) | [Services, entities, events](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/services.md) |
+| [PBX compatibility](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/setup.md) | [Security](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/security.md) | [Troubleshooting](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/troubleshooting.md) |
 
 ## What it is for
 
@@ -25,9 +26,9 @@ target:
   entity_id: media_player.phone_line
 ```
 
-![Phone to Assist storyboard — not a live capture](docs/demo/phone-assist.gif)
+![Phone to Assist storyboard — not a live capture](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/demo/phone-assist.gif)
 
-Full flow: [Voice Assist example](docs/examples.md#voice-assist-automation-example). Door locks: [allow-list + PIN](docs/security.md).
+Full flow: [Voice Assist example](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/examples.md). Door locks: [allow-list + PIN](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/security.md).
 
 ### Intercom auto-answer
 
@@ -39,9 +40,9 @@ A door station rings the extension; hass-sip answers immediately and opens two-w
 }
 ```
 
-![Intercom auto-answer storyboard — not a live capture](docs/demo/intercom-autoanswer.gif)
+![Intercom auto-answer storyboard — not a live capture](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/demo/intercom-autoanswer.gif)
 
-Put that in `sip_contacts.json` (or send SIP auto-answer headers). [Intercom details](docs/examples.md#intercom--auto-answer-mode).
+Put that in `sip_contacts.json` (or send SIP auto-answer headers). [Intercom details](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/examples.md).
 
 ### Sensor event → phone + TTS
 
@@ -56,9 +57,9 @@ data:
   message: "The garage door has been open for ten minutes."
 ```
 
-![Sensor event to phone TTS storyboard — not a live capture](docs/demo/sensor-tts-call.gif)
+![Sensor event to phone TTS storyboard — not a live capture](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/demo/sensor-tts-call.gif)
 
-More TTS options: [Announce a TTS message](docs/examples.md#example-announce-a-tts-message-then-hang-up).
+More TTS options: [Announce a TTS message](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/examples.md).
 
 ## Installation
 
@@ -75,7 +76,7 @@ On the same LAN as FreePBX:
 3. **Registration status** should read `registered`.
 4. Dial the extension; **Call Audio** (`audio_path`) should become `bidirectional`.
 
-Field list, firewall notes, and the pjsip snippet: **[Setup](docs/setup.md)**.
+Field list, firewall notes, and the pjsip snippet: **[Setup](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/setup.md)**.
 
 ## Features
 
@@ -87,7 +88,7 @@ Field list, firewall notes, and the pjsip snippet: **[Setup](docs/setup.md)**.
 
 ## Security
 
-Run hass-sip on the same LAN (or VPN) as the PBX. Do not port-forward UDP 5060 or RTP (`local_rtp_port`, default 7078). For Assist that can unlock a door, use allow-list + DTMF PIN + a dedicated pipeline — **[Security](docs/security.md)**.
+Run hass-sip on the same LAN (or VPN) as the PBX. Do not port-forward UDP 5060 or RTP (`local_rtp_port`, default 7078). For Assist that can unlock a door, use allow-list + DTMF PIN + a dedicated pipeline — **[Security](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/security.md)**.
 
 ## Feedback
 
