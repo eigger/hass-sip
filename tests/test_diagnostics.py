@@ -181,16 +181,21 @@ def test_diagnostics_no_media_call_does_not_inherit_previous_rtp_bytes():
         client._begin_dialog_media()
         client.state = sip_client.SipState.RINGING_OUT
         ringing = client.diagnostics_snapshot()
+        client.state = sip_client.SipState.IN_CALL
+        in_call_no_rtp = client.diagnostics_snapshot()
         client._end_call("remote_reject")
         after_b = client.diagnostics_snapshot()
-        return after_a, ringing, after_b
+        return after_a, ringing, in_call_no_rtp, after_b
 
-    after_a, ringing, after_b = asyncio.run(run())
+    after_a, ringing, in_call_no_rtp, after_b = asyncio.run(run())
     assert after_a["rtp"]["audio_path"] == "bidirectional"
     assert after_a["call"]["last_end_reason"] == "local"
     assert ringing["rtp"]["audio_path"] == "none"
     assert ringing["rtp"]["bytes_received"] == 0
     assert ringing["rtp"]["bytes_sent"] == 0
+    assert in_call_no_rtp["call"]["in_call"] is True
+    assert in_call_no_rtp["rtp"]["running"] is False
+    assert in_call_no_rtp["rtp"]["audio_path"] == "none"
     assert after_b["call"]["last_end_reason"] == "remote_reject"
     assert after_b["rtp"]["audio_path"] == "none"
     assert after_b["rtp"]["bytes_received"] == 0

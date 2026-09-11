@@ -68,6 +68,15 @@ class SipCallbacks:
 
 _HOLD_IPS = frozenset({"0.0.0.0", "0:0:0:0:0:0:0:0", "::"})
 _INFO_DTMF_TYPES = ("application/dtmf-relay", "application/dtmf", "audio/telephone-event")
+_DIALOG_STATES = frozenset(
+    {
+        SipState.INVITING,
+        SipState.RINGING_OUT,
+        SipState.INCOMING,
+        SipState.ANSWERING,
+        SipState.IN_CALL,
+    }
+)
 
 
 def _dtmf_from_token(token: str) -> str | None:
@@ -307,14 +316,10 @@ class SipClient:
 
     def diagnostics_snapshot(self) -> dict:
         """Runtime SIP/RTP state for the HA diagnostics download (no secrets)."""
-        if self.rtp.running or self.state in (
-            SipState.INCOMING,
-            SipState.ANSWERING,
-            SipState.INVITING,
-            SipState.RINGING_OUT,
-        ):
-            # Live counters, including a new dialog that has not started RTP
-            # yet (counters are cleared in _begin_dialog_media).
+        if self.rtp.running or self.state in _DIALOG_STATES:
+            # Live counters, including a dialog that has not started RTP yet
+            # (bind failure / offerless INVITE). Counters are cleared in
+            # _begin_dialog_media so this cannot inherit the previous call.
             rx, tx = self.rtp.bytes_received, self.rtp.bytes_sent
         else:
             rx, tx = self.last_call_bytes_rx, self.last_call_bytes_tx
