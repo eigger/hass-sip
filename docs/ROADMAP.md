@@ -618,7 +618,8 @@ media_player 속성: `call_duration`, `audio_path`, `bytes_received`, `bytes_sen
 스트리밍 공급이 멈췄다 몰아서 오면 `_RealtimePacer`가 한 번에 TX 버퍼(1초)를
 넘기는 PCM을 밀어 앞부분을 잘라냈다. `ahead`가 `−_PCM_MAX_BEHIND_SEC` 아래로
 떨어지면 `_start`를 재동기화해 catch-up을 버퍼 크기 이내로 제한한다. 문장 중간
-무음 구간은 남을 수 있고, 그 원인은 P3-4(#45)에서 재확인한다.
+무음 구간은 TTS 공급이 멈춘 동안 RTP 컴포트 사일런스이며, #45 계열 끊김과는
+별개다(P3-4).
 
 ---
 
@@ -670,16 +671,81 @@ barge-in preroll이 있을 때만 톤을 건너뛴다. 완료된 턴 시작 톤�
 
 ---
 
-### [ ] P3-4. (조사) choppy live TTS #45 원인 규명
+### [x] P3-4. (조사) choppy live TTS #45 원인 규명
 
 **근거** #46에서 송신 페이싱을 절대 데드라인으로 고쳤는데 이슈가 아직 열려 있다.
 원인이 다른 층(수신 지터, TTS 공급, 네트워크)일 가능성이 남아 있다.
 
-**작업** 코드를 먼저 바꾸지 말고 재현·측정부터 한다. P1-1의 RTP 요약 로깅과 P1-3의
-바이트 카운터를 활용해 송신 간격 분포를 측정하고, 리포터에게 요청할 정보 목록을 정리한다.
-P3-1 적용 후 재확인한다.
+**작업** 코드를 바꾸지 않고 이슈·경로·기존 계측을 대조했다. 리포터 재현은
+QNAP/FreePBX/Piper 환경이 없어 요청 목록으로 대체한다.
+
+**조사 결과**
+
+1. **#45가 가리킨 층은 AudioSource 페이싱이다. #46이 그 메커니즘을 제거했다.**
+   `sip.dial`의 `message`/`tts_engine`과 IVR `audio_file`은 같은 RTP·코덱으로
+   나간다. 차이는 소스뿐이었다. 옛 `FfmpegAudioSource`는 20 ms 프레임마다 고정
+   18 ms sleep을 해서 이벤트 루프 지연이 누적되면 `RtpSession._sender`가 큐가
+   비었을 때 컴포트 사일런스를 넣었다. 로컬 WAV는 ffmpeg가 입력을 바로 디코드해
+   이 미끄러짐이 잘 안 드러났고, TTS는 합성+stdin 공급이 겹쳐 더 잘 드러났다.
+   #46은 `_RealtimePacer`(절대 데드라인 + 0.5 s 프리버퍼)로 같은 stall에서
+   사일런스 비율을 0으로 떨어뜨렸다(10–25 ms 루프 stall 벤치).
+
+2. **`sip.dial` TTS는 지금도 전체 합성 후 `data=`로 재생한다.** 
+   `play_message_internal`은 `async_get_media_source_audio`로 바이트를 모은 뒤
+   `FfmpegAudioSource(data=...)`다. P3-1 스트리밍(`chunks=`)은 Assist TTS 전용이라
+   #45 경로를 바꾸지 않는다. `data=` 모드에서는 ffmpeg가 입력을 전부 갖고 있어
+   P3-1에서 고친 “공급 정지 후 몰아넣기 → TX 클립”도 이 경로의 주원인이 아니다.
+
+3. **P1-1 RTP 요약 / P1-3 바이트 카운터로는 끊김을 직접 셀 수 없다.**
+   5초 트레이스(`tx=`)는 20 ms마다 패킷을 보내면 ~250이어야 하고, 컴포트
+   사일런스도 패킷을 보내므로 끊김이 있어도 `tx`와 `bytes_sent`는 정상으로
+   보인다. 구분하려면 사일런스 프레임 카운터가 필요하고, 그건 별도 카드다.
+   트레이스가 가리키는 것: `tx`가 50 pkt/s에서 크게 모자라면 송신 루프 자체
+   stall, `lost~`는 수신 손실(발신 TTS 끊김과 무관), 협상 코덱은 P1-3 엔티티.
+
+4. **남은 코드 리스크는 RTP 송신 루프의 late-resync다 (#46 리뷰가 남긴 한계).**
+   `_RealtimePacer`는 벽시계 대비 0.5 s를 유지하고, `_sender`는 늦으면
+   `next_t = loop.time()`으로 맞춰 **따라잡지 않는다**. 점유량은
+   `0.5 s + 누적 송신 지연`이 되고 1 s 상한을 넘기면 `push_tx_audio`가 앞에서
+   버린다. 한 안내 방송 안에서 ~0.5 s의 송신 stall이 쌓여야 한다. QNAP에서
+   HA docker + G.722 순수 파이썬 인코드가 같은 루프에 있으면 후보가 된다.
+   WAV가 짧은 안내에서 부드러웠던 것과도 맞는다.
+
+5. **수신 지터 버퍼(§6 장기 후보)는 #45의 주원인이 아니다.** 증상은 송신
+   안내 방송이고, 같은 RTP로 나가는 WAV는 이미 부드럽다.
+
+6. **리포터는 2.0.1(#46 포함) 재시험을 약속한 뒤 결과가 없다.** 이슈는 열어 두고
+   재확인을 요청한다. 재현되면 P3-5.
+
+**리포터에게 요청할 정보**
+- hass-sip 버전 (2.0.1 미만이면 #46 미적용)
+- 여전히 끊기는지, G.722 vs G.711(`prefer_codec`) 차이
+- 안내 길이, Piper가 같은 NAS인지
+- `custom_components.sip.sip_client.trace` DEBUG 5초 줄 (tx/pt/lost)
+- 통화 후 엔티티 `codec`, `call_audio`, `bytes_sent`, `call_duration`
 
 **수용 기준** 원인 구간이 특정되고, 수정이 필요하면 별도 카드로 분리된다.
+
+**결론** 보고된 끊김의 메커니즘은 AudioSource 고정 sleep (#46으로 제거).
+잔여는 `_sender` late-resync + 벽시계 페이서 → **P3-5**. P3-1 스트리밍 클립은
+Assist 경로의 별 문제였고 이미 가드했다. 수신 지터는 이 이슈에서 제외.
+
+---
+
+### [ ] P3-5. RTP TX를 버퍼 점유량으로 페이싱
+
+**근거** P3-4. #46 리뷰: `_RealtimePacer`는 벽시계 0.5 s 리드이고 `_sender`는
+늦으면 프레임을 따라잡지 않고 시계만 맞춘다. 점유가 1 s를 넘으면 앞에서 드롭.
+`sip.dial` TTS가 2.0.1 이후에도 끊기면 이 층이다.
+
+**작업** (리포터 재확인 또는 로컬 재현 후에만)
+- 페이서를 `len(_tx_buffer)` 기준으로 바꿔 AudioSource가 TX 백로그를 보게 한다.
+- RTP 트레이스에 컴포트 사일런스 vs 실음 프레임 비율을 남겨 P1-1만으로 끊김을
+  구분할 수 있게 한다.
+- G.722 인코드를 이벤트 루프 밖으로 빼는 것은 측정 후에만.
+
+**수용 기준** 루프 stall이 0.5 s 이상 쌓여도 안내 방송이 앞에서 잘리지 않고,
+트레이스에서 사일런스 비율을 읽을 수 있다.
 
 ---
 
@@ -805,7 +871,8 @@ reconfigure에서 기존 비밀번호가 평문으로 표시되지 않게 한다
   RFC 3261 §10.2는 동일 Call-ID 유지를 SHOULD로 두며, registrar에 따라 Contact가
   중복 쌓일 수 있다. 중복 등록 리포트가 나오면 착수.
 - **수신 지터 버퍼 / 시퀀스 재정렬 / PLC**: 현재 시퀀스 번호를 읽지 않고 도착 순서대로
-  즉시 디코드한다. G.722는 stateful ADPCM이라 재정렬에 더 취약하다. P3-4 조사 결과에 따라.
+  즉시 디코드한다. G.722는 stateful ADPCM이라 재정렬에 더 취약하다. P3-4에서
+  #45 송신 끊김의 주원인이 아님을 확인했다. 수신 깨짐 리포트가 나오면 착수.
 - **connected UDP 소켓 재검토**: `_open_socket`이 `remote_addr`를 지정해 등록 서버 외
   IP에서 온 패킷을 커널이 버린다. 소스 필터링 이득은 있지만, outbound proxy 설정 시
   PBX 직접 INVITE가 사라지고 멀티 인터페이스/SBC 환경에서 조용히 실패한다.
@@ -840,7 +907,7 @@ reconfigure에서 기존 비밀번호가 평문으로 표시되지 않게 한다
 ## 8. 참고
 
 - 검토 근거가 된 외부 이슈: #16(answer/hangup), #17(407), #20(423), #23(DTMF),
-  #28(재설정), #39(3CX SBC Record-Route), #41·#42·#44(Assist), #45(choppy TTS, 열림)
+  #28(재설정), #39(3CX SBC Record-Route), #41·#42·#44(Assist), #45(choppy TTS, P3-4에서 페이싱으로 특정, 리포터 재확인 대기)
 - HA Core `voip` 통합: https://www.home-assistant.io/integrations/voip
 - 코덱 지원 요청 스레드: https://community.home-assistant.io/t/support-for-other-codecs-in-voip-integration/568580
 - Asterisk 지원 요청 스레드: https://community.home-assistant.io/t/add-asterisk-support-to-the-voip-integration/791436
