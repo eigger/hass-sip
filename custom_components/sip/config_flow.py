@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
+from collections.abc import Mapping
 import asyncio
 import voluptuous as vol
 
@@ -93,6 +94,16 @@ def _suggested_rtp_port(hass: HomeAssistant) -> int:
     while port in used:
         port += 2  # RTP/RTCP pair convention
     return port
+
+
+def merge_reconfigure_data(
+    entry_data: Mapping[str, Any], user_input: dict[str, Any]
+) -> dict[str, Any]:
+    """Apply form fields onto existing entry data.
+
+    Reconfigure must not drop keys the form does not collect (``assist_user``).
+    """
+    return {**entry_data, **user_input}
 
 
 async def async_validate_sip_registration(
@@ -215,7 +226,8 @@ class SipConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "cannot_connect"
             else:
                 return self.async_update_reload_and_abort(
-                    reconfigure_entry, data=user_input
+                    reconfigure_entry,
+                    data=merge_reconfigure_data(reconfigure_entry.data, user_input),
                 )
 
         return self.async_show_form(

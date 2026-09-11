@@ -812,6 +812,7 @@ Assist 경로의 별 문제였고 이미 가드했다. 수신 지터는 이 이�
 **작업** core `voip`과 같이 계정마다 `SIP Assist ({내선})` 시스템 사용자를 만들고
 Assist 세션당 `Context`를 하나 만들어 모든 턴·initial_prompt에 재사용한다.
 pipeline에는 SIP `device_id`도 넘긴다. 엔트리 삭제 시 사용자를 제거한다.
+Reconfigure는 폼 필드를 기존 `entry.data`에 병합해 `assist_user`가 지워지지 않게 한다.
 
 **수용 기준** Assist가 실행한 서비스 호출이 logbook에서 해당 SIP 계정 사용자와
 그 Assist 세션(통화) context로 귀속된다.
@@ -823,6 +824,7 @@ pipeline에는 SIP `device_id`도 넘긴다. 엔트리 삭제 시 사용자를 �
 - `test_remove_assist_user_skips_when_absent`
 - `test_assist_reuses_session_context_and_forwards_user`
 - `test_assist_initial_prompt_uses_same_context`
+- `test_reconfigure_preserves_assist_user`
 
 ---
 
