@@ -845,7 +845,8 @@ async def async_register_services(hass: HomeAssistant) -> None:
             old = close_recorder_slot(data)
             if old is not None:
                 client.set_sink(NullSink())
-                hass.async_create_task(old.wait_closed())
+                await old.wait_closed()
+                _fire_recording_stopped(hass, entry_id, data)
 
             recorder = WavRecorderSink(
                 target_file, sample_rate=client.codec.sample_rate
