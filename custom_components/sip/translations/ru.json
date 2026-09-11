@@ -65,11 +65,29 @@
           "incoming": "Входящий",
           "outgoing": "Исходящий"
         }
+      },
+      "negotiated_codec": {
+        "name": "Согласованный кодек"
+      },
+      "call_audio": {
+        "name": "Аудио вызова",
+        "state": {
+          "none": "Нет медиа",
+          "no_rx": "Нет приёма (одностороннее)",
+          "no_tx": "Нет передачи (одностороннее)",
+          "bidirectional": "Двустороннее"
+        }
+      },
+      "last_call_reason": {
+        "name": "Причина завершения"
       }
     },
     "binary_sensor": {
       "call_active": {
         "name": "Вызов активен"
+      },
+      "audio_bidirectional": {
+        "name": "Двустороннее аудио"
       }
     },
     "switch": {

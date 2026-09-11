@@ -19,7 +19,7 @@ A native custom integration for Home Assistant to connect directly to a SIP serv
 - **Interactive Voice Response (IVR) Engine**: Construct nested DTMF automated phone trees with TTS prompt templates, custom PIN authentication, and native Home Assistant service triggers.
 - **Wideband Audio (G.722)**: Negotiates G.722 (16 kHz) when the remote party supports it, falling back to G.711 µ-law / A-law. Voice Assist receives true 16 kHz PCM on G.722 calls instead of upsampled narrowband.
 - **Continuous Voice Assist**: During an active call, `sip.start_assist` keeps listening for follow-up commands until silence, a turn limit, or hangup — no need to redial between commands.
-- **Sensors**: Exposes real-time registration status, call state (line active), and last caller ID.
+- **Sensors**: Exposes registration status, last caller ID, negotiated codec, last-call audio path (`none` / `no_rx` / `no_tx` / `bidirectional`), hangup reason, and a bidirectional-audio binary sensor.
 
 ## Installation
 
@@ -673,7 +673,7 @@ action:
 ## Troubleshooting
 
 - **Registration fails**: Double-check the SIP extension credentials and host IP address. Ensure your firewall or FreePBX settings permit UDP traffic on port `5060` from the Home Assistant host.
-- **No Audio / One-way Audio**: This is typically caused by NAT or routing issues. Ensure the RTP port range (defaults starting at `7078`) is open and routed properly. Download diagnostics from **Settings → Devices & Services → SIP Client → ⋮ → Download diagnostics** — `sip.rtp.audio_path` is `no_rx` / `no_tx` / `bidirectional`, `sip.codec.mismatch` flags an offer we cannot negotiate, and `sip.registration.last_failure` shows why REGISTER failed. Passwords are redacted; phone numbers are masked.
+- **No Audio / One-way Audio**: This is typically caused by NAT or routing issues. Ensure the RTP port range (defaults starting at `7078`) is open and routed properly. After a call, check **Call Audio** (`no_rx` means we sent but heard nothing) and **Bidirectional Audio**; the phone-line media player also shows `call_duration`, byte counts, and `audio_path`. Download diagnostics from **Settings → Devices & Services → SIP Client → ⋮ → Download diagnostics** for SDP vs latched addresses. Passwords are redacted; phone numbers are masked.
 - **FFmpeg errors**: Ensure that the `ffmpeg` system binary is installed and accessible in your Home Assistant path, as it is utilized for audio transcoding.
 - **SIP / RTP protocol trace**: Off by default. To capture signalling (INVITE / 200 OK / REGISTER) and a 5-second RTP summary without putting digest credentials in the log, add this to `configuration.yaml` and restart:
 

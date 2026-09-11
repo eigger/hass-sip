@@ -473,7 +473,7 @@ P0-2 latching은 RTP 단위 테스트로 `test_pure.py`에 남아 있다.
 
 ---
 
-### [ ] P1-3. 미디어 상태 노출
+### [x] P1-3. 미디어 상태 노출
 
 **근거** `NullSink.bytes_received`가 이미 있는데 노출되지 않는다.
 
@@ -483,6 +483,17 @@ P0-2 latching은 RTP 단위 테스트로 `test_pure.py`에 남아 있다.
 - 통화 시간(초)을 media_player 속성에 노출.
 
 **수용 기준** 사용자가 통화 후 엔티티만 보고 "음성이 한쪽만 흐른다"를 판단할 수 있다.
+
+**추가된 테스트** (`tests/test_media_status.py`)
+- `test_audio_confirmed_requires_both_directions_above_threshold`
+- `test_call_duration_live_then_history`
+- `test_media_view_one_way_is_not_confirmed`
+- `test_media_view_bidirectional_is_confirmed`
+- `test_media_view_from_real_sip_client_one_way`
+
+엔티티: `sensor.negotiated_codec`, `sensor.call_audio` (`none`/`no_rx`/`no_tx`/`bidirectional`),
+`sensor.last_call_reason`, `binary_sensor.audio_bidirectional`.
+media_player 속성: `call_duration`, `audio_path`, `bytes_received`, `bytes_sent`.
 
 ---
 
