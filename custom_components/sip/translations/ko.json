@@ -215,7 +215,7 @@
       "fields": {
         "recording_file": {
           "name": "녹음 파일 경로",
-          "description": "저장할 WAV 파일의 절대 경로 (예: /media/recording.wav)."
+          "description": "WAV 파일 경로. 상대 경로는 Home Assistant 설정 디렉터리 기준입니다. 허용된 디렉터리(설정 폴더, allowlist_external_dirs, /media, /share) 안에 있어야 합니다."
         }
       }
     },

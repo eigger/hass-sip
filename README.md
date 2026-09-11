@@ -83,10 +83,15 @@ Sends DTMF digits to the active SIP call.
 ### `sip.start_recording`
 Starts recording call audio to a local WAV file.
 - `entity_id` *(Required)*: The target SIP media player entity.
-- `recording_file` *(Required)*: Absolute path of the WAV file to save (e.g., `/media/recording.wav`).
+- `recording_file` *(Required)*: Path of the WAV file to save. Relative paths are resolved against the Home Assistant config directory (e.g. `www/sip/last_msg.wav`). Absolute paths must stay inside an allowed directory:
+  - the config directory
+  - `allowlist_external_dirs` and `media_dirs`
+  - Home Assistant OS `/media` and `/share` (when those mounts exist)
+
+Parent directories are created if missing. Hangup closes the file and fires `sip_recording_stopped`; you do not have to call `sip.stop_recording` first. A new recording never appends to a previous call's WAV.
 
 ### `sip.stop_recording`
-Stops active call recording.
+Stops active call recording and finalizes the WAV so it is immediately playable.
 - `entity_id` *(Required)*: The target SIP media player entity.
 
 ### `sip.start_assist`

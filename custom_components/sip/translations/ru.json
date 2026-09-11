@@ -215,7 +215,7 @@
       "fields": {
         "recording_file": {
           "name": "Путь к файлу записи",
-          "description": "Абсолютный путь к сохраняемому WAV-файлу (например, /media/recording.wav)."
+          "description": "Путь к WAV-файлу. Относительные пути считаются от каталога конфигурации Home Assistant. Должен быть внутри разрешённого каталога (config, allowlist_external_dirs, /media или /share)."
         }
       }
     },

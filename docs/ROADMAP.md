@@ -520,19 +520,26 @@ media_player 속성: `call_duration`, `audio_path`, `bytes_received`, `bytes_sen
 
 ---
 
-### [ ] P2-2. 녹음 정리 + 블로킹 I/O 제거
+### [x] P2-2. 녹음 정리 + 블로킹 I/O 제거
 
 **작업**
-1. `on_call_ended`(`__init__.py:278`)에서 recorder를 닫고 sink를 `NullSink`로 되돌리며
+1. `on_call_ended`에서 recorder를 닫고 sink를 `NullSink`로 되돌리며
    `data["recorder"]`를 제거한다. `EVENT_SIP_RECORDING_STOPPED`도 발행한다.
-2. `WavRecorderSink`(`audio.py:101`)를 비블로킹으로 바꾼다. RTP 콜백에서는 큐에 넣고,
-   별도 태스크/executor가 디스크에 쓴다. `wave.open`도 executor로 옮긴다.
-3. 파일 경로 검증: HA 설정 디렉터리 밖 임의 경로 쓰기를 막을지 결정하고 문서화한다.
+2. `WavRecorderSink`를 비블로킹으로 바꾼다. RTP 콜백에서는 큐에 넣고,
+   워커 스레드가 디스크에 쓴다. `wave.open`도 워커에서 호출한다.
+3. 녹음 경로는 설정 디렉터리 / `allowlist_external_dirs` / `media_dirs` /
+   HA OS `/media`·`/share` 안으로 제한한다. 상대 경로는 설정 디렉터리 기준.
 
 **수용 기준**
 - 통화 종료 시 WAV 파일이 닫히고 재생 가능한 상태가 된다.
 - 연속 두 통화를 녹음하면 서로 다른 파일에 기록된다(같은 파일에 이어 쓰지 않는다).
 - RTP 콜백 경로에 파일 I/O가 없다.
+
+**추가된 테스트**
+- `test_wav_recorder_write_does_not_block_on_open`
+- `test_wav_recorder_close_finalizes_playable_wav`
+- `test_wav_recorder_consecutive_calls_do_not_append`
+- `test_recording_path_rejects_escape_from_config_dir`
 
 ---
 

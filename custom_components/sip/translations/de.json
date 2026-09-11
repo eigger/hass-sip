@@ -215,7 +215,7 @@
       "fields": {
         "recording_file": {
           "name": "Aufnahmedateipfad",
-          "description": "Absoluter Pfad der zu speichernden WAV-Datei (z.B. /media/recording.wav)."
+          "description": "Pfad der WAV-Datei. Relative Pfade gelten ab dem Home-Assistant-Konfigurationsverzeichnis. Muss in einem erlaubten Verzeichnis liegen (Config, allowlist_external_dirs, /media oder /share)."
         }
       }
     },
