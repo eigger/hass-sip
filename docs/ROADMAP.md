@@ -88,9 +88,9 @@ SIP core는 HA 없이 단독 로드할 수 있다. `tests/test_pure.py` 상단�
 - **REGISTER Call-ID 유지**: `_do_register`가 갱신마다 Call-ID/tag를 새로 만든다.
   RFC 3261 §10.2는 동일 Call-ID 유지를 SHOULD로 두며, registrar에 따라 Contact가
   중복 쌓일 수 있다. 중복 등록 리포트가 나오면 착수.
-- **수신 지터 버퍼 / 시퀀스 재정렬 / PLC**: 현재 시퀀스 번호를 읽지 않고 도착 순서대로
-  즉시 디코드한다. G.722는 stateful ADPCM이라 재정렬에 더 취약하다. 수신 깨짐
-  리포트가 나오면 착수.
+- **수신 지터 버퍼 / 시퀀스 재정렬 / PLC**: `_receive_impl`이 seq를 읽어 latch와
+  손실 추정에 쓰지만, 재정렬에는 쓰지 않고 도착 순서대로 즉시 디코드한다.
+  G.722는 stateful ADPCM이라 재정렬에 더 취약하다. 수신 깨짐 리포트가 나오면 착수.
 - **connected UDP 소켓 재검토**: `_open_socket`이 `remote_addr`를 지정해 등록 서버 외
   IP에서 온 패킷을 커널이 버린다. 소스 필터링 이득은 있지만, outbound proxy 설정 시
   PBX 직접 INVITE가 사라지고 멀티 인터페이스/SBC 환경에서 조용히 실패한다.
