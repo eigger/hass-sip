@@ -60,8 +60,10 @@ class SipCallbacks:
     on_call_ended: Callable[[], None] | None = None
     on_dtmf: Callable[[str], None] | None = None
     on_playback_done: Callable[[], None] | None = None
+    on_codec_change: Callable[[codecs.Codec], None] | None = None
 
 
+_HOLD_IPS = frozenset({"0.0.0.0", "0:0:0:0:0:0:0:0", "::"})
 _INFO_DTMF_TYPES = ("application/dtmf-relay", "application/dtmf", "audio/telephone-event")
 
 
@@ -143,6 +145,17 @@ def _via_branch(via: str) -> str:
     return match.group(1) if match else ""
 
 
+def _answer_direction(sdp: sm.SdpInfo) -> str:
+    """RFC 3264 answer direction for a remote offer, including RFC 2543 hold."""
+    if sdp.direction == "inactive":
+        return "inactive"
+    if sdp.direction == "sendonly" or sdp.connection_ip in _HOLD_IPS:
+        return "recvonly"
+    if sdp.direction == "recvonly":
+        return "sendonly"
+    return "sendrecv"
+
+
 class _SipProtocol(asyncio.DatagramProtocol):
     def __init__(self, on_packet: Callable[[bytes], None]) -> None:
         self._on_packet = on_packet
@@ -200,6 +213,7 @@ class SipClient:
         self._remote_invite_cseq = 0
         self._remote_invite_branch = ""
         self._on_hold = False
+        self._local_direction = "sendrecv"
 
         # negotiated media
         self._remote_rtp_ip = ""
@@ -535,7 +549,9 @@ class SipClient:
         self._remote_invite_cseq = 0
         self._remote_invite_branch = ""
         self._on_hold = False
+        self._local_direction = "sendrecv"
         self.rtp.send_silence = True
+        self.rtp.tx_enabled = True
         self._d_call_id = sm.gen_call_id(self._local_ip)
         self._d_local_tag = sm.gen_tag()
         self._d_branch = sm.gen_branch()
@@ -604,7 +620,7 @@ class SipClient:
         """
         sid = str(int(time.time()))
         # RFC 3264: answer sendonly with recvonly, inactive with inactive.
-        direction = "recvonly" if self._on_hold else "sendrecv"
+        direction = self._local_direction
         return (
             "v=0\r\n"
             f"o=- {sid} {sid} IN IP4 {self._local_ip}\r\n"
@@ -805,35 +821,53 @@ class SipClient:
     def _apply_remote_sdp(self, sdp: sm.SdpInfo) -> None:
         old_ip, old_port = self._remote_rtp_ip, self._remote_rtp_port
         # RFC 2543 hold uses c=0.0.0.0; keep the last real destination.
-        if sdp.connection_ip and sdp.connection_ip not in ("0.0.0.0", "0:0:0:0:0:0:0:0", "::"):
+        if sdp.connection_ip and sdp.connection_ip not in _HOLD_IPS:
             self._remote_rtp_ip = sdp.connection_ip
         if sdp.audio_port:
             self._remote_rtp_port = sdp.audio_port
-        self._codec = codecs.choose(sdp)
+
+        new_codec = codecs.keep_or_choose(self._codec, sdp)
+        codec_changed = (
+            new_codec.name != self._codec.name
+            or new_codec.payload_type != self._codec.payload_type
+        )
+        self._codec = new_codec
         self._chosen_pt = self._codec.payload_type
-        self._remote_dtmf_pt = sdp.telephone_event_pt
-
-        # Update RTP session with negotiated values
-        self.rtp.set_codec(self._codec)
-        if self._remote_dtmf_pt >= 0:
+        if sdp.telephone_event_pt >= 0:
+            self._remote_dtmf_pt = sdp.telephone_event_pt
             self.rtp.dtmf_pt = self._remote_dtmf_pt
+        if codec_changed:
+            self.rtp.set_codec(self._codec)
+            _LOGGER.info(
+                "Negotiated codec %s (pt=%s, %s Hz)",
+                self._codec.name, self._codec.payload_type, self._codec.sample_rate,
+            )
+            self._emit("on_codec_change", self._codec)
 
+        self._local_direction = _answer_direction(sdp)
         self._set_hold(sdp.is_hold)
-        # Re-INVITE / UPDATE may move the remote RTP endpoint (direct media).
-        # Retarget the existing session; do not tear it down.
-        if (
-            self._media_active
-            and self._remote_rtp_ip
-            and self._remote_rtp_port
-            and (self._remote_rtp_ip, self._remote_rtp_port) != (old_ip, old_port)
-        ):
-            self.rtp.set_remote(self._remote_rtp_ip, self._remote_rtp_port)
+        self._sync_media_endpoint(old_ip, old_port)
+
+    def _sync_media_endpoint(self, old_ip: str, old_port: int) -> None:
+        """Retarget a live RTP session, or start one once a real address arrives."""
+        if not self._remote_rtp_ip or not self._remote_rtp_port:
+            return
+        if self._media_active:
+            if (self._remote_rtp_ip, self._remote_rtp_port) != (old_ip, old_port):
+                self.rtp.set_remote(self._remote_rtp_ip, self._remote_rtp_port)
+            return
+        # Initial INVITE was offerless or c=0.0.0.0 so _start_media never
+        # bound a socket. A later re-INVITE / ACK / UPDATE can supply the
+        # real endpoint — start then, without tearing anything down.
+        if self.state in (SipState.IN_CALL, SipState.ANSWERING):
+            self._loop.create_task(self._start_media())
 
     def _set_hold(self, held: bool) -> None:
         if held == self._on_hold:
             return
         self._on_hold = held
         self.rtp.send_silence = not held
+        self.rtp.tx_enabled = not held
         if held:
             self.rtp.flush_tx_buffer()
         _LOGGER.info("Remote %s the call", "held" if held else "resumed")
@@ -901,13 +935,17 @@ class SipClient:
 
         cseq = _cseq_number(m.header("CSeq"))
         branch = _via_branch(m.header("Via"))
-        # RFC 3261: re-INVITE raises CSeq. Same CSeq + different branch is a
+        # RFC 3261: re-INVITE raises CSeq. Accept higher-CSeq while ANSWERING
+        # too: a lost ACK is often followed by a media re-INVITE before the
+        # original transaction completes. Same CSeq + different branch is a
         # non-standard re-INVITE some PBXes send; treat it as renegotiation
         # only once the call is established.
-        is_reinvite = self.state == SipState.IN_CALL and (
+        established = self.state in (SipState.IN_CALL, SipState.ANSWERING)
+        is_reinvite = established and (
             cseq > self._remote_invite_cseq
             or (
-                cseq == self._remote_invite_cseq
+                self.state == SipState.IN_CALL
+                and cseq == self._remote_invite_cseq
                 and branch
                 and branch != self._remote_invite_branch
             )
@@ -937,6 +975,16 @@ class SipClient:
 
     def _handle_update(self, m: sm.SipMessage) -> None:
         """Answer UPDATE; include an SDP answer when the request offered one."""
+        if not self._d_call_id or m.header("Call-ID") != self._d_call_id:
+            self._send_raw(
+                self._build_response(m, 481, "Call/Transaction Does Not Exist", False)
+            )
+            return
+        if self.state not in (SipState.IN_CALL, SipState.ANSWERING):
+            self._send_raw(
+                self._build_response(m, 481, "Call/Transaction Does Not Exist", False)
+            )
+            return
         if m.body.strip():
             self._apply_remote_sdp(sm.parse_sdp(m.body))
             contact = _angle_uri(m.header("Contact"))
@@ -977,7 +1025,9 @@ class SipClient:
             self._remote_invite_cseq = self._d_cseq
             self._remote_invite_branch = _via_branch(m.header("Via"))
             self._on_hold = False
+            self._local_direction = "sendrecv"
             self.rtp.send_silence = True
+            self.rtp.tx_enabled = True
             self._apply_remote_sdp(sm.parse_sdp(m.body))
 
             # Check for standard Intercom/Doorbell auto-answer headers
@@ -1022,6 +1072,12 @@ class SipClient:
             return
 
         if method == "ACK":
+            if self._d_call_id and m.header("Call-ID") != self._d_call_id:
+                return
+            # Offerless INVITE/re-INVITE: our 200 was the offer; the answer
+            # arrives in the ACK body (RFC 3261 §13.2.1 / §14.1).
+            if m.body.strip():
+                self._apply_remote_sdp(sm.parse_sdp(m.body))
             if self.state == SipState.ANSWERING:
                 self._set_state(SipState.IN_CALL)
                 _LOGGER.info("Call connected (inbound)")
@@ -1182,7 +1238,9 @@ class SipClient:
             self._ring_timeout_handle.cancel()
             self._ring_timeout_handle = None
         self._on_hold = False
+        self._local_direction = "sendrecv"
         self.rtp.send_silence = True
+        self.rtp.tx_enabled = True
         self._loop.create_task(self._stop_media())
         self._set_state(SipState.REGISTERED if self.registered else SipState.IDLE)
         self._emit("on_call_ended")

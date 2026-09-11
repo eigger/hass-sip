@@ -80,6 +80,7 @@ class RtpSession:
         self._remote: tuple[str, int] | None = None
         self.dtmf_pt = 101
         self.send_silence = True
+        self.tx_enabled = True
 
         self._seq = 0
         self._timestamp = 0
@@ -202,7 +203,7 @@ class RtpSession:
     # -- TX -------------------------------------------------------------
     def push_tx_audio(self, pcm_le: bytes) -> None:
         """Queue captured PCM (s16le, mono, codec sample rate) for transmission."""
-        if self._transport is None:
+        if self._transport is None or not self.tx_enabled:
             return
         self._tx_buffer.extend(pcm_le)
         if len(self._tx_buffer) > self._tx_buffer_max:
@@ -291,7 +292,7 @@ class RtpSession:
         while True:
             next_t += FRAME_SEC
             try:
-                if self._remote is not None:
+                if self._remote is not None and self.tx_enabled:
                     if self._dtmf_active or self._dtmf_queue:
                         self._send_dtmf_packet()
                     elif len(self._tx_buffer) >= self._pcm_frame_bytes:

@@ -345,6 +345,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if assist_bridge is not None:
             assist_bridge.on_playback_done()
 
+    @callback
+    def on_codec_change(codec) -> None:
+        nonlocal assist_bridge
+        if assist_bridge is not None:
+            assist_bridge.sample_rate = codec.sample_rate
+        recorder = entry.runtime_data.get("recorder")
+        if recorder is not None:
+            LOGGER.warning(
+                "[%s] Codec changed to %s (%s Hz) while recording; "
+                "the WAV header keeps the rate from when recording started",
+                sip_config.username,
+                codec.name,
+                codec.sample_rate,
+            )
+
     callbacks = SipCallbacks(
         on_state_change=on_state_change,
         on_registered=on_registered,
@@ -353,6 +368,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         on_call_ended=on_call_ended,
         on_dtmf=on_dtmf,
         on_playback_done=on_playback_done,
+        on_codec_change=on_codec_change,
     )
 
     client = SipClient(sip_config, callbacks)
