@@ -51,7 +51,7 @@ Then on the extension:
 4. **Codecs**: enable `g722`, `ulaw`, and `alaw` (order does not have to match; hass-sip offers G.722, then PCMU, then PCMA).
 5. **Submit** and **Apply Config**.
 
-Allow **UDP 5060** from the Home Assistant host to the PBX, and **UDP RTP** from Home Assistant (default starting at `7078`, plus the next even port for RTCP).
+Allow **UDP 5060** from the Home Assistant host to the PBX, and **UDP `local_rtp_port`** (default `7078`) for RTP. The client binds that one port only; **RTCP is not used**, so do not open or debug the next odd/even port.
 
 ### 2. Add the integration
 
@@ -70,7 +70,7 @@ Wait a few seconds. The **Registration status** sensor should read `registered`,
 
 ### 4. Place a test call
 
-From another phone on the PBX, dial `1001`. Answer with `sip.answer` (or enable auto-answer for that caller in `sip_contacts.json`). You should get two-way audio; the media player **Call Audio** attribute should become `bidirectional`.
+From another phone on the PBX, dial `1001`. Answer with `sip.answer` (or enable auto-answer for that caller in `sip_contacts.json`). You should get two-way audio; the **Call Audio** sensor (and the media player's `audio_path` attribute) should become `bidirectional`.
 
 To dial out from Home Assistant:
 
@@ -820,7 +820,7 @@ action:
 ## Troubleshooting
 
 - **Registration fails**: Double-check the SIP extension credentials and host IP address. Ensure your firewall or FreePBX settings permit UDP traffic on port `5060` from the Home Assistant host. Follow the [Quick start](#quick-start-freepbx) and [recommended pjsip values](#recommended-pjsip-endpoint-values). A `423` from the registrar is handled by raising the register expiration; a `407` on outbound calls usually means you need an outbound proxy.
-- **No Audio / One-way Audio**: This is typically caused by NAT or routing issues. Set `direct_media=no`, open the RTP port range (defaults starting at `7078`), and confirm **Call Audio** (`no_rx` means we sent but heard nothing). The phone-line media player also shows `call_duration`, byte counts, and `audio_path`. Download diagnostics from **Settings → Devices & Services → SIP Client → ⋮ → Download diagnostics** for SDP vs latched addresses. Passwords are redacted; phone numbers are masked.
+- **No Audio / One-way Audio**: This is typically caused by NAT or routing issues. Set `direct_media=no`, open UDP `local_rtp_port` (default `7078`; RTCP is not used), and confirm the **Call Audio** sensor (`audio_path`; `no_rx` means we sent but heard nothing). The phone-line media player also exposes `call_duration`, byte counts, and `audio_path`. Download diagnostics from **Settings → Devices & Services → SIP Client → ⋮ → Download diagnostics** for SDP vs latched addresses. Passwords are redacted; phone numbers are masked.
 - **FFmpeg errors**: Ensure that the `ffmpeg` system binary is installed and accessible in your Home Assistant path, as it is utilized for audio transcoding.
 - **SIP / RTP protocol trace**: Off by default. To capture signalling (INVITE / 200 OK / REGISTER) and a 5-second RTP summary without putting digest credentials in the log, add this to `configuration.yaml` and restart:
 
