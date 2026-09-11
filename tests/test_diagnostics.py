@@ -166,6 +166,37 @@ def test_diagnostics_snapshot_one_way_audio():
     assert both["rtp"]["audio_path"] == "bidirectional"
 
 
+def test_diagnostics_no_media_call_does_not_inherit_previous_rtp_bytes():
+    """486 / CANCEL / ring-timeout must not copy the previous call's PCM totals."""
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client.registered = True
+        client.rtp.bytes_sent = 32000
+        client.rtp.bytes_received = 16000
+        client._end_call("local")
+        after_a = client.diagnostics_snapshot()
+        client._begin_dialog_media()
+        client.state = sip_client.SipState.RINGING_OUT
+        ringing = client.diagnostics_snapshot()
+        client._end_call("remote_reject")
+        after_b = client.diagnostics_snapshot()
+        return after_a, ringing, after_b
+
+    after_a, ringing, after_b = asyncio.run(run())
+    assert after_a["rtp"]["audio_path"] == "bidirectional"
+    assert after_a["call"]["last_end_reason"] == "local"
+    assert ringing["rtp"]["audio_path"] == "none"
+    assert ringing["rtp"]["bytes_received"] == 0
+    assert ringing["rtp"]["bytes_sent"] == 0
+    assert after_b["call"]["last_end_reason"] == "remote_reject"
+    assert after_b["rtp"]["audio_path"] == "none"
+    assert after_b["rtp"]["bytes_received"] == 0
+    assert after_b["rtp"]["bytes_sent"] == 0
+
+
 def test_rtp_byte_counters_count_pcm_not_dtmf():
     async def run():
         session = rtp_session.RtpSession()

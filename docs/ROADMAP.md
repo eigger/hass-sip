@@ -464,6 +464,7 @@ P0-2 latching은 RTP 단위 테스트로 `test_pure.py`에 남아 있다.
 - `test_diagnostics_snapshot_codec_mismatch`
 - `test_diagnostics_snapshot_matching_codec_is_not_mismatch`
 - `test_diagnostics_snapshot_one_way_audio`
+- `test_diagnostics_no_media_call_does_not_inherit_previous_rtp_bytes`
 - `test_rtp_byte_counters_count_pcm_not_dtmf`
 - `test_async_get_config_entry_diagnostics_redacts`
 

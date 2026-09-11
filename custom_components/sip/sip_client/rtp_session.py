@@ -280,8 +280,7 @@ class RtpSession:
         self._reset_latch()
         # Fresh codec state for this call (important for stateful codecs).
         self.set_codec(self._codec)
-        self.bytes_received = 0
-        self.bytes_sent = 0
+        self.reset_byte_counters()
         self._sender_task = self._loop.create_task(self._sender())
         _LOGGER.info(
             "RTP started on port %s (pt=%s, dtmf_pt=%s)",
@@ -316,6 +315,12 @@ class RtpSession:
         self._tx_buffer.clear()
         self._clear_dtmf_tx()
         self._rx_dtmf_timestamp = -1
+        self.reset_byte_counters()
+
+    def reset_byte_counters(self) -> None:
+        """Drop TX/RX PCM totals so a new dialog cannot inherit the last call."""
+        self.bytes_received = 0
+        self.bytes_sent = 0
 
     # -- TX -------------------------------------------------------------
     def push_tx_audio(self, pcm_le: bytes) -> None:

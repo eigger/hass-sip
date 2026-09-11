@@ -307,7 +307,14 @@ class SipClient:
 
     def diagnostics_snapshot(self) -> dict:
         """Runtime SIP/RTP state for the HA diagnostics download (no secrets)."""
-        if self.rtp.running:
+        if self.rtp.running or self.state in (
+            SipState.INCOMING,
+            SipState.ANSWERING,
+            SipState.INVITING,
+            SipState.RINGING_OUT,
+        ):
+            # Live counters, including a new dialog that has not started RTP
+            # yet (counters are cleared in _begin_dialog_media).
             rx, tx = self.rtp.bytes_received, self.rtp.bytes_sent
         else:
             rx, tx = self.last_call_bytes_rx, self.last_call_bytes_tx
@@ -993,6 +1000,7 @@ class SipClient:
         self.rtp.send_silence = True
         self.rtp.clear_tx_pause()
         self.rtp.set_expect_rx(True)
+        self.rtp.reset_byte_counters()
 
     def _sync_media_endpoint(self, old_ip: str, old_port: int) -> None:
         """Retarget a live RTP session, or start one once a real address arrives."""
