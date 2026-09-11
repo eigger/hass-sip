@@ -133,6 +133,24 @@ The session ends when:
 - `noise_suppression` *(Optional)*: Noise suppression level applied to caller audio, `0` (off) to `4` (max). Helps on noisy narrowband G.711 lines where line noise is otherwise mistaken for speech.
 - `turn_tone` *(Optional)*: Play a short beep when the microphone opens for the next turn (default: `false`). After TTS there is a brief guard before the next pipeline starts; speech in that window is prerolled when voice activity is detected. A completed beep drops the guard/tone capture so speakerphone echo of the beep does not reach STT — speak after the beep. Skipped on barge-in turns that already have preroll, and left off by default so existing calls and IVR `assist: true` prompts are unchanged.
 - `hangup_on_end` *(Optional)*: Hang up the call when the Assist session ends (default: `false`).
+- `allowed_callers` *(Optional)*: Caller IDs that may start Assist. Omitted means no restriction, so existing automations keep working. Matching uses the SIP user-part (`100`, `sip:100@pbx`, and `<sip:100@host>` all compare as `100`). An empty list allows nobody.
+- `contacts_only` *(Optional)*: Only callers listed in `sip_contacts.json` may start Assist (default: `false`). Combined with `allowed_callers`, the caller must match **both**.
+- `pin` *(Optional)*: DTMF PIN collected before Assist starts. The caller enters the digits and either presses `#` or matches the PIN length (15 s timeout). Failed, hung-up, or timed-out attempts fire `sip_assist_rejected` and do **not** run intents. The PIN is never logged or included in events.
+
+> **Caller ID can be spoofed.** An allow-list alone is not a security boundary. For door-lock or other security intents, use **allow-list + PIN + a dedicated Assist pipeline** that only exposes those intents. IVR `assist: true` does not use this gate — give that menu its own PIN if needed.
+
+```yaml
+  - service: sip.start_assist
+    target:
+      entity_id: media_player.phone_line
+    data:
+      allowed_callers:
+        - "100"
+        - "101"
+      contacts_only: true
+      pin: "1234"
+      pipeline_id: "door-lock-pipeline"
+```
 
 > **Tuning for phone calls**: the Assist defaults assume a smart speaker's microphone. On a telephone line, line noise and codec artefacts can trip the voice detector before the caller speaks — the symptom is a reply to a cough or a breath, followed by the real question being split across two turns. Raising `silence_seconds` and enabling `noise_suppression` addresses the first part. Enabling `turn_tone` adds an audible cue when it is the caller's turn to speak. Speech that starts right after TTS is forwarded into the next turn as preroll when it looks like voice (not echo of the reply or the beep). Enabling `barge_in` (handsets only) additionally lets a caller talk over a response instead of waiting for it to finish.
 
@@ -182,6 +200,7 @@ Supported event types (`event_type` attribute):
 - `dtmf`: Fired when a DTMF key is pressed. Attributes: `digit`.
 - `recording_started` / `recording_stopped`: Fired when call recording starts or stops.
 - `registered`: Fired when the SIP client registers successfully.
+- `assist_rejected`: Fired when `sip.start_assist` refuses the caller. Attributes: `caller`, `reason` (`not_allowed`, `pin_mismatch`, `pin_timeout`).
 
 #### Example Event Trigger:
 ```yaml
@@ -206,6 +225,7 @@ If you prefer triggering directly from the Event Bus, the integration fires the 
 | `sip_dtmf_digit` | `digit` | A DTMF digit was received from the remote party |
 | `sip_recording_started` | `recording_file` | Call recording started |
 | `sip_recording_stopped` | – | Call recording stopped |
+| `sip_assist_rejected` | `caller`, `reason` | Assist was refused (`not_allowed`, `pin_mismatch`, or `pin_timeout`) |
 
 > `sip_call_connected` and `sip_playback_done` are the two events/states you want for "answer → speak → hang up" flows: wait for the call to connect before playing media, and wait for playback to finish before hanging up so the message is never cut off.
 

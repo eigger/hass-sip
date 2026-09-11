@@ -121,7 +121,8 @@
               "ended": "Anruf beendet",
               "recording_started": "Aufnahme gestartet",
               "recording_stopped": "Aufnahme gestoppt",
-              "registered": "Registriert"
+              "registered": "Registriert",
+              "assist_rejected": "Assist abgelehnt"
             }
           }
         }
@@ -270,6 +271,18 @@
         "hangup_on_end": {
           "name": "Bei Ende auflegen",
           "description": "Anruf beenden, wenn die Assist-Sitzung endet."
+        },
+        "allowed_callers": {
+          "name": "Erlaubte Anrufer",
+          "description": "Anrufer-IDs, die Assist starten dürfen. Ohne Angabe keine Einschränkung. Caller-ID ist fälschbar; für Türschloss-Intents zusätzlich PIN verwenden."
+        },
+        "contacts_only": {
+          "name": "Nur Kontakte",
+          "description": "Nur in sip_contacts.json eingetragene Anrufer dürfen Assist starten. Zusammen mit Erlaubte Anrufer müssen beide zutreffen."
+        },
+        "pin": {
+          "name": "PIN",
+          "description": "Optionale DTMF-PIN. Muss vor Assist eingegeben werden (# oder PIN-Länge). Fehlversuch oder Timeout löst sip_assist_rejected aus und führt keine Intents aus."
         }
       }
     }

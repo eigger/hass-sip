@@ -3705,6 +3705,7 @@ def test_start_assist_service_accepts_and_forwards_prompts():
         match_all=lambda value: value,
         positive_int=int,
         string=str,
+        ensure_list=lambda v: list(v) if isinstance(v, (list, tuple)) else [v],
         make_entity_service_schema=lambda schema: vol.Schema(schema),
     )
     helpers.config_validation = cv_stub

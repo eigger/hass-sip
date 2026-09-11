@@ -19,6 +19,11 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.service import async_extract_config_entry_ids
 
 from .assist import AssistBridge
+from .assist_gate import (
+    REASON_NOT_ALLOWED,
+    PinCollector,
+    caller_is_allowed,
+)
 from .const import (
     CONF_CALLER_ID,
     CONF_DOMAIN,
@@ -35,6 +40,7 @@ from .const import (
     DEFAULT_MEDIA_TIMEOUT,
     DEFAULT_MAX_CALL_DURATION,
     DOMAIN,
+    EVENT_SIP_ASSIST_REJECTED,
     EVENT_SIP_CALL_CONNECTED,
     EVENT_SIP_CALL_ENDED,
     EVENT_SIP_DTMF_DIGIT,
@@ -80,6 +86,20 @@ def _fire_recording_stopped(hass: HomeAssistant, entry_id: str, data: dict) -> N
         f"{DOMAIN}_event_{entry_id}",
         EVENT_SIP_RECORDING_STOPPED,
         None,
+    )
+
+
+def _fire_assist_rejected(
+    hass: HomeAssistant, entry_id: str, data: dict, caller: str, reason: str
+) -> None:
+    extra = {"caller": caller, "reason": reason}
+    payload = {"sip_account": data["config"].username, **extra}
+    device_id = _sip_device_id(hass, entry_id)
+    if device_id:
+        payload["device_id"] = device_id
+    hass.bus.async_fire(EVENT_SIP_ASSIST_REJECTED, payload)
+    async_dispatcher_send(
+        hass, f"{DOMAIN}_event_{entry_id}", EVENT_SIP_ASSIST_REJECTED, extra
     )
 
 
@@ -189,6 +209,9 @@ SERVICE_ASSIST_SCHEMA = cv.make_entity_service_schema(
         ),
         vol.Optional("turn_tone"): cv.boolean,
         vol.Optional("hangup_on_end"): cv.boolean,
+        vol.Optional("allowed_callers"): vol.All(cv.ensure_list, [cv.string]),
+        vol.Optional("contacts_only"): cv.boolean,
+        vol.Optional("pin"): cv.string,
     }
 )
 
@@ -229,6 +252,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "last_registered_at": None,
         "contacts": contacts,
         "call_number": "",
+        "pin_collector": None,
     }
 
     # Active session state helpers
@@ -345,6 +369,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     @callback
     def on_call_ended(reason: str = "local") -> None:
         LOGGER.info("[%s] Call ended (%s)", sip_config.username, reason)
+        collector = entry.runtime_data.get("pin_collector")
+        if collector is not None:
+            collector.fail()
+            entry.runtime_data["pin_collector"] = None
 
         # Save to call history log
         start_time = entry.runtime_data.get("call_start_time")
@@ -409,6 +437,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     def on_dtmf(digit: str) -> None:
         LOGGER.debug("[%s] DTMF digit received: %s", sip_config.username, digit)
         fire_sip_event(EVENT_SIP_DTMF_DIGIT, {"digit": digit})
+        collector = entry.runtime_data.get("pin_collector")
+        if collector is not None:
+            collector.handle_digit(digit)
         nonlocal ivr_session
         if ivr_session is not None:
             hass.async_create_task(ivr_session.handle_dtmf(digit))
@@ -927,7 +958,33 @@ async def async_register_services(hass: HomeAssistant) -> None:
             )
             if k in call.data
         }
+        allowed_callers = call.data.get("allowed_callers")
+        contacts_only = bool(call.data.get("contacts_only"))
+        pin = call.data.get("pin") or ""
         for entry_id, data in targets:
+            caller = str(data.get("call_number") or "")
+            if not caller_is_allowed(
+                caller,
+                allowed_callers=allowed_callers,
+                contacts=data.get("contacts"),
+                contacts_only=contacts_only,
+            ):
+                LOGGER.info("Assist rejected for caller %s (not allowed)", caller)
+                _fire_assist_rejected(
+                    hass, entry_id, data, caller, REASON_NOT_ALLOWED
+                )
+                continue
+            if pin:
+                collector = PinCollector(pin)
+                data["pin_collector"] = collector
+                try:
+                    pin_result = await collector.wait()
+                finally:
+                    data["pin_collector"] = None
+                if pin_result != "ok":
+                    LOGGER.info("Assist rejected for caller %s (%s)", caller, pin_result)
+                    _fire_assist_rejected(hass, entry_id, data, caller, pin_result)
+                    continue
             await data["trigger_assist_fn"](**opts)
 
     # Register all services
