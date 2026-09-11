@@ -10,6 +10,11 @@ from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.selector import (
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
+)
 
 from .const import (
     DOMAIN,
@@ -32,17 +37,40 @@ from .const import (
     DEFAULT_MAX_CALL_DURATION,
 )
 
+def _password_selector() -> TextSelector:
+    """Return a password text selector so the field is never shown in the clear."""
+    return TextSelector(
+        TextSelectorConfig(
+            type=TextSelectorType.PASSWORD,
+            autocomplete="current-password",
+        )
+    )
+
+
 def _build_schema(
-    rtp_port_default: int, defaults: dict[str, Any] | None = None
+    rtp_port_default: int,
+    defaults: dict[str, Any] | None = None,
+    *,
+    omit_password_default: bool = False,
 ) -> vol.Schema:
     """Build the account form schema.
 
     When `defaults` is given (editing an existing entry), every field is
     pre-filled with its current value instead of the fresh-entry defaults.
+    The password is a masked selector. On reconfigure, pass
+    ``omit_password_default=True`` so the stored secret is not placed in the
+    form; an empty submission keeps the current password.
     """
 
     def _default(key: str, fallback: Any = vol.UNDEFINED) -> Any:
         return defaults.get(key, fallback) if defaults is not None else fallback
+
+    if omit_password_default:
+        password_key: Any = vol.Optional(CONF_PASSWORD)
+    elif defaults is not None:
+        password_key = vol.Required(CONF_PASSWORD, default=_default(CONF_PASSWORD))
+    else:
+        password_key = vol.Required(CONF_PASSWORD)
 
     return vol.Schema(
         {
@@ -51,7 +79,7 @@ def _build_schema(
                 CONF_PORT, default=_default(CONF_PORT, DEFAULT_PORT)
             ): cv.port,
             vol.Required(CONF_USERNAME, default=_default(CONF_USERNAME)): cv.string,
-            vol.Required(CONF_PASSWORD, default=_default(CONF_PASSWORD)): cv.string,
+            password_key: _password_selector(),
             vol.Optional(
                 CONF_AUTH_USERNAME, default=_default(CONF_AUTH_USERNAME)
             ): cv.string,
@@ -102,8 +130,15 @@ def merge_reconfigure_data(
     """Apply form fields onto existing entry data.
 
     Reconfigure must not drop keys the form does not collect (``assist_user``).
+    An omitted or blank password keeps the stored secret.
     """
-    return {**entry_data, **user_input}
+    merged = {**entry_data, **user_input}
+    if not str(user_input.get(CONF_PASSWORD) or "").strip():
+        if CONF_PASSWORD in entry_data:
+            merged[CONF_PASSWORD] = entry_data[CONF_PASSWORD]
+        else:
+            merged.pop(CONF_PASSWORD, None)
+    return merged
 
 
 async def async_validate_sip_registration(
@@ -216,8 +251,9 @@ class SipConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
             self._abort_if_unique_id_mismatch(reason="unique_id_mismatch")
 
+            candidate = merge_reconfigure_data(reconfigure_entry.data, user_input)
             success, error_msg = await async_validate_sip_registration(
-                self.hass, user_input
+                self.hass, candidate
             )
             if not success:
                 if any(x in error_msg for x in ("401", "403", "407")):
@@ -226,8 +262,7 @@ class SipConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "cannot_connect"
             else:
                 return self.async_update_reload_and_abort(
-                    reconfigure_entry,
-                    data=merge_reconfigure_data(reconfigure_entry.data, user_input),
+                    reconfigure_entry, data=candidate
                 )
 
         return self.async_show_form(
@@ -237,6 +272,7 @@ class SipConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_LOCAL_RTP_PORT, DEFAULT_LOCAL_RTP_PORT
                 ),
                 defaults=user_input or reconfigure_entry.data,
+                omit_password_default=user_input is None,
             ),
             errors=errors,
         )

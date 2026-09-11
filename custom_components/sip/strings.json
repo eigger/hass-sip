@@ -21,7 +21,7 @@
       },
       "reconfigure": {
         "title": "Edit SIP Client",
-        "description": "Update your SIP extension credentials and server details.",
+        "description": "Update your SIP extension credentials and server details. Leave the password blank to keep the current one.",
         "data": {
           "server": "SIP Server / Host",
           "port": "Port",
