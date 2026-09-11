@@ -6,8 +6,9 @@ This is the extension seam. The SIP/RTP core only knows about two PCM ports:
 * :class:`AudioSink` receives RX audio from ``RtpSession.on_audio``.
 
 Today's implementations cover "play a file / TTS to the far end" (TX) and
-"discard / record" (RX). A microphone source or a media_player sink can be added
-later by implementing the same tiny interfaces, without touching the SIP core.
+"discard / record / tee to several listeners" (RX). A microphone source or a
+media_player sink can be added later by implementing the same tiny interfaces,
+without touching the SIP core.
 """
 from __future__ import annotations
 
@@ -99,6 +100,47 @@ class NullSink(AudioSink):
 
     def write(self, pcm_le: bytes) -> None:
         self.bytes_received += len(pcm_le)
+
+
+class TeeSink(AudioSink):
+    """Fan-out PCM to registered sinks; one failure does not stop the others."""
+
+    def __init__(self, *sinks: AudioSink) -> None:
+        self._sinks: list[AudioSink] = []
+        for sink in sinks:
+            self.add(sink)
+
+    def add(self, sink: AudioSink) -> None:
+        if sink is self or sink in self._sinks:
+            return
+        self._sinks.append(sink)
+
+    def remove(self, sink: AudioSink) -> None:
+        try:
+            self._sinks.remove(sink)
+        except ValueError:
+            pass
+
+    def clear(self) -> None:
+        self._sinks.clear()
+
+    @property
+    def sinks(self) -> tuple[AudioSink, ...]:
+        return tuple(self._sinks)
+
+    def write(self, pcm_le: bytes) -> None:
+        for sink in list(self._sinks):
+            try:
+                sink.write(pcm_le)
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Audio sink error")
+
+    def close(self) -> None:
+        for sink in list(self._sinks):
+            try:
+                sink.close()
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Audio sink close error")
 
 
 # ~5 s of 20 ms frames. Bound so a stalled disk cannot grow unbounded.

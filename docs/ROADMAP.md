@@ -543,7 +543,7 @@ media_player 속성: `call_duration`, `audio_path`, `bytes_received`, `bytes_sen
 
 ---
 
-### [ ] P2-3. tee sink (녹음 + Assist 동시)
+### [x] P2-3. tee sink (녹음 + Assist 동시)
 
 **작업** 여러 `AudioSink`에 PCM을 분배하는 `TeeSink`를 `audio.py`에 추가하고,
 `set_sink` 단일 슬롯 대신 sink 등록/해제 구조로 바꾼다. 한 sink의 예외가 다른 sink를
@@ -551,6 +551,12 @@ media_player 속성: `call_duration`, `audio_path`, `bytes_received`, `bytes_sen
 
 **수용 기준** Assist 세션 중 `sip.start_recording`을 호출해도 Assist가 계속 듣고,
 녹음 파일에도 음성이 기록된다.
+
+**추가된 테스트**
+- `test_tee_sink_fans_out_to_every_listener`
+- `test_tee_sink_isolates_listener_errors`
+- `test_start_recording_during_assist_keeps_both_sinks`
+- `test_stop_recording_does_not_detach_assist`
 
 ---
 
