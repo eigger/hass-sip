@@ -4,18 +4,9 @@
 [![License](https://img.shields.io/github/license/eigger/hass-sip?style=flat-square)](LICENSE)
 [![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 
-**Works with your existing PBX.** G.711 / G.722 — no Opus, no ATA required.
+hass-sip **registers as a SIP extension** on your PBX. It exposes the line as a media player, sends and receives DTMF, runs IVR menus, records calls, and can bridge a call to Home Assistant Voice Assist.
 
-hass-sip **registers as a SIP extension** on the PBX you already run. That is the opposite of Home Assistant's built-in [Voice over IP](https://www.home-assistant.io/integrations/voip/) (`voip`) integration, which **listens** for incoming SIP — typically a Grandstream ATA speaking **Opus** — and does not REGISTER to a registrar.
-
-| | Core `voip` | hass-sip |
-|---|---|---|
-| Role | HA waits for a call | HA is a PBX extension (`REGISTER`) |
-| Codecs | Opus | G.722, PCMU, PCMA |
-| Extra hardware | Analog phone + Opus ATA | Existing SIP phones / intercoms on the PBX |
-| Telephony | Assist on inbound | Outbound (`sip.dial`), IVR, DTMF, recording, Assist |
-
-Transport is **SIP over UDP**. TLS, SRTP, and Opus are not implemented. **Exposing this client to the public internet is unsupported** — see [Security](#security). PBX status is in [PBX compatibility](#pbx-compatibility); unverified systems are not labelled "supported".
+Transport is **SIP over UDP** with **G.711 (PCMU/PCMA) and G.722**. TLS, SRTP, and Opus are not implemented. **Exposing this client to the public internet is unsupported** — see [Security](#security). PBX status is in [PBX compatibility](#pbx-compatibility); unverified systems are not labelled "supported".
 
 ## What it is for
 
@@ -689,7 +680,7 @@ On a noisy or narrowband (G.711) line, the assistant may react to line noise or 
       turn_tone: true
 ```
 
-Each SIP account gets a Home Assistant system user named `SIP Assist ({extension})` in the Users group (the same pattern as the core VoIP integration). Assist intents run as that user and reuse one `Context` for the whole session, so Logbook can attribute those actions to that call. Grant this user access to the entities the phone should control. Removing the SIP entry deletes the user.
+Each SIP account gets a Home Assistant system user named `SIP Assist ({extension})` in the Users group. Assist intents run as that user and reuse one `Context` for the whole session, so Logbook can attribute those actions to that call. Grant this user access to the entities the phone should control. Removing the SIP entry deletes the user.
 
 ---
 
