@@ -121,6 +121,7 @@ class RtpSession:
         self.on_dtmf: Callable[[str], None] | None = None
         self.on_media_timeout: Callable[[], None] | None = None
         self.media_timeout: float = 30.0
+        self.expect_rx = True
         self._last_rx_at: float | None = None
         self._media_timeout_handle: asyncio.TimerHandle | None = None
 
@@ -195,6 +196,21 @@ class RtpSession:
         self.tx_enabled = False
         self.flush_tx_buffer()
         self._clear_dtmf_tx()
+        self._cancel_media_timeout()
+
+    def set_expect_rx(self, expected: bool) -> None:
+        """Arm the RX watchdog only when the peer is supposed to send RTP.
+
+        A recvonly peer (paging speaker) never transmits, so a media timeout
+        would cut a long announcement. Hold already gates this via ``tx_enabled``.
+        """
+        if expected == self.expect_rx:
+            return
+        self.expect_rx = expected
+        if expected:
+            if self._transport is not None and self.tx_enabled:
+                self._note_rx()
+            return
         self._cancel_media_timeout()
 
     def clear_tx_pause(self) -> None:
@@ -450,7 +466,12 @@ class RtpSession:
 
     def _arm_media_timeout(self) -> None:
         self._cancel_media_timeout()
-        if self.media_timeout <= 0 or self._transport is None or not self.tx_enabled:
+        if (
+            self.media_timeout <= 0
+            or self._transport is None
+            or not self.tx_enabled
+            or not self.expect_rx
+        ):
             return
         self._media_timeout_handle = self._loop.call_later(
             self.media_timeout, self._fire_media_timeout
@@ -463,7 +484,7 @@ class RtpSession:
 
     def _fire_media_timeout(self) -> None:
         self._media_timeout_handle = None
-        if self._transport is None or not self.tx_enabled:
+        if self._transport is None or not self.tx_enabled or not self.expect_rx:
             return
         _LOGGER.warning(
             "RTP media timeout after %ss without RX", self.media_timeout
@@ -490,6 +511,9 @@ class RtpSession:
             return
         if data[0] >> 6 != 2:
             return
+        # Comfort noise (PT 13) and other keepalives must reset the watchdog
+        # even when we cannot decode them. Latch still requires a known PT.
+        self._note_rx()
         pt = data[1] & 0x7F
         marker = (data[1] & 0x80) != 0
         header_len = 12 + 4 * (data[0] & 0x0F)  # CSRC count
@@ -513,7 +537,6 @@ class RtpSession:
             is_dtmf = True
 
         if is_dtmf:
-            self._note_rx()
             self._maybe_latch(addr, seq, ssrc)
             # Not every device sets the marker bit on the first packet of an
             # event, so key off the RTP timestamp instead: all packets of one
@@ -535,7 +558,6 @@ class RtpSession:
         decode = self._decoder_for(pt)
         if decode is None:
             return
-        self._note_rx()
         self._maybe_latch(addr, seq, ssrc)
         if self.on_audio is not None:
             self.on_audio(decode(data[header_len:]))

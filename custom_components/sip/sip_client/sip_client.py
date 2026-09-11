@@ -612,7 +612,7 @@ class SipClient:
         try:
             if self.state in (SipState.INVITING, SipState.RINGING_OUT):
                 _LOGGER.info("Ring timeout reached; canceling call")
-                self.hangup()
+                self.hangup(reason="ring_timeout")
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Ring timeout handler error")
 
@@ -809,7 +809,7 @@ class SipClient:
         # >= 300 final failure
         self._send_raw(self._build_ack(m))
         _LOGGER.warning("Call failed: %s %s", m.status_code, m.reason)
-        self._end_call()
+        self._end_call("remote_reject")
 
     def _digest_auth_line(self, proxy, auth_user, realm, nonce, uri, resp, qop, nc, cnonce, opaque) -> str:
         head = "Proxy-Authorization: " if proxy else "Authorization: "
@@ -869,6 +869,7 @@ class SipClient:
 
         self._local_direction = _answer_direction(sdp)
         self._set_hold(sdp.is_hold)
+        self.rtp.set_expect_rx(self._local_direction != "sendonly")
         self._sync_media_endpoint(old_ip, old_port)
 
     def _begin_dialog_media(self) -> None:
@@ -884,6 +885,7 @@ class SipClient:
         self._local_direction = "sendrecv"
         self.rtp.send_silence = True
         self.rtp.clear_tx_pause()
+        self.rtp.set_expect_rx(True)
 
     def _sync_media_endpoint(self, old_ip: str, old_port: int) -> None:
         """Retarget a live RTP session, or start one once a real address arrives."""
@@ -1128,7 +1130,7 @@ class SipClient:
                 self._send_raw(
                     self._build_response(self._incoming_invite, 487, "Request Terminated", False)
                 )
-                self._end_call()
+                self._end_call("remote_cancel")
             return
 
         if method == "INFO":
