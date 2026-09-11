@@ -80,6 +80,8 @@ class RtpSession:
         self._remote: tuple[str, int] | None = None
         self.dtmf_pt = 101
         self.send_silence = True
+        self.tx_enabled = True
+        self._tx_paused_at: float | None = None
 
         self._seq = 0
         self._timestamp = 0
@@ -119,6 +121,37 @@ class RtpSession:
     # -- configuration --------------------------------------------------
     def set_remote(self, ip: str, port: int) -> None:
         self._remote = (ip, port)
+
+    def set_tx_enabled(self, enabled: bool) -> None:
+        """Gate RTP transmission; on resume, catch up the RTP timestamp.
+
+        While TX is paused the sender loop does not advance ``_timestamp``.
+        Jumping it by the elapsed 20 ms frames (and re-marking the next
+        packet) keeps a long hold from looking like a burst of late packets.
+        """
+        if enabled == self.tx_enabled:
+            return
+        if enabled:
+            if self._tx_paused_at is not None:
+                elapsed = max(0.0, self._loop.time() - self._tx_paused_at)
+                frames = int(elapsed / FRAME_SEC)
+                if frames:
+                    self._timestamp = (
+                        self._timestamp + frames * self._ts_increment
+                    ) & 0xFFFFFFFF
+                self._first_packet = True
+            self._tx_paused_at = None
+            self.tx_enabled = True
+            return
+        self._tx_paused_at = self._loop.time()
+        self.tx_enabled = False
+        self.flush_tx_buffer()
+        self._clear_dtmf_tx()
+
+    def clear_tx_pause(self) -> None:
+        """Re-enable TX without catching up a hold gap (new/ended call)."""
+        self.tx_enabled = True
+        self._tx_paused_at = None
 
     def set_codec(self, codec: Codec) -> None:
         """Bind the negotiated codec and (re)create encoder/decoder state."""
@@ -164,8 +197,7 @@ class RtpSession:
         self._ssrc = struct.unpack("<I", os.urandom(4))[0]
         self._first_packet = True
         self._tx_buffer.clear()
-        self._dtmf_queue.clear()
-        self._dtmf_active = False
+        self._clear_dtmf_tx()
         self._rx_dtmf_timestamp = -1
         # Fresh codec state for this call (important for stateful codecs).
         self.set_codec(self._codec)
@@ -195,14 +227,13 @@ class RtpSession:
             self._transport.close()
             self._transport = None
         self._tx_buffer.clear()
-        self._dtmf_queue.clear()
-        self._dtmf_active = False
+        self._clear_dtmf_tx()
         self._rx_dtmf_timestamp = -1
 
     # -- TX -------------------------------------------------------------
     def push_tx_audio(self, pcm_le: bytes) -> None:
         """Queue captured PCM (s16le, mono, codec sample rate) for transmission."""
-        if self._transport is None:
+        if self._transport is None or not self.tx_enabled:
             return
         self._tx_buffer.extend(pcm_le)
         if len(self._tx_buffer) > self._tx_buffer_max:
@@ -212,6 +243,14 @@ class RtpSession:
     def flush_tx_buffer(self) -> None:
         """Drop queued PCM not yet sent (e.g. after barge-in)."""
         self._tx_buffer.clear()
+
+    def _clear_dtmf_tx(self) -> None:
+        """Drop in-flight and queued DTMF so a later resume cannot rewind RTP time."""
+        self._dtmf_queue.clear()
+        self._dtmf_active = False
+        self._dtmf_event = -1
+        self._dtmf_duration = 0
+        self._dtmf_end_packets = 0
 
     def queue_dtmf(self, digits: str) -> None:
         if self.dtmf_pt < 0:
@@ -291,7 +330,7 @@ class RtpSession:
         while True:
             next_t += FRAME_SEC
             try:
-                if self._remote is not None:
+                if self._remote is not None and self.tx_enabled:
                     if self._dtmf_active or self._dtmf_queue:
                         self._send_dtmf_packet()
                     elif len(self._tx_buffer) >= self._pcm_frame_bytes:

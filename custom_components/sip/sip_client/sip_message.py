@@ -35,8 +35,17 @@ class SdpInfo:
     pcma_pt: int = -1
     g722_pt: int = -1
     telephone_event_pt: int = -1
+    # sendrecv / sendonly / recvonly / inactive. Last matching a= line wins.
+    direction: str = "sendrecv"
     # All payload types seen on m=audio or a=rtpmap (audio + telephone-event).
     offered_pts: set[int] = field(default_factory=set)
+
+    @property
+    def is_hold(self) -> bool:
+        """RFC 3264 sendonly/inactive, or RFC 2543 c=0.0.0.0 hold."""
+        if self.connection_ip in ("0.0.0.0", "0:0:0:0:0:0:0:0", "::"):
+            return True
+        return self.direction in ("sendonly", "inactive")
 
 
 # Compact header mapping (RFC 3261 Section 7.3.3)
@@ -185,6 +194,8 @@ def parse_sdp(body: str) -> SdpInfo:
                 info.pcma_pt = pt
             elif "g722" in lower:
                 info.g722_pt = pt
+        elif line in ("a=sendrecv", "a=sendonly", "a=recvonly", "a=inactive"):
+            info.direction = line[2:]
     return info
 
 

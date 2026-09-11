@@ -60,8 +60,10 @@ class SipCallbacks:
     on_call_ended: Callable[[], None] | None = None
     on_dtmf: Callable[[str], None] | None = None
     on_playback_done: Callable[[], None] | None = None
+    on_codec_change: Callable[[codecs.Codec], None] | None = None
 
 
+_HOLD_IPS = frozenset({"0.0.0.0", "0:0:0:0:0:0:0:0", "::"})
 _INFO_DTMF_TYPES = ("application/dtmf-relay", "application/dtmf", "audio/telephone-event")
 
 
@@ -129,6 +131,31 @@ def _is_loose_route(route: str) -> bool:
     return bool(_LOOSE_ROUTE_PARAM.search(_angle_uri(route) or route.strip()))
 
 
+def _cseq_number(header: str) -> int:
+    try:
+        return int(header.split()[0])
+    except (ValueError, IndexError):
+        return 0
+
+
+def _via_branch(via: str) -> str:
+    """Branch of the top Via (the transaction this request belongs to)."""
+    first = via.split(",", 1)[0]
+    match = re.search(r";branch=([^;,\s]+)", first, re.IGNORECASE)
+    return match.group(1) if match else ""
+
+
+def _answer_direction(sdp: sm.SdpInfo) -> str:
+    """RFC 3264 answer direction for a remote offer, including RFC 2543 hold."""
+    if sdp.direction == "inactive":
+        return "inactive"
+    if sdp.direction == "sendonly" or sdp.connection_ip in _HOLD_IPS:
+        return "recvonly"
+    if sdp.direction == "recvonly":
+        return "sendonly"
+    return "sendrecv"
+
+
 class _SipProtocol(asyncio.DatagramProtocol):
     def __init__(self, on_packet: Callable[[bytes], None]) -> None:
         self._on_packet = on_packet
@@ -181,6 +208,12 @@ class SipClient:
         self._incoming_invite: sm.SipMessage | None = None
         self._dialog_routes: list[str] = []
         self._accepted_dialog_to = ""
+        # Last INVITE we received in this dialog (initial or re-INVITE). Used
+        # to tell a retransmission (same CSeq + branch) from a re-INVITE.
+        self._remote_invite_cseq = 0
+        self._remote_invite_branch = ""
+        self._on_hold = False
+        self._local_direction = "sendrecv"
 
         # negotiated media
         self._remote_rtp_ip = ""
@@ -188,6 +221,7 @@ class SipClient:
         self._codec: codecs.Codec = codecs.DEFAULT
         self._chosen_pt = self._codec.payload_type
         self._remote_dtmf_pt = -1
+        self._sdp_negotiated = False
         self._media_active = False
 
         self.rtp = RtpSession()
@@ -513,6 +547,9 @@ class SipClient:
         self._invite_auth_tried = False
         self._dialog_routes = []
         self._accepted_dialog_to = ""
+        self._remote_invite_cseq = 0
+        self._remote_invite_branch = ""
+        self._begin_dialog_media()
         self._d_call_id = sm.gen_call_id(self._local_ip)
         self._d_local_tag = sm.gen_tag()
         self._d_branch = sm.gen_branch()
@@ -580,6 +617,8 @@ class SipClient:
         remote never offered (RFC 3264).
         """
         sid = str(int(time.time()))
+        # RFC 3264: answer sendonly with recvonly, inactive with inactive.
+        direction = self._local_direction
         return (
             "v=0\r\n"
             f"o=- {sid} {sid} IN IP4 {self._local_ip}\r\n"
@@ -590,7 +629,7 @@ class SipClient:
             f"{codecs.sdp_rtpmaps(only=only)}"
             "a=fmtp:101 0-15\r\n"
             "a=ptime:20\r\n"
-            "a=sendrecv\r\n"
+            f"a={direction}\r\n"
         )
 
     def _build_invite(self) -> str:
@@ -778,17 +817,88 @@ class SipClient:
         return auth + "\r\n"
 
     def _apply_remote_sdp(self, sdp: sm.SdpInfo) -> None:
-        if sdp.connection_ip:
+        old_ip, old_port = self._remote_rtp_ip, self._remote_rtp_port
+        # RFC 2543 hold uses c=0.0.0.0; keep the last real destination.
+        if sdp.connection_ip and sdp.connection_ip not in _HOLD_IPS:
             self._remote_rtp_ip = sdp.connection_ip
-        self._remote_rtp_port = sdp.audio_port
-        self._codec = codecs.choose(sdp)
-        self._chosen_pt = self._codec.payload_type
-        self._remote_dtmf_pt = sdp.telephone_event_pt
+        if sdp.audio_port:
+            self._remote_rtp_port = sdp.audio_port
 
-        # Update RTP session with negotiated values
-        self.rtp.set_codec(self._codec)
-        if self._remote_dtmf_pt >= 0:
+        old_codec = self._codec
+        in_dialog = self._sdp_negotiated
+        # First SDP of a dialog picks the preferred codec. Later re-INVITE /
+        # UPDATE keep the current one when it is still offered.
+        if in_dialog:
+            new_codec = codecs.keep_or_choose(self._codec, sdp)
+        else:
+            new_codec = codecs.choose(sdp)
+        codec_changed = (
+            new_codec.name != old_codec.name
+            or new_codec.payload_type != old_codec.payload_type
+        )
+        self._codec = new_codec
+        self._chosen_pt = self._codec.payload_type
+        if sdp.valid:
+            self._sdp_negotiated = True
+            # Including -1: a new offer without telephone-event must not
+            # inherit the previous call's DTMF payload type.
+            self._remote_dtmf_pt = sdp.telephone_event_pt
             self.rtp.dtmf_pt = self._remote_dtmf_pt
+        if codec_changed:
+            self.rtp.set_codec(self._codec)
+            if old_codec.sample_rate != new_codec.sample_rate:
+                self.rtp.flush_tx_buffer()
+                if self._tx_source_task is not None:
+                    self._cancel_source()
+                    # Unblock Assist/IVR waiters; CancelledError skips the
+                    # normal on_playback_done at the end of _run_source.
+                    self._emit("on_playback_done")
+            if in_dialog:
+                _LOGGER.info(
+                    "Negotiated codec %s (pt=%s, %s Hz)",
+                    self._codec.name, self._codec.payload_type, self._codec.sample_rate,
+                )
+                self._emit("on_codec_change", self._codec)
+
+        self._local_direction = _answer_direction(sdp)
+        self._set_hold(sdp.is_hold)
+        self._sync_media_endpoint(old_ip, old_port)
+
+    def _begin_dialog_media(self) -> None:
+        """Clear per-call media state so the previous dialog cannot leak."""
+        self._codec = codecs.DEFAULT
+        self._chosen_pt = self._codec.payload_type
+        self._remote_dtmf_pt = -1
+        self.rtp.dtmf_pt = -1
+        self._sdp_negotiated = False
+        self._remote_rtp_ip = ""
+        self._remote_rtp_port = 0
+        self._on_hold = False
+        self._local_direction = "sendrecv"
+        self.rtp.send_silence = True
+        self.rtp.clear_tx_pause()
+
+    def _sync_media_endpoint(self, old_ip: str, old_port: int) -> None:
+        """Retarget a live RTP session, or start one once a real address arrives."""
+        if not self._remote_rtp_ip or not self._remote_rtp_port:
+            return
+        if self._media_active:
+            if (self._remote_rtp_ip, self._remote_rtp_port) != (old_ip, old_port):
+                self.rtp.set_remote(self._remote_rtp_ip, self._remote_rtp_port)
+            return
+        # Initial INVITE was offerless or c=0.0.0.0 so _start_media never
+        # bound a socket. A later re-INVITE / ACK / UPDATE can supply the
+        # real endpoint — start then, without tearing anything down.
+        if self.state in (SipState.IN_CALL, SipState.ANSWERING):
+            self._loop.create_task(self._start_media())
+
+    def _set_hold(self, held: bool) -> None:
+        if held == self._on_hold:
+            return
+        self._on_hold = held
+        self.rtp.send_silence = not held
+        self.rtp.set_tx_enabled(not held)
+        _LOGGER.info("Remote %s the call", "held" if held else "resumed")
 
     # -- inbound requests ----------------------------------------------
     @staticmethod
@@ -826,9 +936,10 @@ class SipClient:
         # dialog of a 18x included, not just the 2xx — must echo the request's
         # Record-Route and carry a Contact the peer can route in-dialog
         # requests to. Dropping either strands a proxy/SBC outside the dialog.
-        if req.method == "INVITE" and 101 <= code < 300:
-            if record_route := req.header("Record-Route"):
-                msg += f"Record-Route: {record_route}\r\n"
+        if req.method in ("INVITE", "UPDATE") and 101 <= code < 300:
+            if req.method == "INVITE":
+                if record_route := req.header("Record-Route"):
+                    msg += f"Record-Route: {record_route}\r\n"
             msg += f"Contact: {self._contact_uri()}\r\n"
         msg += f"User-Agent: {USER_AGENT}\r\n"
         if with_sdp:
@@ -840,21 +951,81 @@ class SipClient:
             msg += "Content-Length: 0\r\n\r\n"
         return msg
 
+    def _handle_dialog_invite(self, m: sm.SipMessage) -> bool:
+        """Handle INVITE that belongs to the current dialog.
+
+        Returns True when the request was consumed (retransmission or re-INVITE).
+        """
+        if not self._d_call_id or m.header("Call-ID") != self._d_call_id:
+            return False
+        if self.state not in (SipState.INCOMING, SipState.ANSWERING, SipState.IN_CALL):
+            return False
+
+        cseq = _cseq_number(m.header("CSeq"))
+        branch = _via_branch(m.header("Via"))
+        # RFC 3261: re-INVITE raises CSeq. Accept higher-CSeq while ANSWERING
+        # too: a lost ACK is often followed by a media re-INVITE before the
+        # original transaction completes. Same CSeq + different branch is a
+        # non-standard re-INVITE some PBXes send; treat it as renegotiation
+        # only once the call is established.
+        established = self.state in (SipState.IN_CALL, SipState.ANSWERING)
+        is_reinvite = established and (
+            cseq > self._remote_invite_cseq
+            or (
+                self.state == SipState.IN_CALL
+                and cseq == self._remote_invite_cseq
+                and branch
+                and branch != self._remote_invite_branch
+            )
+        )
+        if is_reinvite:
+            self._handle_reinvite(m)
+            return True
+        if self.state == SipState.INCOMING:
+            self._send_raw(self._build_response(m, 180, "Ringing", False))
+        else:
+            # Replay 200 using this request's Via/CSeq so a lost 200 for the
+            # original INVITE or a re-INVITE still matches the transaction.
+            self._send_raw(self._build_response(m, 200, "OK", True))
+        return True
+
+    def _handle_reinvite(self, m: sm.SipMessage) -> None:
+        """Answer an in-dialog re-INVITE without restarting the media session."""
+        self._remote_invite_cseq = _cseq_number(m.header("CSeq"))
+        self._remote_invite_branch = _via_branch(m.header("Via"))
+        contact = _angle_uri(m.header("Contact"))
+        if contact:
+            self._d_remote_target = contact
+        if m.body.strip():
+            self._apply_remote_sdp(sm.parse_sdp(m.body))
+        _LOGGER.info("Accepted re-INVITE (cseq=%s)", self._remote_invite_cseq)
+        self._send_raw(self._build_response(m, 200, "OK", True))
+
+    def _handle_update(self, m: sm.SipMessage) -> None:
+        """Answer UPDATE; include an SDP answer when the request offered one."""
+        if not self._d_call_id or m.header("Call-ID") != self._d_call_id:
+            self._send_raw(
+                self._build_response(m, 481, "Call/Transaction Does Not Exist", False)
+            )
+            return
+        if self.state not in (SipState.IN_CALL, SipState.ANSWERING):
+            self._send_raw(
+                self._build_response(m, 481, "Call/Transaction Does Not Exist", False)
+            )
+            return
+        if m.body.strip():
+            self._apply_remote_sdp(sm.parse_sdp(m.body))
+            contact = _angle_uri(m.header("Contact"))
+            if contact:
+                self._d_remote_target = contact
+            self._send_raw(self._build_response(m, 200, "OK", True))
+            return
+        self._send_raw(self._build_response(m, 200, "OK", False))
+
     def _handle_request(self, m: sm.SipMessage) -> None:
         method = m.method
         if method == "INVITE":
-            # Retransmitted INVITE for the dialog we're already handling (our
-            # provisional / 200 was lost): replay the appropriate response.
-            if (
-                not self._outbound
-                and self._incoming_invite is not None
-                and m.header("Call-ID") == self._d_call_id
-                and self.state in (SipState.INCOMING, SipState.ANSWERING, SipState.IN_CALL)
-            ):
-                if self.state == SipState.INCOMING:
-                    self._send_raw(self._build_response(m, 180, "Ringing", False))
-                else:
-                    self._send_raw(self._build_response(self._incoming_invite, 200, "OK", True))
+            if self._handle_dialog_invite(m):
                 return
             caller = self._extract_caller(m)
             self.last_caller = caller
@@ -879,6 +1050,9 @@ class SipClient:
                 self._d_cseq = int(m.header("CSeq").split()[0])
             except (ValueError, IndexError):
                 self._d_cseq = 1
+            self._remote_invite_cseq = self._d_cseq
+            self._remote_invite_branch = _via_branch(m.header("Via"))
+            self._begin_dialog_media()
             self._apply_remote_sdp(sm.parse_sdp(m.body))
 
             # Check for standard Intercom/Doorbell auto-answer headers
@@ -923,6 +1097,12 @@ class SipClient:
             return
 
         if method == "ACK":
+            if self._d_call_id and m.header("Call-ID") != self._d_call_id:
+                return
+            # Offerless INVITE/re-INVITE: our 200 was the offer; the answer
+            # arrives in the ACK body (RFC 3261 §13.2.1 / §14.1).
+            if m.body.strip():
+                self._apply_remote_sdp(sm.parse_sdp(m.body))
             if self.state == SipState.ANSWERING:
                 self._set_state(SipState.IN_CALL)
                 _LOGGER.info("Call connected (inbound)")
@@ -958,6 +1138,10 @@ class SipClient:
                 return
             _LOGGER.debug("DTMF '%s' received via SIP INFO", digit)
             self._on_rx_dtmf(digit)
+            return
+
+        if method == "UPDATE":
+            self._handle_update(m)
             return
 
         # OPTIONS / unknown in-dialog request: acknowledge.
@@ -1078,6 +1262,10 @@ class SipClient:
         if self._ring_timeout_handle is not None:
             self._ring_timeout_handle.cancel()
             self._ring_timeout_handle = None
+        self._on_hold = False
+        self._local_direction = "sendrecv"
+        self.rtp.send_silence = True
+        self.rtp.clear_tx_pause()
         self._loop.create_task(self._stop_media())
         self._set_state(SipState.REGISTERED if self.registered else SipState.IDLE)
         self._emit("on_call_ended")
