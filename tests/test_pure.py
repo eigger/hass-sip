@@ -1715,6 +1715,279 @@ def test_rfc2833_rx_does_not_swallow_audio():
     assert len(audio) == 1 and len(audio[0]) == 320
 
 
+# ---------------------------------------------- symmetric RTP latching (P0-2)
+def _pcmu_packet(seq=1, ssrc=0x1234):
+    return bytes([0x80, 0]) + struct.pack("!HII", seq, 100, ssrc) + b"\xff" * 160
+
+
+def _non_v2_pcmu(seq=1, ssrc=0x1234):
+    return bytes([0x00, 0]) + struct.pack("!HII", seq, 100, ssrc) + b"\xff" * 160
+
+
+def _latch_logs(mock_info):
+    return [c for c in mock_info.call_args_list if "latched" in str(c)]
+
+
+def _feed_pcmu(session, addr, n=None, start_seq=1, ssrc=0x1234):
+    count = rtp_session._LATCH_LEARN_COUNT if n is None else n
+    for i in range(count):
+        session._receive_impl(_pcmu_packet(start_seq + i, ssrc), addr)
+
+
+def test_rtp_latches_tx_dest_to_actual_source():
+    # SDP c= is a private address; N consecutive RTP packets arrive from NAT.
+    async def run():
+        session = rtp_session.RtpSession()
+        session.set_remote("192.168.1.10", 10000)
+        with patch.object(rtp_session._LOGGER, "info") as log:
+            _feed_pcmu(session, ("203.0.113.8", 20000))
+        return (
+            session._remote,
+            session.sdp_remote,
+            session.latched_remote,
+            _latch_logs(log),
+        )
+
+    remote, sdp, latched, logs = asyncio.run(run())
+    assert remote == ("203.0.113.8", 20000)
+    assert sdp == ("192.168.1.10", 10000)
+    assert latched == ("203.0.113.8", 20000)
+    assert len(logs) == 1
+
+
+def test_rtp_one_packet_does_not_latch():
+    async def run():
+        session = rtp_session.RtpSession()
+        session.set_remote("192.168.1.10", 10000)
+        session._receive_impl(_pcmu_packet(1), ("203.0.113.8", 20000))
+        return session._remote, session.latched_remote, session._latch_count
+
+    remote, latched, count = asyncio.run(run())
+    assert remote == ("192.168.1.10", 10000)
+    assert latched is None
+    assert count == 1
+
+
+def test_rtp_latch_ignores_later_sources():
+    # Fewer than N packets from a third host must not steal TX after a latch.
+    async def run():
+        session = rtp_session.RtpSession()
+        session.set_remote("192.168.1.10", 10000)
+        _feed_pcmu(session, ("203.0.113.8", 20000))
+        _feed_pcmu(
+            session, ("198.51.100.9", 30000), n=rtp_session._LATCH_LEARN_COUNT - 1
+        )
+        return session._remote, session.latched_remote, session.sdp_remote
+
+    remote, latched, sdp = asyncio.run(run())
+    assert remote == ("203.0.113.8", 20000)
+    assert latched == ("203.0.113.8", 20000)
+    assert sdp == ("192.168.1.10", 10000)
+
+
+def test_rtp_relatch_after_consecutive_new_source():
+    # NAT remap: the same stream reappears from a new mapping.
+    async def run():
+        session = rtp_session.RtpSession()
+        session.set_remote("192.168.1.10", 10000)
+        _feed_pcmu(session, ("203.0.113.8", 20000), start_seq=1)
+        _feed_pcmu(session, ("198.51.100.9", 30000), start_seq=100)
+        return session._remote, session.latched_remote
+
+    remote, latched = asyncio.run(run())
+    assert remote == ("198.51.100.9", 30000)
+    assert latched == ("198.51.100.9", 30000)
+
+
+def test_rtp_same_source_does_not_latch():
+    async def run():
+        session = rtp_session.RtpSession()
+        session.set_remote("203.0.113.8", 20000)
+        with patch.object(rtp_session._LOGGER, "info") as log:
+            _feed_pcmu(session, ("203.0.113.8", 20000))
+        return (
+            session._remote,
+            session.sdp_remote,
+            session.latched_remote,
+            _latch_logs(log),
+        )
+
+    remote, sdp, latched, logs = asyncio.run(run())
+    assert remote == ("203.0.113.8", 20000)
+    assert sdp == ("203.0.113.8", 20000)
+    assert latched is None
+    assert logs == []
+
+
+def test_rtp_dtmf_packet_latches():
+    async def run():
+        session = rtp_session.RtpSession()
+        session.dtmf_pt = 101
+        session.set_remote("10.0.0.5", 5004)
+        digits = []
+        session.on_dtmf = digits.append
+        addr = ("203.0.113.40", 15000)
+        for i in range(rtp_session._LATCH_LEARN_COUNT):
+            session._receive_impl(
+                _te_packet(101, i == 0, 1000, 5, seq=1 + i), addr
+            )
+        return session._remote, session.latched_remote, digits
+
+    remote, latched, digits = asyncio.run(run())
+    assert remote == ("203.0.113.40", 15000)
+    assert latched == ("203.0.113.40", 15000)
+    assert digits == ["5"]
+
+
+def test_rtp_start_resets_latch():
+    async def run():
+        session = rtp_session.RtpSession()
+        session.set_remote("192.168.1.10", 10000)
+        _feed_pcmu(session, ("203.0.113.8", 20000))
+        transport = MagicMock()
+        with patch.object(
+            session._loop,
+            "create_datagram_endpoint",
+            new=AsyncMock(return_value=(transport, MagicMock())),
+        ):
+            ok = await session.start(4000)
+        state = (
+            session._latch_count,
+            session.latched_remote,
+            session._remote,
+            session.sdp_remote,
+        )
+        await session.stop()
+        return ok, state
+
+    ok, (count, latched, remote, sdp) = asyncio.run(run())
+    assert ok
+    assert count == 0
+    assert latched is None
+    assert remote == sdp == ("192.168.1.10", 10000)
+
+
+def test_rtp_set_remote_resets_latch():
+    # re-INVITE / direct media: a new SDP dest must be allowed to latch again.
+    async def run():
+        session = rtp_session.RtpSession()
+        session.set_remote("192.168.1.10", 10000)
+        _feed_pcmu(session, ("203.0.113.8", 20000), start_seq=1)
+        session.set_remote("10.1.2.3", 8000)
+        after_sdp = (
+            session._remote,
+            session.sdp_remote,
+            session.latched_remote,
+            session._latch_count,
+        )
+        _feed_pcmu(session, ("198.51.100.7", 9000), start_seq=50)
+        return after_sdp, session._remote, session.latched_remote
+
+    after_sdp, remote, latched = asyncio.run(run())
+    assert after_sdp == (("10.1.2.3", 8000), ("10.1.2.3", 8000), None, 0)
+    assert remote == ("198.51.100.7", 9000)
+    assert latched == ("198.51.100.7", 9000)
+
+
+def test_rtp_protocol_forwards_sender_addr():
+    async def run():
+        session = rtp_session.RtpSession()
+        session.set_remote("10.0.0.1", 5004)
+        proto = rtp_session._RtpProtocol(session._receive)
+        addr = ("203.0.113.8", 20000)
+        for i in range(rtp_session._LATCH_LEARN_COUNT):
+            proto.datagram_received(_pcmu_packet(i + 1), addr)
+        return session._remote, session.latched_remote
+
+    remote, latched = asyncio.run(run())
+    assert remote == ("203.0.113.8", 20000)
+    assert latched == ("203.0.113.8", 20000)
+
+
+def test_rtp_unknown_pt_does_not_latch():
+    async def run():
+        session = rtp_session.RtpSession()
+        session.set_remote("192.168.1.10", 10000)
+        unknown = bytes([0x80, 99]) + struct.pack("!HII", 1, 100, 0x1234) + b"\x00" * 160
+        session._receive_impl(unknown, ("203.0.113.8", 20000))
+        before = session._remote, session._latch_count
+        _feed_pcmu(session, ("198.51.100.7", 9000))
+        return before, session._remote, session.latched_remote
+
+    before, remote, latched = asyncio.run(run())
+    assert before == (("192.168.1.10", 10000), 0)
+    assert remote == ("198.51.100.7", 9000)
+    assert latched == ("198.51.100.7", 9000)
+
+
+def test_rtp_non_v2_does_not_latch():
+    async def run():
+        session = rtp_session.RtpSession()
+        session.set_remote("192.168.1.10", 10000)
+        addr = ("203.0.113.8", 20000)
+        for i in range(rtp_session._LATCH_LEARN_COUNT):
+            session._receive_impl(_non_v2_pcmu(i + 1), addr)
+        after_garbage = session._remote, session._latch_count
+        _feed_pcmu(session, addr)
+        return after_garbage, session._remote
+
+    after_garbage, remote = asyncio.run(run())
+    assert after_garbage == (("192.168.1.10", 10000), 0)
+    assert remote == ("203.0.113.8", 20000)
+
+
+def test_rtp_ssrc_change_resets_learn():
+    async def run():
+        session = rtp_session.RtpSession()
+        session.set_remote("192.168.1.10", 10000)
+        addr = ("203.0.113.8", 20000)
+        _feed_pcmu(session, addr, n=3, ssrc=1)
+        interrupted = session._remote, session._latch_count
+        _feed_pcmu(session, addr, n=3, start_seq=10, ssrc=2)
+        still_learning = session._remote, session._latch_count
+        session._receive_impl(_pcmu_packet(13, ssrc=2), addr)
+        return interrupted, still_learning, session._remote
+
+    interrupted, still_learning, remote = asyncio.run(run())
+    assert interrupted == (("192.168.1.10", 10000), 3)
+    assert still_learning == (("192.168.1.10", 10000), 3)
+    assert remote == ("203.0.113.8", 20000)
+
+
+def test_rtp_non_increasing_seq_resets_learn():
+    async def run():
+        session = rtp_session.RtpSession()
+        session.set_remote("192.168.1.10", 10000)
+        addr = ("203.0.113.8", 20000)
+        for _ in range(rtp_session._LATCH_LEARN_COUNT):
+            session._receive_impl(_pcmu_packet(1), addr)
+        return session._remote, session._latch_count
+
+    remote, count = asyncio.run(run())
+    assert remote == ("192.168.1.10", 10000)
+    assert count == 1
+
+
+def test_rtp_current_source_resets_candidate():
+    async def run():
+        session = rtp_session.RtpSession()
+        sdp = ("192.168.1.10", 10000)
+        session.set_remote(*sdp)
+        attacker = ("203.0.113.8", 20000)
+        _feed_pcmu(session, attacker, n=3)
+        session._receive_impl(_pcmu_packet(50), sdp)
+        after_peer = session._remote, session._latch_count
+        _feed_pcmu(session, attacker, n=3, start_seq=100)
+        still_sdp = session._remote
+        session._receive_impl(_pcmu_packet(103), attacker)
+        return after_peer, still_sdp, session._remote
+
+    after_peer, still_sdp, remote = asyncio.run(run())
+    assert after_peer == (("192.168.1.10", 10000), 0)
+    assert still_sdp == ("192.168.1.10", 10000)
+    assert remote == ("203.0.113.8", 20000)
+
+
 # ---------------------------------------------- rate-aware RTP (Stage 2)
 class _FakeTransport:
     def __init__(self):
