@@ -580,11 +580,17 @@ media_player 속성: `call_duration`, `audio_path`, `bytes_received`, `bytes_sen
 
 ---
 
-### [ ] P2-5. DND 상태 복원
+### [x] P2-5. DND 상태 복원
 
 **작업** `SipDndSwitch`를 `RestoreEntity`로 바꿔 HA 재시작 후 DND 상태를 유지한다.
 
 **수용 기준** DND를 켠 뒤 HA를 재시작해도 켜진 상태로 복원된다.
+
+**추가된 테스트**
+- `test_restored_dnd_enabled_mapping`
+- `test_dnd_switch_restores_on_from_last_state`
+- `test_dnd_switch_restores_off_over_live_default`
+- `test_dnd_switch_keeps_default_when_no_last_state`
 
 ---
 
