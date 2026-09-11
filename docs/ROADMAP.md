@@ -845,29 +845,23 @@ reconfigure 첫 화면과 검증 실패 후 재시도 모두 비밀번호를 넣
 
 ## P5 — 호환성 문서 + 포지셔닝
 
-### [ ] P5-1. PBX 호환성 표 + 검증된 설정 예제 (P0와 병행 권장)
+### [x] P5-1. PBX 호환성 표 + 검증된 설정 예제 (P0와 병행 권장)
 
-**근거** 외부 이슈 5건 중 3건이 PBX 설정/변종 문제. 현재 README는
-"FreePBX, Asterisk, or any VoIP provider"라고 쓰는데 3CX에서 이미 이슈가 났다.
+**근거** 외부 이슈 5건 중 3건이 PBX 설정/변종 문제. README가 "any VoIP provider"를
+지원처럼 읽히게 했다.
 
 **작업**
-1. **실제로 테스트한 PBX만 "지원"으로 표기한다.** 나머지는 `커뮤니티 보고` /
-   `미검증`으로 구분한다. 최소 표 형태:
-
-   | PBX | 상태 | 검증 버전 | 비고 |
-   |---|---|---|---|
-   | Asterisk (pjsip) | 지원 / 미검증 | | `direct_media` 설정 명시 |
-   | FreePBX | 지원 / 미검증 | | 내선 생성 절차 |
-   | 3CX | 커뮤니티 보고 | | 이슈 #39 (SBC Record-Route) |
-   | Generic SIP / 사업자 트렁크 | 미검증 | | 이슈 #17 (407) |
-
-2. FreePBX·Asterisk 각각에 대해 **검증된 설정값**을 명시한다:
-   `direct_media`, DTMF 모드(RFC 2833 vs INFO), Session Timer, 코덱 순서(G.722/G.711),
-   NAT 관련 설정. 이 목록 자체가 안정성 문서 역할을 한다.
-3. 30초 Quick Start: 내선 생성 → 통합 추가 → 등록 확인 → 내선으로 전화.
+1. README에 호환성 표를 넣었다. 이 저장소에 랩 버전이 없으므로 어떤 PBX도
+   "지원"으로 표기하지 않았다. FreePBX/Asterisk는 권장 설정, 3CX는 커뮤니티
+   보고(#39), 일반 ITSP는 미검증(#17 407).
+2. FreePBX·Asterisk pjsip에 `direct_media=no`, DTMF RFC 4733, 코덱
+   G.722/PCMU/PCMA, 세션 타이머 끄기, NAT rewrite를 명시했다.
+3. Quick Start: FreePBX 내선 생성 → 통합 추가 → Registration sensor → 시험 통화.
 
 **수용 기준** 신규 사용자가 README만 보고 FreePBX 내선을 만들어 등록까지 도달할 수 있다.
 검증되지 않은 PBX가 "지원"으로 표기되어 있지 않다.
+
+**추가된 테스트** 없음 (문서 카드).
 
 ---
 
