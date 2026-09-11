@@ -652,16 +652,19 @@ FIR 히스토리는 `AssistBridge`가 프레임 사이에 유지한다.
 발화가 잘린다. preroll은 실패 경로(barge-in, 톤 타임아웃)에서만 주입됐다.
 
 **작업** TTS가 끝난 뒤(`_speaking=False`) RX를 링버퍼에 담아 다음 턴 시작 시 정상
-경로에서도 preroll로 넣는다. 턴 시작 톤 대기 중의 발화도 같은 링으로 모은다.
-TTS 재생 중에는 barge-in이 켜진 경우에만 캡처한다. barge-in preroll이 있을 때만
-톤을 건너뛴다(갭 preroll만으로는 톤을 생략하지 않는다).
+경로에서도 preroll로 넣는다. TTS 재생 중에는 barge-in이 켜진 경우에만 캡처한다.
+barge-in preroll이 있을 때만 톤을 건너뛴다. 완료된 턴 시작 톤은 링을 비워
+비프/TTS 꼬리 에코가 STT로 들어가지 않게 하고, MicroVad가 있으면 발화가 아닌
+갭 캡처는 주입하지 않는다. 톤 타임아웃 시의 발화는 그대로 남긴다.
 
 **수용 기준** TTS 종료 직후 100 ms 안에 시작된 발화가 다음 턴 STT 스트림 앞부분에 포함된다.
 
 **추가된 테스트**
 - `test_assist_speech_after_tts_is_prerolled_into_next_turn`
 - `test_assist_does_not_capture_rx_during_tts_without_barge_in`
-- `test_assist_turn_tone_success_keeps_captured_speech` (기존 success-discard 테스트를 대체)
+- `test_assist_turn_tone_success_drops_echo_capture`
+- `test_assist_gap_preroll_skipped_when_vad_hears_no_speech`
+- `test_assist_gap_preroll_kept_when_vad_hears_speech`
 
 ---
 
