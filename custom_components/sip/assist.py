@@ -210,6 +210,8 @@ class AssistBridge(AudioSink):
         hangup_on_end: bool = False,
         stop_audio_fn: Callable[..., None] | None = None,
         media_playing_fn: Callable[[], bool] | None = None,
+        user_id: str | None = None,
+        device_id: str | None = None,
     ) -> None:
         """Initialize the Assist bridge."""
         self.hass = hass
@@ -232,6 +234,8 @@ class AssistBridge(AudioSink):
         self.turn_tone = turn_tone
         self.stop_audio_fn = stop_audio_fn
         self.media_playing_fn = media_playing_fn
+        self._context = Context(user_id=user_id)
+        self._device_id = device_id
 
         if barge_in and MicroVad is None:
             LOGGER.warning(
@@ -511,7 +515,7 @@ class AssistBridge(AudioSink):
                 try:
                     await async_pipeline_from_audio_stream(
                         self.hass,
-                        context=Context(),
+                        context=self._context,
                         event_callback=self._on_pipeline_event,
                         stt_metadata=stt_metadata,
                         stt_stream=self.audio_stream,
@@ -521,6 +525,7 @@ class AssistBridge(AudioSink):
                         start_stage=PipelineStage.STT,
                         end_stage=PipelineStage.TTS,
                         conversation_extra_system_prompt=self.system_prompt,
+                        device_id=self._device_id,
                     )
                 finally:
                     self._listening = False
@@ -596,7 +601,7 @@ class AssistBridge(AudioSink):
             pipeline_input = PipelineInput(
                 run=PipelineRun(
                     self.hass,
-                    context=Context(),
+                    context=self._context,
                     pipeline=pipeline,
                     start_stage=PipelineStage.INTENT,
                     end_stage=PipelineStage.TTS,
@@ -605,6 +610,7 @@ class AssistBridge(AudioSink):
                 session=session,
                 intent_input=self.initial_prompt,
                 conversation_extra_system_prompt=self.system_prompt,
+                device_id=self._device_id,
             )
             await pipeline_input.validate()
             await pipeline_input.execute()

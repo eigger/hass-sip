@@ -137,7 +137,7 @@ The session ends when:
 - `contacts_only` *(Optional)*: Only callers listed in `sip_contacts.json` may start Assist (default: `false`). Combined with `allowed_callers`, the caller must match **both**.
 - `pin` *(Optional)*: DTMF PIN collected before Assist starts. The caller enters the digits and either presses `#` or matches the PIN length (15 s timeout). Failed, hung-up, or timed-out attempts fire `sip_assist_rejected` and do **not** run intents. While the PIN is collected, digits are not logged and `sip_dtmf_digit` is not fired, so the PIN cannot be reconstructed from Logbook or automations.
 
-> **Caller ID can be spoofed.** An allow-list alone is not a security boundary. For door-lock or other security intents, use **allow-list + PIN + a dedicated Assist pipeline** that only exposes those intents. IVR `assist: true` does not use this gate — give that menu its own PIN if needed. SIP INFO DTMF digits can still appear in DEBUG logs and opt-in SIP traces (`Signal=` in INFO bodies); do not attach those logs to an issue if a PIN was entered.
+> **Caller ID can be spoofed.** An allow-list alone is not a security boundary. For door-lock or other security intents, use **allow-list + PIN + a dedicated Assist pipeline** that only exposes those intents, and grant the `SIP Assist ({extension})` user access only to those entities. IVR `assist: true` does not use this gate — give that menu its own PIN if needed. SIP INFO DTMF digits can still appear in DEBUG logs and opt-in SIP traces (`Signal=` in INFO bodies); do not attach those logs to an issue if a PIN was entered.
 
 ```yaml
   - service: sip.start_assist
@@ -501,6 +501,8 @@ On a noisy or narrowband (G.711) line, the assistant may react to line noise or 
       noise_suppression: 2
       turn_tone: true
 ```
+
+Each SIP account gets a Home Assistant system user named `SIP Assist ({extension})` in the Users group (the same pattern as the core VoIP integration). Assist intents run as that user and reuse one `Context` for the whole session, so Logbook can attribute those actions to that call. Grant this user access to the entities the phone should control. Removing the SIP entry deletes the user.
 
 ---
 
