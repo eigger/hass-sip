@@ -3,11 +3,60 @@
 [![GitHub Release](https://img.shields.io/github/v/release/eigger/hass-sip?style=flat-square)](https://github.com/eigger/hass-sip/releases)
 [![License](https://img.shields.io/github/license/eigger/hass-sip?style=flat-square)](LICENSE)
 [![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-![integration usage](https://img.shields.io/badge/dynamic/json?color=41BDF5&logo=home-assistant&label=usage&suffix=%20installs&cacheSeconds=15600&query=%24.sip.total&url=https%3A%2F%2Fanalytics.home-assistant.io%2Fcustom_integrations.json)
 
-A native custom integration for Home Assistant that **registers as a SIP extension** on an existing PBX. It exposes the telephone line as a media player, sends and receives DTMF, runs IVR menus, and can bridge a call to Home Assistant Voice Assist.
+**Works with your existing PBX.** G.711 / G.722 — no Opus, no ATA required.
 
-Transport is **SIP over UDP** with **G.711 (PCMU/PCMA) and G.722**. TLS, SRTP, and Opus are not implemented — see [PBX compatibility](#pbx-compatibility).
+hass-sip **registers as a SIP extension** on the PBX you already run. That is the opposite of Home Assistant's built-in [Voice over IP](https://www.home-assistant.io/integrations/voip/) (`voip`) integration, which **listens** for incoming SIP — typically a Grandstream ATA speaking **Opus** — and does not REGISTER to a registrar.
+
+| | Core `voip` | hass-sip |
+|---|---|---|
+| Role | HA waits for a call | HA is a PBX extension (`REGISTER`) |
+| Codecs | Opus | G.722, PCMU, PCMA |
+| Extra hardware | Analog phone + Opus ATA | Existing SIP phones / intercoms on the PBX |
+| Telephony | Assist on inbound | Outbound (`sip.dial`), IVR, DTMF, recording, Assist |
+
+Transport is **SIP over UDP**. TLS, SRTP, and Opus are not implemented. **Exposing this client to the public internet is unsupported** — see [Security](#security). PBX status is in [PBX compatibility](#pbx-compatibility); unverified systems are not labelled "supported".
+
+## What it is for
+
+### Control Home Assistant from a phone
+
+Call the hass-sip extension, answer, and start Assist. The caller can issue several commands in one call without redialing.
+
+```yaml
+action: sip.start_assist
+target:
+  entity_id: media_player.phone_line
+```
+
+Full flow: [Voice Assist Automation Example](#voice-assist-automation-example). For door locks, add the [allow-list + PIN](#security) gate.
+
+### Intercom auto-answer
+
+A door station rings the extension; hass-sip answers immediately and opens two-way audio.
+
+```json
+{
+  "102": { "name": "Front Doorbell", "auto_answer": true }
+}
+```
+
+Put that in `sip_contacts.json` (or send SIP auto-answer headers). Auto-answer only opens the channel — pair it with Assist, TTS, or recording. Details: [Intercom & Auto-Answer Mode](#intercom--auto-answer-mode).
+
+### Sensor event → phone + TTS
+
+An automation dials a number, speaks a message when the far end answers, then hangs up.
+
+```yaml
+action: sip.dial
+target:
+  entity_id: media_player.phone_line
+data:
+  number: "100"
+  message: "The garage door has been open for ten minutes."
+```
+
+More TTS options: [Announce a TTS message, then hang up](#example-announce-a-tts-message-then-hang-up).
 
 ## 💬 Feedback & Support
 
@@ -114,7 +163,7 @@ This repository does **not** mark a PBX as "supported" unless a version was reco
 | **3CX** (including SBC) | Community reported | — | Inbound via SBC needed Record-Route on 200 OK ([#39](https://github.com/eigger/hass-sip/issues/39)). Core now preserves Record-Route; no 3CX version is recorded here. |
 | **Generic SIP / ITSP / UniFi Talk** | Unverified | — | Outbound `407 Proxy Authentication Required` ([#17](https://github.com/eigger/hass-sip/issues/17)): set **Outbound proxy** to the proxy host and **Authentication username** if it differs from the extension. |
 
-SIP **TLS** and **SRTP** are out of scope (UDP signalling only).
+SIP **TLS** and **SRTP** are out of scope (UDP signalling only). **Internet exposure is unsupported** — see [Security](#security).
 
 ### Recommended pjsip endpoint values
 
@@ -161,6 +210,18 @@ type=aor
 max_contacts=1
 remove_existing=yes
 ```
+
+---
+
+## Security
+
+**Internet exposure is not supported.** Signalling is SIP/2.0/UDP with no TLS and no SRTP. Run hass-sip on the same LAN (or VPN) as the PBX. Do not port-forward UDP 5060 or `local_rtp_port` (default 7078) to the public internet. A PBX that requires TLS or SRTP will not interoperate with this client.
+
+### Door locks and other security intents
+
+Caller ID can be spoofed. An allow-list alone is not a security boundary.
+
+For Assist that can unlock a door, use **allow-list + DTMF PIN + a dedicated Assist pipeline**, and grant the `SIP Assist ({extension})` user access only to those entities. The service fields, spoofing warning, and example YAML are under [`sip.start_assist`](#sipstart_assist). IVR `assist: true` does not use that gate — give that menu its own PIN if needed.
 
 ---
 
