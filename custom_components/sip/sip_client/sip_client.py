@@ -159,6 +159,45 @@ def _answer_direction(sdp: sm.SdpInfo) -> str:
     return "sendrecv"
 
 
+def _offered_codec_names(sdp: sm.SdpInfo) -> list[str]:
+    named = {"G722": sdp.g722_pt, "PCMU": sdp.pcmu_pt, "PCMA": sdp.pcma_pt}
+    names: list[str] = []
+    for codec in codecs.SUPPORTED:
+        if named[codec.name] >= 0 or codec.payload_type in sdp.offered_pts:
+            names.append(codec.name)
+    return names
+
+
+def _codec_mismatch(
+    remote_names: list[str], remote_pts: list[int], dtmf_pt: int
+) -> bool:
+    """True when the remote offer has audio we cannot negotiate."""
+    supported = {c.name for c in codecs.SUPPORTED}
+    if remote_names:
+        return supported.isdisjoint(remote_names)
+    audio_pts = {pt for pt in remote_pts if pt != dtmf_pt and pt != 13}
+    if not audio_pts:
+        return False
+    known = {c.payload_type for c in codecs.SUPPORTED}
+    return audio_pts.isdisjoint(known)
+
+
+def _audio_path(rx: int, tx: int) -> str:
+    if rx > 0 and tx > 0:
+        return "bidirectional"
+    if tx > 0 and rx == 0:
+        return "no_rx"
+    if rx > 0 and tx == 0:
+        return "no_tx"
+    return "none"
+
+
+def _fmt_diag_endpoint(addr: tuple[str, int] | None) -> str | None:
+    if not addr:
+        return None
+    return f"{addr[0]}:{addr[1]}"
+
+
 class _SipProtocol(asyncio.DatagramProtocol):
     def __init__(self, on_packet: Callable[[bytes], None]) -> None:
         self._on_packet = on_packet
@@ -186,6 +225,13 @@ class SipClient:
         self.state = SipState.IDLE
         self.registered = False
         self.last_caller = ""
+        self.last_registered_at: float | None = None
+        self.last_register_failed: str | None = None
+        self.last_call_reason: str | None = None
+        self.last_call_bytes_rx = 0
+        self.last_call_bytes_tx = 0
+        self._remote_offered_pts: list[int] = []
+        self._remote_offered_names: list[str] = []
         self._register_handle: asyncio.TimerHandle | None = None
         self._reg_attempts = 0
 
@@ -259,13 +305,63 @@ class SipClient:
     def set_sink(self, sink: AudioSink) -> None:
         self.sink = sink
 
+    def diagnostics_snapshot(self) -> dict:
+        """Runtime SIP/RTP state for the HA diagnostics download (no secrets)."""
+        if self.rtp.running:
+            rx, tx = self.rtp.bytes_received, self.rtp.bytes_sent
+        else:
+            rx, tx = self.last_call_bytes_rx, self.last_call_bytes_tx
+        sdp = self.rtp.sdp_remote
+        if sdp is None and self._remote_rtp_ip:
+            sdp = (self._remote_rtp_ip, self._remote_rtp_port)
+        return {
+            "state": str(self.state),
+            "registration": {
+                "registered": self.registered,
+                "last_registered_at": self.last_registered_at,
+                "last_failure": self.last_register_failed,
+            },
+            "codec": {
+                "negotiated": self._codec.name,
+                "payload_type": self._codec.payload_type,
+                "sample_rate": self._codec.sample_rate,
+                "telephone_event_pt": self._remote_dtmf_pt,
+                "local_supported": [c.name for c in codecs.SUPPORTED],
+                "remote_offered": list(self._remote_offered_names),
+                "remote_offered_pts": list(self._remote_offered_pts),
+                "mismatch": _codec_mismatch(
+                    self._remote_offered_names,
+                    self._remote_offered_pts,
+                    self._remote_dtmf_pt,
+                ),
+            },
+            "rtp": {
+                "sdp_remote": _fmt_diag_endpoint(sdp),
+                "latched_remote": _fmt_diag_endpoint(self.rtp.latched_remote),
+                "bytes_received": rx,
+                "bytes_sent": tx,
+                "audio_path": _audio_path(rx, tx),
+                "expect_rx": self.rtp.expect_rx,
+                "tx_enabled": self.rtp.tx_enabled,
+                "running": self.rtp.running,
+            },
+            "call": {
+                "in_call": self.in_call,
+                "outbound": self._outbound,
+                "local_direction": self._local_direction,
+                "on_hold": self._on_hold,
+                "last_end_reason": self.last_call_reason,
+                "last_caller": self.last_caller,
+            },
+        }
+
     # -- lifecycle ------------------------------------------------------
     async def start(self) -> None:
         self._closing = False
         if await self._open_socket():
             self._do_register()
         else:
-            self._emit("on_register_failed", "Connection failed")
+            self._register_failed("Connection failed")
             self._schedule_register(10)  # keep retrying; _register_timer recovers
 
     async def stop(self) -> None:
@@ -494,15 +590,16 @@ class SipClient:
             )
             self.registered = False
             self._reg_attempts = 0
-            self._emit(
-                "on_register_failed",
-                f"423 Interval Too Brief (Min-Expires={min_expires})",
+            self._register_failed(
+                f"423 Interval Too Brief (Min-Expires={min_expires})"
             )
             self._schedule_register(10)
             return
         if 200 <= m.status_code < 300:
             was = self.registered
             self.registered = True
+            self.last_register_failed = None
+            self.last_registered_at = time.time()
             self._reg_attempts = 0
             self._set_state(SipState.REGISTERED)
             self._schedule_register(max(self.config.register_expiration // 2, 30))
@@ -516,8 +613,12 @@ class SipClient:
         self.registered = False
         # The server responded, so the socket is alive: gentle retry, no reconnect.
         self._reg_attempts = 0
-        self._emit("on_register_failed", f"{m.status_code} {m.reason}")
+        self._register_failed(f"{m.status_code} {m.reason}")
         self._schedule_register(10)
+
+    def _register_failed(self, reason: str) -> None:
+        self.last_register_failed = reason
+        self._emit("on_register_failed", reason)
 
     def _authorized_register(self, m: sm.SipMessage) -> str:
         proxy = m.status_code == 407
@@ -847,6 +948,8 @@ class SipClient:
         )
         self._codec = new_codec
         self._chosen_pt = self._codec.payload_type
+        self._remote_offered_pts = sorted(sdp.offered_pts)
+        self._remote_offered_names = _offered_codec_names(sdp)
         if sdp.valid:
             self._sdp_negotiated = True
             # Including -1: a new offer without telephone-event must not
@@ -879,6 +982,8 @@ class SipClient:
         self._codec = codecs.DEFAULT
         self._chosen_pt = self._codec.payload_type
         self._remote_dtmf_pt = -1
+        self._remote_offered_pts = []
+        self._remote_offered_names = []
         self.rtp.dtmf_pt = -1
         self._sdp_negotiated = False
         self._remote_rtp_ip = ""
@@ -1279,6 +1384,9 @@ class SipClient:
         self._local_direction = "sendrecv"
         self.rtp.send_silence = True
         self.rtp.clear_tx_pause()
+        self.last_call_reason = reason
+        self.last_call_bytes_rx = self.rtp.bytes_received
+        self.last_call_bytes_tx = self.rtp.bytes_sent
         self._loop.create_task(self._stop_media())
         self._set_state(SipState.REGISTERED if self.registered else SipState.IDLE)
         self._emit("on_call_ended", reason)

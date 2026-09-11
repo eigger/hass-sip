@@ -193,6 +193,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "call_connect_time": None,
         "call_direction": None,
         "call_status": "missed",
+        "last_register_failed": None,
+        "last_registered_at": None,
         "contacts": contacts,
         "call_number": "",
     }
@@ -232,8 +234,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     def on_registered() -> None:
         LOGGER.info("[%s] SIP Client successfully registered", sip_config.username)
         entry.runtime_data["registered"] = True
+        entry.runtime_data["last_register_failed"] = None
+        entry.runtime_data["last_registered_at"] = time.time()
         async_dispatcher_send(hass, f"{DOMAIN}_state_update_{entry.entry_id}")
         fire_sip_event(EVENT_SIP_REGISTERED)
+
+    @callback
+    def on_register_failed(reason: str) -> None:
+        LOGGER.warning("[%s] SIP registration failed: %s", sip_config.username, reason)
+        entry.runtime_data["registered"] = False
+        entry.runtime_data["last_register_failed"] = reason
+        async_dispatcher_send(hass, f"{DOMAIN}_state_update_{entry.entry_id}")
 
     @callback
     def on_incoming_call(caller: str) -> None:
@@ -308,6 +319,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "direction": direction,
                 "duration": duration,
                 "status": status,
+                "reason": reason,
             }
 
             history = entry.runtime_data.setdefault("call_history", [])
@@ -369,6 +381,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     callbacks = SipCallbacks(
         on_state_change=on_state_change,
         on_registered=on_registered,
+        on_register_failed=on_register_failed,
         on_incoming_call=on_incoming_call,
         on_call_connected=on_call_connected,
         on_call_ended=on_call_ended,

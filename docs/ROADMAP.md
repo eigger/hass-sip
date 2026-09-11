@@ -443,7 +443,7 @@ P0-2 latching은 RTP 단위 테스트로 `test_pure.py`에 남아 있다.
 
 ---
 
-### [ ] P1-2. diagnostics 플랫폼
+### [x] P1-2. diagnostics 플랫폼
 
 **대상** 새 파일 `custom_components/sip/diagnostics.py`
 
@@ -456,6 +456,19 @@ P0-2 latching은 RTP 단위 테스트로 `test_pure.py`에 남아 있다.
 
 **수용 기준** `async_redact_data`로 크리덴셜이 제거되고, diagnostics 다운로드 결과만으로
 "등록 실패 / 코덱 불일치 / one-way audio" 세 가지를 구분할 수 있다.
+
+**추가된 테스트** (`tests/test_diagnostics.py`)
+- `test_mask_number_keeps_last_two_digits`
+- `test_collect_diagnostics_redacts_password_and_masks_history`
+- `test_diagnostics_snapshot_registration_failure`
+- `test_diagnostics_snapshot_codec_mismatch`
+- `test_diagnostics_snapshot_matching_codec_is_not_mismatch`
+- `test_diagnostics_snapshot_one_way_audio`
+- `test_rtp_byte_counters_count_pcm_not_dtmf`
+- `test_async_get_config_entry_diagnostics_redacts`
+
+구분 키: `sip.registration.last_failure`, `sip.codec.mismatch`, `sip.rtp.audio_path`
+(`no_rx` / `no_tx` / `bidirectional` / `none`).
 
 ---
 

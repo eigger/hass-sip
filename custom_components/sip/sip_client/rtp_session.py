@@ -134,6 +134,8 @@ class RtpSession:
         self._last_rx_at: float | None = None
         self._media_timeout_handle: asyncio.TimerHandle | None = None
         self._trace_handle: asyncio.TimerHandle | None = None
+        self.bytes_received = 0
+        self.bytes_sent = 0
         self._reset_trace_stats()
 
         # Codec-derived pacing / encode state (defaults = G.711 PCMU).
@@ -278,6 +280,8 @@ class RtpSession:
         self._reset_latch()
         # Fresh codec state for this call (important for stateful codecs).
         self.set_codec(self._codec)
+        self.bytes_received = 0
+        self.bytes_sent = 0
         self._sender_task = self._loop.create_task(self._sender())
         _LOGGER.info(
             "RTP started on port %s (pt=%s, dtmf_pt=%s)",
@@ -367,6 +371,8 @@ class RtpSession:
     def _send_audio_packet(self, frame: bytes) -> None:
         header = self._rtp_header(self._first_packet, self.payload_type, self._timestamp)
         self._send(header + self._encode(frame))
+        if self._transport is not None and self._remote is not None:
+            self.bytes_sent += len(frame)
         self._seq += 1
         self._timestamp += self._ts_increment
         self._first_packet = False
@@ -630,5 +636,7 @@ class RtpSession:
         if decode is None:
             return
         self._maybe_latch(addr, seq, ssrc)
+        pcm = decode(data[header_len:])
+        self.bytes_received += len(pcm)
         if self.on_audio is not None:
-            self.on_audio(decode(data[header_len:]))
+            self.on_audio(pcm)
