@@ -1402,7 +1402,7 @@ def test_reinvite_keeps_codec_when_still_offered():
     name, set_codec_calls, changed_names = asyncio.run(run())
     assert name == "G722"
     assert set_codec_calls == 0
-    assert changed_names == ["G722"]  # initial negotiation only
+    assert changed_names == []
 
 
 def test_reinvite_notifies_codec_change():
@@ -1437,7 +1437,7 @@ def test_reinvite_notifies_codec_change():
     name, set_codec_calls, changed_names = asyncio.run(run())
     assert name == "PCMA"
     assert set_codec_calls == 1
-    assert changed_names == ["G722", "PCMA"]
+    assert changed_names == ["PCMA"]
 
 
 def test_update_wrong_call_id_is_481():
@@ -1566,7 +1566,11 @@ def test_sample_rate_change_flushes_tx_and_cancels_source():
         return
 
     async def run():
-        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        done = []
+        client = sip_client.SipClient(
+            sip_client.SipConfig(server="pbx.example"),
+            sip_client.SipCallbacks(on_playback_done=lambda: done.append(True)),
+        )
         client.state = sip_client.SipState.REGISTERED
         client._local_ip = "192.0.2.1"
         orig = _invite_request(
@@ -1592,13 +1596,15 @@ def test_sample_rate_change_flushes_tx_and_cancels_source():
             bytes(client.rtp._tx_buffer),
             client._tx_source_task,
             task.cancel.called,
+            done,
         )
 
-    name, buffered, source_task, cancelled = asyncio.run(run())
+    name, buffered, source_task, cancelled, done = asyncio.run(run())
     assert name == "PCMA"
     assert buffered == b""
     assert source_task is None
     assert cancelled is True
+    assert done == [True]
 
 
 def test_update_with_sdp_returns_answer():
@@ -1811,6 +1817,35 @@ def test_rtp_hold_resume_catches_up_timestamp():
     assert timestamp == 1000 + 100 * 160
     assert marked is True
     assert enabled is True
+
+
+def test_rtp_hold_clears_in_flight_dtmf():
+    async def run():
+        session = rtp_session.RtpSession()
+        session._timestamp = 8000
+        session._ts_increment = 160
+        session._dtmf_active = True
+        session._dtmf_timestamp = 1000
+        session._dtmf_duration = 80
+        session._dtmf_queue.extend("12")
+        clock = {"t": 5.0}
+        session._loop.time = lambda: clock["t"]
+        session.set_tx_enabled(False)
+        paused = (
+            session._dtmf_active,
+            list(session._dtmf_queue),
+            session._timestamp,
+        )
+        clock["t"] = 6.0
+        session.set_tx_enabled(True)
+        return paused, session._timestamp, session._dtmf_active, list(session._dtmf_queue)
+
+    paused, ts, active, queued = asyncio.run(run())
+    assert paused == (False, [], 8000)
+    # 1.0 s / 20 ms = 50 frames × 160; not rewound to the DTMF timestamp.
+    assert ts == 8000 + 50 * 160
+    assert active is False
+    assert queued == []
 
 
 def test_rtp_g722_frame_size_and_timestamp():

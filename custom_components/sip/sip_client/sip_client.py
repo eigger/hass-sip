@@ -825,9 +825,10 @@ class SipClient:
             self._remote_rtp_port = sdp.audio_port
 
         old_codec = self._codec
+        in_dialog = self._sdp_negotiated
         # First SDP of a dialog picks the preferred codec. Later re-INVITE /
         # UPDATE keep the current one when it is still offered.
-        if self._sdp_negotiated:
+        if in_dialog:
             new_codec = codecs.keep_or_choose(self._codec, sdp)
         else:
             new_codec = codecs.choose(sdp)
@@ -847,12 +848,17 @@ class SipClient:
             self.rtp.set_codec(self._codec)
             if old_codec.sample_rate != new_codec.sample_rate:
                 self.rtp.flush_tx_buffer()
-                self._cancel_source()
-            _LOGGER.info(
-                "Negotiated codec %s (pt=%s, %s Hz)",
-                self._codec.name, self._codec.payload_type, self._codec.sample_rate,
-            )
-            self._emit("on_codec_change", self._codec)
+                if self._tx_source_task is not None:
+                    self._cancel_source()
+                    # Unblock Assist/IVR waiters; CancelledError skips the
+                    # normal on_playback_done at the end of _run_source.
+                    self._emit("on_playback_done")
+            if in_dialog:
+                _LOGGER.info(
+                    "Negotiated codec %s (pt=%s, %s Hz)",
+                    self._codec.name, self._codec.payload_type, self._codec.sample_rate,
+                )
+                self._emit("on_codec_change", self._codec)
 
         self._local_direction = _answer_direction(sdp)
         self._set_hold(sdp.is_hold)

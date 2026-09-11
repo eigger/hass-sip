@@ -146,6 +146,7 @@ class RtpSession:
         self._tx_paused_at = self._loop.time()
         self.tx_enabled = False
         self.flush_tx_buffer()
+        self._clear_dtmf_tx()
 
     def clear_tx_pause(self) -> None:
         """Re-enable TX without catching up a hold gap (new/ended call)."""
@@ -196,8 +197,7 @@ class RtpSession:
         self._ssrc = struct.unpack("<I", os.urandom(4))[0]
         self._first_packet = True
         self._tx_buffer.clear()
-        self._dtmf_queue.clear()
-        self._dtmf_active = False
+        self._clear_dtmf_tx()
         self._rx_dtmf_timestamp = -1
         # Fresh codec state for this call (important for stateful codecs).
         self.set_codec(self._codec)
@@ -227,8 +227,7 @@ class RtpSession:
             self._transport.close()
             self._transport = None
         self._tx_buffer.clear()
-        self._dtmf_queue.clear()
-        self._dtmf_active = False
+        self._clear_dtmf_tx()
         self._rx_dtmf_timestamp = -1
 
     # -- TX -------------------------------------------------------------
@@ -244,6 +243,14 @@ class RtpSession:
     def flush_tx_buffer(self) -> None:
         """Drop queued PCM not yet sent (e.g. after barge-in)."""
         self._tx_buffer.clear()
+
+    def _clear_dtmf_tx(self) -> None:
+        """Drop in-flight and queued DTMF so a later resume cannot rewind RTP time."""
+        self._dtmf_queue.clear()
+        self._dtmf_active = False
+        self._dtmf_event = -1
+        self._dtmf_duration = 0
+        self._dtmf_end_packets = 0
 
     def queue_dtmf(self, digits: str) -> None:
         if self.dtmf_pt < 0:
