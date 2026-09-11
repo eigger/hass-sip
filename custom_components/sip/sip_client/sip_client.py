@@ -1437,6 +1437,14 @@ class SipClient:
         self.hangup(reason="media_timeout")
 
     # -- media ----------------------------------------------------------
+    def _apply_rtp_dest_if_changed(self) -> None:
+        """Retarget RTP if SDP moved the peer while a start was in flight."""
+        if not self._remote_rtp_ip or not self._remote_rtp_port:
+            return
+        dest = (self._remote_rtp_ip, self._remote_rtp_port)
+        if self.rtp.sdp_remote != dest:
+            self.rtp.set_remote(self._remote_rtp_ip, self._remote_rtp_port)
+
     async def _start_media(self) -> None:
         async with self._media_lock:
             session = self._media_session
@@ -1444,6 +1452,7 @@ class SipClient:
                 # Same dialog: ACK/UPDATE/re-INVITE can schedule a second
                 # start while the first is still binding. Do not bounce RTP.
                 if self._media_owner == session:
+                    self._apply_rtp_dest_if_changed()
                     return
                 await self._stop_media_unlocked()
             if not self._remote_rtp_ip or not self._remote_rtp_port:
@@ -1459,6 +1468,8 @@ class SipClient:
             if session != self._media_session:
                 await self.rtp.stop()
                 return
+            # SDP may have moved the peer during create_datagram_endpoint.
+            self._apply_rtp_dest_if_changed()
             self._media_active = True
             self._media_owner = session
             _LOGGER.info(

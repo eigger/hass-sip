@@ -515,6 +515,7 @@ media_player 속성: `call_duration`, `audio_path`, `bytes_received`, `bytes_sen
 - `test_media_start_after_hangup_does_not_early_return`
 - `test_late_media_stop_does_not_kill_new_session`
 - `test_duplicate_start_media_same_session_does_not_restart`
+- `test_start_media_retargets_if_endpoint_changes_during_bind`
 - `test_auto_answer_right_after_bye_starts_media`
 
 ---

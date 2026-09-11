@@ -1650,6 +1650,51 @@ def test_duplicate_start_media_same_session_does_not_restart():
     assert owner == 0
 
 
+def test_start_media_retargets_if_endpoint_changes_during_bind():
+    """re-INVITE during bind must not keep sending to the first SDP dest."""
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client.state = sip_client.SipState.IN_CALL
+        client._remote_rtp_ip = "198.51.100.10"
+        client._remote_rtp_port = 4000
+        starts: list[int] = []
+        stops: list[int] = []
+        bound = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_start(port):
+            starts.append(port)
+            bound.set()
+            await release.wait()
+            return True
+
+        async def track_stop():
+            stops.append(1)
+
+        with (
+            patch.object(client.rtp, "stop", side_effect=track_stop),
+            patch.object(client.rtp, "start", side_effect=slow_start),
+        ):
+            first = client._loop.create_task(client._start_media())
+            await bound.wait()
+            client._remote_rtp_ip = "203.0.113.8"
+            client._remote_rtp_port = 5004
+            client._sync_media_endpoint("198.51.100.10", 4000)
+            release.set()
+            await first
+            await asyncio.sleep(0)
+        return starts, stops, client.rtp.sdp_remote, client._media_active
+
+    starts, stops, remote, active = asyncio.run(run())
+    assert starts == [7078]
+    assert stops == []
+    assert remote == ("203.0.113.8", 5004)
+    assert active is True
+
+
 def test_auto_answer_right_after_bye_starts_media():
     """Intercom: BYE then a new auto-answer INVITE before stop finishes."""
     if sip_client is None:
