@@ -1,7 +1,9 @@
 """Home Assistant Assist Pipeline integration for SIP Client."""
 from __future__ import annotations
 
+import array
 import asyncio
+import math
 from collections.abc import AsyncIterable, Callable
 from typing import Literal
 
@@ -56,16 +58,85 @@ _TTS_WAIT_TIMEOUT_SECONDS = 300
 _TxWaitKind = Literal["tts", "tone"]
 
 
-def _upsample_pcm(pcm_le: bytes, sample_rate: int) -> bytes:
-    """Return 16 kHz s16le mono PCM for Assist STT / VAD."""
+def _halfband_odd_taps(half: int = 15) -> tuple[float, ...]:
+    """Odd-phase taps of a 2× Hamming half-band interpolator.
+
+    ``half=15`` is a 31-tap filter (n = −15..15). Even taps are 0 except the
+    centre tap of 1; these values are h[1], h[3], … h[15], scaled so DC gain
+    is exactly 2 (the factor that restores amplitude after zero-insertion).
+    """
+    raw: list[float] = []
+    for n in range(1, half + 1, 2):
+        sign = 1.0 if ((n - 1) // 2) % 2 == 0 else -1.0
+        ideal = sign * 2.0 / (math.pi * n)
+        window = 0.54 + 0.46 * math.cos(math.pi * n / half)
+        raw.append(ideal * window)
+    scale = 0.5 / sum(raw)
+    return tuple(c * scale for c in raw)
+
+
+# 8 input-sample (1 ms @ 8 kHz) group delay; 16-deep delay line.
+_UPSAMPLE_ODD_TAPS = _halfband_odd_taps()
+_UPSAMPLE_HIST = len(_UPSAMPLE_ODD_TAPS) * 2
+
+
+class _Upsampler2x:
+    """Causal 8 kHz → 16 kHz polyphase interpolator with anti-imaging LPF.
+
+    Even output samples are delayed originals; odd samples are the
+    interpolating phase. History is kept across ``process()`` calls so
+    20 ms RTP frames do not click at the boundaries.
+    """
+
+    __slots__ = ("_hist",)
+
+    def __init__(self) -> None:
+        self._hist = array.array("h", [0] * _UPSAMPLE_HIST)
+
+    def process(self, pcm_le: bytes) -> bytes:
+        n_in = len(pcm_le) // 2
+        if n_in == 0:
+            return b""
+        src = array.array("h")
+        src.frombytes(pcm_le[: n_in * 2])
+        hist = self._hist
+        taps = _UPSAMPLE_ODD_TAPS
+        center = len(taps) - 1
+        out = array.array("h", [0] * (n_in * 2))
+        oi = 0
+        for sample in src:
+            hist[:-1] = hist[1:]
+            hist[-1] = sample
+            even = hist[center]
+            acc = 0.0
+            for j, coeff in enumerate(taps):
+                acc += coeff * (hist[center - j] + hist[center + 1 + j])
+            odd = int(acc)
+            if odd > 32767:
+                odd = 32767
+            elif odd < -32768:
+                odd = -32768
+            out[oi] = even
+            out[oi + 1] = odd
+            oi += 2
+        return out.tobytes()
+
+
+def _upsample_pcm(
+    pcm_le: bytes,
+    sample_rate: int,
+    upsampler: _Upsampler2x | None = None,
+) -> bytes:
+    """Return 16 kHz s16le mono PCM for Assist STT / VAD.
+
+    G.722 (16 kHz) is a no-op. 8 kHz G.711 is interpolated by 2 with a
+    half-band FIR so the 4–8 kHz images of sample-and-hold do not reach STT.
+    """
     if sample_rate == 16000:
         return pcm_le
-    resampled = bytearray(len(pcm_le) * 2)
-    for i in range(0, len(pcm_le), 2):
-        sample = pcm_le[i : i + 2]
-        resampled[i * 2 : i * 2 + 2] = sample
-        resampled[i * 2 + 2 : i * 2 + 4] = sample
-    return bytes(resampled)
+    if upsampler is None:
+        upsampler = _Upsampler2x()
+    return upsampler.process(pcm_le)
 
 
 def _stt_text(data: dict | None) -> str:
@@ -184,22 +255,30 @@ class AssistBridge(AudioSink):
         self._post_barge_in_capture = False
         self._tts_epoch = 0
         self._tone_capture = bytearray()
+        self._upsampler = _Upsampler2x()
         self._micro_vad = MicroVad() if self.barge_in else None
 
     def start(self) -> None:
         """Start the Assist session loop in the background."""
         self.session_task = asyncio.create_task(self._run_session())
 
+    def _to_16k(self, pcm_le: bytes) -> bytes:
+        """Upsample G.711 RX to 16 kHz, keeping FIR history across frames."""
+        if self.sample_rate == 16000:
+            return pcm_le
+        return self._upsampler.process(pcm_le)
+
     def write(self, pcm_le: bytes) -> None:
         """Receive incoming PCM from SIP client and feed it to Assist."""
+        pcm_16k = self._to_16k(pcm_le)
         if self._listening:
-            self.audio_stream.feed_audio(pcm_le, self.sample_rate)
+            self.audio_stream.feed_audio(pcm_16k, 16000)
         elif self._tx_wait == "tone":
-            self._append_tone_capture(_upsample_pcm(pcm_le, self.sample_rate))
+            self._append_tone_capture(pcm_16k)
         elif self._post_barge_in_capture:
-            self._append_rx_to_ring(_upsample_pcm(pcm_le, self.sample_rate))
+            self._append_rx_to_ring(pcm_16k)
         elif self.barge_in and self._speaking:
-            self._monitor_barge_in(pcm_le)
+            self._monitor_barge_in(pcm_16k)
 
     def on_playback_done(self) -> None:
         """Signal that TX playback has finished (see IvrSession for the same pattern).
@@ -264,9 +343,8 @@ class AssistBridge(AudioSink):
                 _TX_IDLE_TIMEOUT_SECONDS,
             )
 
-    def _monitor_barge_in(self, pcm_le: bytes) -> None:
+    def _monitor_barge_in(self, pcm_16k: bytes) -> None:
         """Detect caller speech during TTS playback and trigger barge-in."""
-        pcm_16k = _upsample_pcm(pcm_le, self.sample_rate)
         self._append_rx_to_ring(pcm_16k)
 
         self._vad_pending.extend(pcm_16k)

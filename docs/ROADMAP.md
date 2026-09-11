@@ -622,20 +622,27 @@ media_player 속성: `call_duration`, `audio_path`, `bytes_received`, `bytes_sen
 
 ---
 
-### [ ] P3-2. 리샘플러 품질 개선
+### [x] P3-2. 리샘플러 품질 개선
 
-**근거** §1.3-7. `_upsample_pcm`(`assist.py:59`)이 샘플 복제라 4~8 kHz 이미지 성분이
-생겨 STT 인식률을 깎고, 순수 파이썬 루프가 이벤트 루프에서 20 ms마다 돈다.
+**근거** §1.3-7. `_upsample_pcm`이 샘플 복제라 4~8 kHz 이미지 성분이 생겨 STT
+인식률을 깎고, 순수 파이썬 루프가 이벤트 루프에서 20 ms마다 돈다.
 
-**작업** 8k→16k 업샘플에 anti-imaging 필터를 적용한다. 선택지:
-- 짧은 FIR 저역통과 + `array`/`memoryview` 기반 구현 (의존성 없음)
-- HA에 이미 있는 의존성 활용 가능 여부 확인 (`audioop`은 Python 3.13에서 제거됨 — 사용 불가)
-- 최후 수단: ffmpeg 경유 (프로세스 비용 때문에 비권장)
+**작업** 8k→16k를 31-tap Hamming half-band FIR로 2× 보간한다. 의존성 없음
+(`array` + 짧은 파이썬 루프). `audioop`은 3.13에서 제거됐고 ffmpeg 경유는
+프레임마다 프로세스 비용이 커서 쓰지 않는다. G.722(16 kHz)는 no-op.
+FIR 히스토리는 `AssistBridge`가 프레임 사이에 유지한다.
 
 **수용 기준**
 - 1 kHz / 3 kHz 사인파 업샘플 결과에서 이미지 성분이 기존 구현보다 측정 가능하게 감소한다.
 - 20 ms 프레임 처리 시간이 예산 내다(`test_g722_perf_under_budget` 패턴 참고).
 - G.722(16 kHz) 경로는 여전히 no-op으로 우회된다.
+
+**추가된 테스트**
+- `test_upsample_pcm_is_noop_at_16khz`
+- `test_upsample_pcm_doubles_8khz_length`
+- `test_upsample_pcm_reduces_imaging_vs_zoh`
+- `test_upsample_pcm_frame_budget`
+- `test_upsample_pcm_is_stable_across_frames`
 
 ---
 

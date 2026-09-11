@@ -3151,6 +3151,102 @@ def _initial_prompt_doubles(PET, PE, *events):
     )
 
 
+def _zoh_upsample(pcm_le: bytes) -> bytes:
+    """Sample-and-hold 8 kHz → 16 kHz (the pre-P3-2 implementation)."""
+    out = bytearray(len(pcm_le) * 2)
+    for i in range(0, len(pcm_le), 2):
+        sample = pcm_le[i : i + 2]
+        out[i * 2 : i * 2 + 4] = sample + sample
+    return bytes(out)
+
+
+def _sine_pcm(freq_hz: float, sample_rate: int, n_samples: int, amplitude: int = 8000) -> bytes:
+    import math
+
+    return struct.pack(
+        f"<{n_samples}h",
+        *[
+            int(amplitude * math.sin(2 * math.pi * freq_hz * i / sample_rate))
+            for i in range(n_samples)
+        ],
+    )
+
+
+def _goertzel_power(samples, sample_rate: int, freq_hz: float) -> float:
+    import math
+
+    n = len(samples)
+    k = int(0.5 + n * freq_hz / sample_rate)
+    coeff = 2 * math.cos(2 * math.pi * k / n)
+    s0 = s1 = s2 = 0.0
+    for value in samples:
+        s0 = value + coeff * s1 - s2
+        s2, s1 = s1, s0
+    return (s1 * s1 + s2 * s2 - coeff * s1 * s2) / (n * n)
+
+
+def _image_ratio_db(pcm_16k: bytes, tone_hz: float) -> float:
+    import math
+
+    samples = list(struct.unpack(f"<{len(pcm_16k) // 2}h", pcm_16k))[32:]
+    pass_p = _goertzel_power(samples, 16000, tone_hz)
+    img_p = _goertzel_power(samples, 16000, 8000 - tone_hz)
+    return 10 * math.log10((img_p + 1e-18) / (pass_p + 1e-18))
+
+
+def test_upsample_pcm_is_noop_at_16khz():
+    assist_mod, _, _, _ = _assist_ctx()
+    pcm = b"\x01\x02\x03\x04"
+    assert assist_mod._upsample_pcm(pcm, 16000) is pcm
+
+
+def test_upsample_pcm_doubles_8khz_length():
+    assist_mod, _, _, _ = _assist_ctx()
+    pcm = _sine_pcm(1000, 8000, 160)
+    out = assist_mod._upsample_pcm(pcm, 8000)
+    assert len(out) == len(pcm) * 2
+
+
+def test_upsample_pcm_reduces_imaging_vs_zoh():
+    """1 kHz / 3 kHz tones must not leak a 7 / 5 kHz image into STT."""
+    assist_mod, _, _, _ = _assist_ctx()
+    for tone_hz in (1000, 3000):
+        src = _sine_pcm(tone_hz, 8000, 4096)
+        zoh_db = _image_ratio_db(_zoh_upsample(src), tone_hz)
+        fir_db = _image_ratio_db(assist_mod._upsample_pcm(src, 8000), tone_hz)
+        assert fir_db < zoh_db - 20, (tone_hz, zoh_db, fir_db)
+
+
+def test_upsample_pcm_frame_budget():
+    """A 20 ms G.711 frame must stay well inside the RTP period (Pi headroom)."""
+    import time
+
+    assist_mod, _, _, _ = _assist_ctx()
+    pcm = _sine_pcm(440, 8000, 160)
+    upsampler = assist_mod._Upsampler2x()
+    for _ in range(5):
+        upsampler.process(pcm)
+    t0 = time.perf_counter()
+    n = 50
+    for _ in range(n):
+        upsampler.process(pcm)
+    us = (time.perf_counter() - t0) / n * 1e6
+    assert us < 15000, f"upsample took {us:.0f} µs/frame"
+
+
+def test_upsample_pcm_is_stable_across_frames():
+    """Per-frame process() must match a one-shot run (FIR history is kept)."""
+    assist_mod, _, _, _ = _assist_ctx()
+    src = _sine_pcm(1000, 8000, 480)
+    oneshot = assist_mod._upsample_pcm(src, 8000)
+    upsampler = assist_mod._Upsampler2x()
+    frame = 160 * 2
+    parts = b"".join(
+        upsampler.process(src[off : off + frame]) for off in range(0, len(src), frame)
+    )
+    assert parts == oneshot
+
+
 def test_assist_listening_gate():
     assist_mod, _, _, _ = _assist_ctx()
     bridge = assist_mod.AssistBridge(
