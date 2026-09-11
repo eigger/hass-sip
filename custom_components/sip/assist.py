@@ -590,23 +590,44 @@ class AssistBridge(AudioSink):
             LOGGER.error("Assist pipeline error: %s", event.data)
 
     async def _play_tts_stream(self, stream: tts.ResultStream, epoch: int) -> None:
-        """Fetch TTS stream WAV output and play it to the SIP caller."""
+        """Play TTS into RTP as soon as the first audio chunk arrives.
+
+        Later chunks are fed to ffmpeg stdin while PCM is already going out,
+        so the far end does not wait for the whole synthesis to finish.
+        """
         try:
-            chunks = []
-            async for chunk in stream.async_stream_result():
-                if epoch != self._tts_epoch:
-                    return
-                chunks.append(chunk)
+            agen = stream.async_stream_result()
+            try:
+                first = await anext(agen)
+            except StopAsyncIteration:
+                if epoch == self._tts_epoch:
+                    self._tx_done.set()
+                return
             if epoch != self._tts_epoch:
+                aclose = getattr(agen, "aclose", None)
+                if callable(aclose):
+                    await aclose()
                 return
 
-            wav_data = b"".join(chunks)
-            source = FfmpegAudioSource(data=wav_data, ffmpeg_bin=get_ffmpeg_bin(self.hass))
+            async def chunks() -> AsyncIterable[bytes]:
+                if first:
+                    yield first
+                async for chunk in agen:
+                    if epoch != self._tts_epoch:
+                        return
+                    if chunk:
+                        yield chunk
+
             await self._wait_for_tx_idle()
             if epoch != self._tts_epoch:
                 return
+            source = FfmpegAudioSource(
+                chunks=chunks(), ffmpeg_bin=get_ffmpeg_bin(self.hass)
+            )
             self.play_source(source)
             self._tx_wait = "tts"
+        except asyncio.CancelledError:
+            raise
         except Exception as err:
             LOGGER.exception("Error playing Assist TTS response: %s", err)
             if epoch == self._tts_epoch:

@@ -596,19 +596,29 @@ media_player 속성: `call_duration`, `audio_path`, `bytes_received`, `bytes_sen
 
 ## P3 — Assist 체감 품질 (차별화 영역)
 
-### [ ] P3-1. TTS 스트리밍 재생
+### [x] P3-1. TTS 스트리밍 재생
 
-**근거** §1.3-7. `_play_tts_stream`(`assist.py:592`)이 청크를 전부 모은 뒤 ffmpeg에 넘겨
+**근거** §1.3-7. `_play_tts_stream`이 청크를 전부 모은 뒤 ffmpeg에 넘겨
 첫 음성까지 지연이 TTS 합성 전체 시간이 된다. 전화는 지연 체감이 가장 큰 매체다.
 
-**작업** `FfmpegAudioSource`에 "스트리밍 stdin" 모드를 추가하고, TTS 청크가 도착하는
-대로 ffmpeg stdin에 쓴다. `_tts_epoch` 무효화 로직은 유지해야 한다(중간에 barge-in이
-들어오면 프로세스를 죽여야 함).
+**작업** `FfmpegAudioSource`에 `chunks` 스트리밍 stdin 모드를 추가하고, TTS 첫 청크가
+도착하면 바로 재생을 시작한다. `_tts_epoch` 무효화로 barge-in 시 잔여 청크를 버린다.
+`stop_audio(flush=True)`가 ffmpeg 프로세스와 RTP 잔여 PCM을 정리한다.
 
 **수용 기준**
 - 첫 PCM이 RTP TX에 들어가는 시점이 TTS 스트림 완료를 기다리지 않는다(테스트로 검증).
 - barge-in 시 ffmpeg 프로세스가 정리되고 잔여 PCM이 flush된다.
-- 기존 Assist 테스트 40여 개가 그대로 통과한다.
+- 기존 Assist 테스트가 그대로 통과한다.
+
+**추가된 테스트**
+- `test_ffmpeg_source_streaming_emits_pcm_before_producer_finishes`
+- `test_assist_tts_starts_before_stream_completes`
+- `test_pacer_throttles_after_a_producer_stall_burst`
+
+스트리밍 공급이 멈췄다 몰아서 오면 `_RealtimePacer`가 한 번에 TX 버퍼(1초)를
+넘기는 PCM을 밀어 앞부분을 잘라냈다. `ahead`가 `−_PCM_MAX_BEHIND_SEC` 아래로
+떨어지면 `_start`를 재동기화해 catch-up을 버퍼 크기 이내로 제한한다. 문장 중간
+무음 구간은 남을 수 있고, 그 원인은 P3-4(#45)에서 재확인한다.
 
 ---
 

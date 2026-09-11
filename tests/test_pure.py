@@ -228,6 +228,36 @@ def test_pacer_catches_up_after_an_event_loop_stall():
     assert slept == [0]
 
 
+def test_pacer_throttles_after_a_producer_stall_burst():
+    """A stalled streaming producer must not dump more than the TX buffer.
+
+    Cloud TTS often emits a first chunk, then a 1.5–2 s blob. After the first
+    chunk plays out, ffmpeg stdout stalls and RTP sends comfort silence. When
+    the blob arrives, unlimited catch-up would push ~1.8 s of PCM at once;
+    RtpSession's 1 s TX buffer then drops the oldest frames (speech lost).
+    Resyncing the deadline caps the dump at 1.0 s; the rest is paced.
+    """
+    p, clock = _pacer()
+    slept = []
+
+    async def fake_sleep(delay=0, result=None):
+        slept.append(delay)
+        return result
+
+    p.account(8000)              # 0.5 s first chunk
+    clock.now = 1.8              # producer gap: ahead ≈ -1.3 s
+    with patch.object(audio.asyncio, "sleep", fake_sleep):
+        asyncio.run(p.wait())
+    assert slept == [0]
+
+    p.account(8000 * 2 * 18 // 10)  # 1.8 s blob
+    with patch.object(audio.asyncio, "sleep", fake_sleep):
+        asyncio.run(p.wait())
+    # After resync the burst may fill -0.5 → +0.5 (1.0 s). Remaining 0.8 s
+    # of the blob must be throttled, not dumped (which would sleep(0)).
+    assert abs(slept[-1] - 0.8) < 1e-6
+
+
 def test_pacer_tracks_rate_for_wideband_codecs():
     """G.722 runs at 16 kHz, so the same byte count is half the duration."""
     p, clock = _pacer(sample_rate=16000)
@@ -284,6 +314,80 @@ def test_ffmpeg_source_reassembles_short_reads_into_whole_frames():
     # Every chunk but a possible remainder is exactly one 20 ms frame.
     assert all(len(c) == 320 for c in chunks[:-1])
     assert len(chunks[-1]) == total % 320  # the tail is emitted, not dropped
+
+
+def test_ffmpeg_source_requires_exactly_one_input():
+    async def _chunks():
+        yield b"x"
+        return
+
+    try:
+        audio.FfmpegAudioSource()
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError")
+    try:
+        audio.FfmpegAudioSource(url="a", data=b"x")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError")
+    try:
+        audio.FfmpegAudioSource(url="a", chunks=_chunks())
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_ffmpeg_source_streaming_emits_pcm_before_producer_finishes():
+    """First stdout PCM must not wait for the stdin iterable to be exhausted."""
+    script = (
+        "#!" + sys.executable + "\n"
+        "import sys\n"
+        "inp, out = sys.stdin.buffer, sys.stdout.buffer\n"
+        "while True:\n"
+        "    b = inp.read(80)\n"
+        "    if not b:\n"
+        "        break\n"
+        "    out.write(b)\n"
+        "    out.flush()\n"
+    )
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as fh:
+        fh.write(script)
+        path = fh.name
+    os.chmod(path, 0o755)
+
+    try:
+        pushed: list[bytes] = []
+        more = asyncio.Event()
+        producer_finished = []
+
+        async def chunks():
+            yield b"\x11" * 320
+            await more.wait()
+            producer_finished.append(True)
+            yield b"\x22" * 320
+
+        def push(data):
+            pushed.append(data)
+            if len(pushed) == 1:
+                more.set()
+
+        async def main():
+            source = audio.FfmpegAudioSource(ffmpeg_bin=path, chunks=chunks())
+            source.configure(8000, 320)
+            await asyncio.wait_for(source.run(push, lambda: True), timeout=2)
+
+        asyncio.run(main())
+    finally:
+        os.unlink(path)
+
+    assert producer_finished == [True]
+    assert pushed
+    assert pushed[0].startswith(b"\x11")
+    assert sum(len(c) for c in pushed) == 640
 
 
 # ------------------------------------------------------------ sip_message
@@ -3673,6 +3777,41 @@ def test_assist_playback_timeout_stale_tts_does_not_play():
 
     asyncio.run(run())
     assert not play_calls
+
+
+def test_assist_tts_starts_before_stream_completes():
+    """First TTS chunk must start RTP; remaining chunks must not gate play_source."""
+    assist_mod, _, _, _ = _assist_ctx()
+    play_calls: list[str] = []
+    rest = asyncio.Event()
+
+    async def gated_stream():
+        yield b"RIFF...."
+        await rest.wait()
+        yield b"more-wav"
+
+    stream = MagicMock()
+    stream.async_stream_result = gated_stream
+
+    async def run():
+        bridge = assist_mod.AssistBridge(
+            MagicMock(),
+            play_source_fn=lambda src: play_calls.append(type(src).__name__),
+            on_done_fn=MagicMock(),
+            stop_audio_fn=MagicMock(),
+        )
+        task = asyncio.create_task(bridge._play_tts_stream(stream, epoch=0))
+        for _ in range(50):
+            if play_calls:
+                break
+            await asyncio.sleep(0.01)
+        played_before_rest = list(play_calls)
+        rest.set()
+        await asyncio.wait_for(task, timeout=1)
+        return played_before_rest
+
+    played = asyncio.run(run())
+    assert played == ["FfmpegAudioSource"]
 
 
 def test_assist_playback_timeout_does_not_stop_long_playback():
