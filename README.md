@@ -683,4 +683,4 @@ action:
       custom_components.sip.sip_client.trace: debug
   ```
 
-  `Authorization` / `Proxy-Authorization` values (`response`, `nonce`, `cnonce`) are masked as `****`. RTP is summarised (packet counts, payload type, estimated loss, latched address), not logged packet-by-packet. Turn the logger back to `info` when you are done.
+  `Authorization` / `Proxy-Authorization` values (`response`, `nonce`, `cnonce`) are masked as `****`. RTP is summarised (packet counts, payload type, estimated loss, latched address), not logged packet-by-packet. That YAML logger is the narrow switch; the integration's **Enable debug logging** button also turns this on, because it sets `custom_components.sip` (and therefore this child logger) to DEBUG — credentials stay masked, but phone numbers and SDP will be in the log you download for an issue. Turn the logger back to `info` when you are done.
