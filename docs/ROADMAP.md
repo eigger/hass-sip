@@ -349,7 +349,7 @@ ruff check custom_components/     # 린트
 
 ---
 
-### [ ] P0-4. mock registrar 테스트 하네스 + 등록 복구 회귀 테스트
+### [x] P0-4. mock registrar 테스트 하네스 + 등록 복구 회귀 테스트
 
 **근거** §1.3-4. "PBX/네트워크 재시작 후 자동 복구되는가"가 가장 중요한 질문인데
 정확히 여기가 테스트 공백이다. 투자 효율이 가장 높은 카드다.
@@ -381,7 +381,18 @@ ruff check custom_components/     # 린트
 - 전체 테스트 실행 시간이 현재 대비 10초 이상 늘지 않는다.
 - 하네스가 P0-1(re-INVITE)과 P0-2(latching) 테스트에도 재사용된다.
 
-**의존성** 없음. **P0-1~3과 병행 가능하고, 오히려 먼저 만들면 나머지가 쉬워진다.**
+**추가된 테스트** (`tests/test_registration.py`)
+- `test_register_401_then_success_emits_once`
+- `test_register_407_proxy_auth`
+- `test_register_423_raises_expires`
+- `test_register_unanswered_reconnects`
+- `test_register_refresh_at_half_expiration`
+- `test_register_deferred_during_call`
+- `test_register_recovers_after_pbx_restart`
+- `test_register_403_retries_without_reconnect` (현재 10초 고정 재시도; 백오프는 P2-4)
+- `test_harness_reinvite_answers_with_new_transaction` (P0-1 경로를 소켓 하네스로 재사용)
+
+P0-2 latching은 RTP 단위 테스트로 `test_pure.py`에 남아 있다.
 
 ---
 
