@@ -32,7 +32,8 @@
 - SIP core에는 `homeassistant` import 금지. 새 기능이 HA를 필요로 하면 콜백/주입으로 뺀다.
 - 이벤트 루프에서 블로킹 I/O 금지(파일, 소켓, subprocess 대기).
 - 로그에 크리덴셜, `Authorization` 헤더 값, digest response를 절대 남기지 않는다.
-- `ruff check custom_components/` 통과. CI는 Python 3.14, `homeassistant>=2026.8.0`.
+- `ruff check custom_components/` 통과. CI는 Python 3.14, Home Assistant 최솟값은
+  `hacs.json` (`homeassistant`, 현재 `2026.9.0`).
 - 사용자에게 보이는 동작이 바뀌면 `strings.json` + `translations/{en,ko,de,ru}.json`을
   함께 갱신한다.
 

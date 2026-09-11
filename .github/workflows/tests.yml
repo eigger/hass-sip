@@ -44,7 +44,8 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install pytest voluptuous "homeassistant>=2026.8.0"
+          HA_MIN=$(python -c "import json; print(json.load(open('hacs.json'))['homeassistant'])")
+          pip install pytest voluptuous "homeassistant>=${HA_MIN}"
           if [ -f custom_components/sip/manifest.json ]; then
             python -c "import json; reqs = json.load(open('custom_components/sip/manifest.json')).get('requirements', []); print('\n'.join(reqs))" > requirements.txt
             if [ -s requirements.txt ]; then
