@@ -15,9 +15,11 @@ Transport is **SIP over UDP** with **G.711 (PCMU/PCMA) and G.722**. TLS, SRTP, a
 
 ## What it is for
 
+Storyboards below (not live captures). GIFs use `raw.githubusercontent.com` so they also load in HACS.
+
 ### Control Home Assistant from a phone
 
-Call the hass-sip extension, answer, and start Assist. The caller can issue several commands in one call without redialing.
+Dial the hass-sip extension → answer → Assist. Several commands in one call, no redial.
 
 ```yaml
 action: sip.start_assist
@@ -25,13 +27,13 @@ target:
   entity_id: media_player.phone_line
 ```
 
-![Phone to Assist storyboard — not a live capture](docs/demo/phone-assist.gif)
+![Phone dials Home Assistant, Assist turns on a light, then sets brightness — storyboard](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/demo/phone-assist.gif)
 
-Full flow: [Voice Assist example](docs/examples.md#voice-assist-automation-example). Door locks: [allow-list + PIN](docs/security.md).
+Full flow: [Voice Assist example](docs/examples.md#voice-assist-automation-example). Door locks: [allow-list + PIN](docs/security.md#door-locks-and-other-security-intents).
 
 ### Intercom auto-answer
 
-A door station rings the extension; hass-sip answers immediately and opens two-way audio.
+Door station rings → hass-sip answers immediately → optional DTMF to open the gate.
 
 ```json
 {
@@ -39,13 +41,13 @@ A door station rings the extension; hass-sip answers immediately and opens two-w
 }
 ```
 
-![Intercom auto-answer storyboard — not a live capture](docs/demo/intercom-autoanswer.gif)
+![Door station rings Home Assistant, auto-answer opens audio, dashboard DTMF opens the gate — storyboard](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/demo/intercom-autoanswer.gif)
 
 Put that in `sip_contacts.json` (or send SIP auto-answer headers). [Intercom details](docs/examples.md#intercom--auto-answer-mode).
 
 ### Sensor event → phone + TTS
 
-An automation dials a number, speaks a message when the far end answers, then hangs up.
+A sensor fires → hass-sip dials your phone → speaks a message → hangs up.
 
 ```yaml
 action: sip.dial
@@ -56,7 +58,7 @@ data:
   message: "The garage door has been open for ten minutes."
 ```
 
-![Sensor event to phone TTS storyboard — not a live capture](docs/demo/sensor-tts-call.gif)
+![Garage sensor triggers Home Assistant, which dials your phone and speaks a TTS warning — storyboard](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/demo/sensor-tts-call.gif)
 
 More TTS options: [Announce a TTS message](docs/examples.md#example-announce-a-tts-message-then-hang-up).
 
