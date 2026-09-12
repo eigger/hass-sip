@@ -198,7 +198,7 @@ class _SipMediaSensor(SensorEntity):
 class SipCodecSensor(_SipMediaSensor):
     """Negotiated audio codec of the current / last call."""
 
-    _attr_icon = "mdi:codec"
+    _attr_icon = "mdi:waveform"
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = list(CODEC_OPTIONS)
 
