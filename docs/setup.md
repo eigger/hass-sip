@@ -78,20 +78,20 @@ Device setup is done entirely through the Home Assistant UI. The [Quick start](#
 
 ## PBX compatibility
 
-This repository does **not** mark a PBX as "supported" unless a version was recorded from a real test. The table is the honest status as of the last documentation pass.
+A PBX is not labelled "supported" without a recorded lab version. The table is the current status from recommended settings and community reports.
 
 | PBX | Status | Recorded version | Notes |
 |-----|--------|------------------|-------|
-| **FreePBX** (Asterisk **pjsip**) | Recommended settings published | — | Primary target for the Quick Start. No lab version is checked in here, so this is not a certification. |
+| **FreePBX** (Asterisk **pjsip**) | Recommended settings published | — | Follow the Quick Start. No FreePBX/Asterisk version is certified here. |
 | **Asterisk** (pjsip, no FreePBX) | Same endpoint settings | — | Use the `pjsip` snippet below. |
-| **3CX** (including SBC) | Community reported | — | Inbound via SBC needed Record-Route on 200 OK ([#39](https://github.com/eigger/hass-sip/issues/39)). Core now preserves Record-Route; no 3CX version is recorded here. |
+| **3CX** (including SBC) | Community reported | — | Inbound via SBC needed Record-Route on 200 OK ([#39](https://github.com/eigger/hass-sip/issues/39)). Current builds preserve Record-Route; no 3CX version is listed here. |
 | **Generic SIP / ITSP / UniFi Talk** | Unverified | — | Outbound `407 Proxy Authentication Required` ([#17](https://github.com/eigger/hass-sip/issues/17)): set **Outbound proxy** to the proxy host and **Authentication username** if it differs from the extension. |
 
 SIP **TLS** and **SRTP** are out of scope (UDP signalling only). **Internet exposure is unsupported** — see [Security](security.md).
 
 ### Recommended pjsip endpoint values
 
-Use these whether you click through FreePBX or edit `pjsip.conf`. They match what the client actually implements.
+Use these in FreePBX or in `pjsip.conf`.
 
 | Setting | Value | Why |
 |---------|-------|-----|
