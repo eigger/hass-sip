@@ -16,8 +16,6 @@ Transport is **SIP over UDP** with **G.711 (PCMU/PCMA) and G.722**. TLS, SRTP, a
 
 ## What it is for
 
-Storyboards below (not live captures). GIFs use `raw.githubusercontent.com` so they also load in HACS.
-
 ### Control Home Assistant from a phone
 
 Dial the hass-sip extension → answer → Assist. Several commands in one call, no redial.
