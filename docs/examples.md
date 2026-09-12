@@ -3,6 +3,8 @@
 [README](../README.md) · [Setup](setup.md) · [Services](services.md) · [Examples](examples.md) · [Security](security.md) · [Troubleshooting](troubleshooting.md)
 
 - [TTS announce](#example-announce-a-tts-message-then-hang-up)
+- [HA calls you with TTS](#home-assistant-calls-you-with-tts)
+- [DTMF from any phone](#control-home-assistant-with-dtmf-any-phone)
 - [IVR](#ivr-configuration-example)
 - [Contacts](#contacts--caller-id-mapping)
 - [Intercom auto-answer](#intercom--auto-answer-mode)
@@ -161,6 +163,78 @@ action:
 > The `media_content_id` query string is URL-encoded automatically, so you can write a plain (or templated) `message=...`. A plain audio file URL works in place of the `media-source://` id too.
 
 > **Entity IDs:** examples use `media_player.phone_line` as a placeholder. Your actual ids are prefixed with the account, e.g. `media_player.sip_client_100_phone_line` — copy the real one from **Developer Tools → States** (or target the SIP device instead).
+
+---
+
+## Home Assistant calls you with TTS
+
+hass-sip can **originate** a call because it is a registered PBX extension. Use this when Home Assistant should ring a phone and speak — not only when someone calls in.
+
+Trigger from any automation (sensor, calendar, alarm, script):
+
+```yaml
+alias: "SIP: Call me when the garage stays open"
+trigger:
+  - platform: state
+    entity_id: binary_sensor.garage_door
+    to: "on"
+    for: "00:10:00"
+action:
+  - service: sip.dial
+    target:
+      entity_id: media_player.phone_line
+    data:
+      number: "100"
+      ring_timeout: 30
+      message: "The garage door has been open for ten minutes."
+      tts_engine: tts.google_translate
+      language: en
+```
+
+Without `message`, the far end still answers into a live line — you can then `tts.speak`, play media, start Assist, or run an IVR `menu` on the same call. Full TTS variants (inbound answer, multi-step, media-source URLs) are in [Announce a TTS message](#example-announce-a-tts-message-then-hang-up).
+
+---
+
+## Control Home Assistant with DTMF (any phone)
+
+Keypad control is not limited to door stations. Any extension or softphone on the PBX can dial hass-sip; answer with an IVR `menu` so digits run Home Assistant services.
+
+```yaml
+alias: "SIP: Phone keypad controls lights"
+trigger:
+  - platform: event
+    event_type: sip_incoming_call
+action:
+  - service: sip.answer
+    target:
+      entity_id: media_player.phone_line
+    data:
+      menu:
+        id: root
+        message: "Press 1 to toggle the living room light. Press 2 for Voice Assist."
+        tts_engine: tts.google_translate
+        language: en
+        timeout: 10
+        input: digit
+        choices:
+          "1":
+            action:
+              domain: light
+              service: toggle
+              entity_id: light.living_room_light
+            message: "Toggling the light now."
+            post_action: hangup
+          "2":
+            assist: true
+        on_invalid:
+          message: "Invalid selection."
+          post_action: repeat
+        on_timeout: hangup
+```
+
+That is the same IVR engine used for nested menus and PINs — full field list: [IVR Configuration Example](#ivr-configuration-example).
+
+To **send** DTMF into an active call (for example to open a gate from the dashboard), see [Intercom Door Release](#intercom-door-release-button-example-dtmf).
 
 ---
 

@@ -16,9 +16,9 @@ Transport is **SIP over UDP** with **G.711 (PCMU/PCMA) and G.722**. TLS, SRTP, a
 
 ## What it is for
 
-### Control Home Assistant from a phone
+### Control Home Assistant by voice
 
-Dial the hass-sip extension → answer → Assist. Several commands in one call, no redial.
+Dial the hass-sip extension → answer → Assist. Several spoken commands in one call, no redial.
 
 ```yaml
 action: sip.start_assist
@@ -29,6 +29,31 @@ target:
 ![Phone dials Home Assistant, Assist turns on a light, then sets brightness — storyboard](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/demo/phone-assist.gif)
 
 Full flow: [Voice Assist example](docs/examples.md#voice-assist-automation-example). Door locks: [allow-list + PIN](docs/security.md#door-locks-and-other-security-intents).
+
+### Control Home Assistant with the phone keypad
+
+Any phone on the PBX can call the extension and press digits. An IVR menu runs Home Assistant services — this is not limited to intercoms.
+
+```yaml
+action: sip.answer
+target:
+  entity_id: media_player.phone_line
+data:
+  menu:
+    message: "Press 1 to toggle the living room light."
+    choices:
+      "1":
+        action:
+          domain: light
+          service: toggle
+          entity_id: light.living_room_light
+        message: "Toggling the light now."
+        post_action: hangup
+```
+
+![Phone dials Home Assistant, presses 1 on the keypad, living room light turns on — storyboard](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/demo/phone-dtmf.gif)
+
+Menu fields and nesting: [IVR example](docs/examples.md#ivr-configuration-example). Step-by-step: [DTMF from any phone](docs/examples.md#control-home-assistant-with-dtmf-any-phone).
 
 ### Intercom auto-answer
 
@@ -44,9 +69,9 @@ Door station rings → hass-sip answers immediately → optional DTMF to open th
 
 Put that in `sip_contacts.json` (or send SIP auto-answer headers). [Intercom details](docs/examples.md#intercom--auto-answer-mode).
 
-### Sensor event → phone + TTS
+### Home Assistant calls you with TTS
 
-A sensor fires → hass-sip dials your phone → speaks a message → hangs up.
+An automation dials your phone, speaks a message when you answer, then hangs up — package delivery, garage open too long, alarm, and so on.
 
 ```yaml
 action: sip.dial
@@ -59,7 +84,7 @@ data:
 
 ![Garage sensor triggers Home Assistant, which dials your phone and speaks a TTS warning — storyboard](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/demo/sensor-tts-call.gif)
 
-More TTS options: [Announce a TTS message](docs/examples.md#example-announce-a-tts-message-then-hang-up).
+More options: [Announce a TTS message](docs/examples.md#example-announce-a-tts-message-then-hang-up). Outbound-focused notes: [HA calls you](docs/examples.md#home-assistant-calls-you-with-tts).
 
 ## Installation
 

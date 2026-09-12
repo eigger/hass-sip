@@ -406,8 +406,58 @@ def intercom() -> None:
     save("intercom-autoanswer.gif", seq)
 
 
+def phone_dtmf() -> None:
+    title = "Control Home Assistant with DTMF"
+    actors = [
+        Actor(X_LEFT, "Your phone", "ext 100"),
+        Actor(X_MID, "Home Assistant", "hass-sip · IVR"),
+        Actor(X_RIGHT, "Living room light"),
+    ]
+    seq: list[Image.Image] = []
+    total = 3
+
+    # 1. dial in
+    img, d = new_frame(title, 0, total)
+    icon_phone(d, X_LEFT, Y_ACTOR, True)
+    icon_home(d, X_MID, Y_ACTOR)
+    icon_bulb(d, X_RIGHT, Y_ACTOR, on=False)
+    arrow(d, X_LEFT + 40, X_MID - 60, Y_ARROW, WARN, label="dial 1001")
+    arrow(d, X_MID + 60, X_RIGHT - 50, Y_ARROW, DIM, dashed=True)
+    pill(d, (X_MID, Y_ACTOR - 74), "ANSWER + MENU", WARN)
+    labels(d, actors)
+    caption(d, "Any phone on the PBX can call the hass-sip extension — not only an intercom.")
+    seq.append(img)
+
+    # 2. hear menu, press 1
+    img, d = new_frame(title, 1, total)
+    icon_phone(d, X_LEFT, Y_ACTOR, True)
+    icon_home(d, X_MID, Y_ACTOR, listening=True)
+    icon_bulb(d, X_RIGHT, Y_ACTOR, on=False)
+    arrow(d, X_MID - 60, X_LEFT + 40, Y_ARROW - 8, OK, label="TTS menu")
+    arrow(d, X_LEFT + 40, X_MID - 60, Y_ARROW + 12, ACCENT, label='DTMF "1"')
+    arrow(d, X_MID + 60, X_RIGHT - 50, Y_ARROW, DIM, dashed=True)
+    bubble(d, (X_MID, Y_ACTOR - 52), ['"Press 1 to toggle the light"'], BUBBLE_HA, side="top")
+    labels(d, actors)
+    caption(d, "sip.answer with a menu — keypad digits run Home Assistant services.")
+    seq.append(img)
+
+    # 3. light toggles
+    img, d = new_frame(title, 2, total)
+    icon_phone(d, X_LEFT, Y_ACTOR, True)
+    icon_home(d, X_MID, Y_ACTOR)
+    icon_bulb(d, X_RIGHT, Y_ACTOR, on=True)
+    arrow(d, X_LEFT + 40, X_MID - 60, Y_ARROW, DIM, dashed=True)
+    arrow(d, X_MID + 60, X_RIGHT - 50, Y_ARROW, OK, label="light.toggle")
+    pill(d, (X_RIGHT, Y_ACTOR - 74), "ON", OK)
+    labels(d, actors)
+    caption(d, "Choice 1 fires a service, speaks a confirmation, then hangs up or continues.")
+    seq.append(img)
+
+    save("phone-dtmf.gif", seq)
+
+
 def sensor_call() -> None:
-    title = "Sensor event → phone call + TTS"
+    title = "Home Assistant calls you with TTS"
     actors = [Actor(X_LEFT, "Garage door", "binary_sensor"), Actor(X_MID, "Home Assistant", "hass-sip · ext 1001"), Actor(X_RIGHT, "Your phone", "ext 100")]
     seq: list[Image.Image] = []
     total = 3
@@ -421,7 +471,7 @@ def sensor_call() -> None:
     arrow(d, X_MID + 60, X_RIGHT - 40, Y_ARROW, DIM, dashed=True)
     pill(d, (X_MID, Y_ACTOR - 74), "AUTOMATION TRIGGERS", WARN)
     labels(d, actors)
-    caption(d, "Any Home Assistant trigger can start a call.")
+    caption(d, "Any Home Assistant trigger can start an outbound call.")
     seq.append(img)
 
     # 2. dial out
@@ -454,5 +504,6 @@ def sensor_call() -> None:
 
 if __name__ == "__main__":
     phone_assist()
+    phone_dtmf()
     intercom()
     sensor_call()
