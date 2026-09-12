@@ -10,8 +10,8 @@ Transport is **SIP over UDP** with **G.711 (PCMU/PCMA) and G.722**. TLS, SRTP, a
 
 | Get registered | Automate | Reference |
 |---|---|---|
-| [Setup & Quick Start](https://github.com/eigger/hass-sip/blob/main/docs/setup.md) | [Examples](https://github.com/eigger/hass-sip/blob/main/docs/examples.md) | [Services, entities, events](https://github.com/eigger/hass-sip/blob/main/docs/services.md) |
-| [PBX compatibility](https://github.com/eigger/hass-sip/blob/main/docs/setup.md#pbx-compatibility) | [Security](https://github.com/eigger/hass-sip/blob/main/docs/security.md) | [Troubleshooting](https://github.com/eigger/hass-sip/blob/main/docs/troubleshooting.md) |
+| [Setup & Quick Start](docs/setup.md) | [Examples](docs/examples.md) | [Services, entities, events](docs/services.md) |
+| [PBX compatibility](docs/setup.md#pbx-compatibility) | [Security](docs/security.md) | [Troubleshooting](docs/troubleshooting.md) |
 
 ## What it is for
 
@@ -29,7 +29,7 @@ target:
 
 ![Phone dials Home Assistant, Assist turns on a light, then sets brightness — storyboard](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/demo/phone-assist.gif)
 
-Full flow: [Voice Assist example](https://github.com/eigger/hass-sip/blob/main/docs/examples.md#voice-assist-automation-example). Door locks: [allow-list + PIN](https://github.com/eigger/hass-sip/blob/main/docs/security.md#door-locks-and-other-security-intents).
+Full flow: [Voice Assist example](docs/examples.md#voice-assist-automation-example). Door locks: [allow-list + PIN](docs/security.md#door-locks-and-other-security-intents).
 
 ### Intercom auto-answer
 
@@ -43,7 +43,7 @@ Door station rings → hass-sip answers immediately → optional DTMF to open th
 
 ![Door station rings Home Assistant, auto-answer opens audio, dashboard DTMF opens the gate — storyboard](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/demo/intercom-autoanswer.gif)
 
-Put that in `sip_contacts.json` (or send SIP auto-answer headers). [Intercom details](https://github.com/eigger/hass-sip/blob/main/docs/examples.md#intercom--auto-answer-mode).
+Put that in `sip_contacts.json` (or send SIP auto-answer headers). [Intercom details](docs/examples.md#intercom--auto-answer-mode).
 
 ### Sensor event → phone + TTS
 
@@ -60,7 +60,7 @@ data:
 
 ![Garage sensor triggers Home Assistant, which dials your phone and speaks a TTS warning — storyboard](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/demo/sensor-tts-call.gif)
 
-More TTS options: [Announce a TTS message](https://github.com/eigger/hass-sip/blob/main/docs/examples.md#example-announce-a-tts-message-then-hang-up).
+More TTS options: [Announce a TTS message](docs/examples.md#example-announce-a-tts-message-then-hang-up).
 
 ## Installation
 
@@ -77,7 +77,7 @@ On the same LAN as FreePBX:
 3. **Registration status** should read `registered`.
 4. Dial the extension; **Call Audio** (`audio_path`) should become `bidirectional`.
 
-Field list, firewall notes, and the pjsip snippet: **[Setup](https://github.com/eigger/hass-sip/blob/main/docs/setup.md)**.
+Field list, firewall notes, and the pjsip snippet: **[Setup](docs/setup.md)**.
 
 ## Features
 
@@ -89,7 +89,7 @@ Field list, firewall notes, and the pjsip snippet: **[Setup](https://github.com/
 
 ## Security
 
-Run hass-sip on the same LAN (or VPN) as the PBX. Do not port-forward UDP 5060 or RTP (`local_rtp_port`, default 7078). For Assist that can unlock a door, use allow-list + DTMF PIN + a dedicated pipeline — **[Security](https://github.com/eigger/hass-sip/blob/main/docs/security.md)**.
+Run hass-sip on the same LAN (or VPN) as the PBX. Do not port-forward UDP 5060 or RTP (`local_rtp_port`, default 7078). For Assist that can unlock a door, use allow-list + DTMF PIN + a dedicated pipeline — **[Security](docs/security.md)**.
 
 ## Feedback
 
