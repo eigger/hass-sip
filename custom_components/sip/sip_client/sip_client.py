@@ -157,6 +157,13 @@ def _cseq_number(header: str) -> int:
         return 0
 
 
+def _via_sent_by(via: str) -> str:
+    """host[:port] of the top Via (where the request came from)."""
+    first = via.split(",", 1)[0].strip()
+    parts = first.split(None, 1)
+    return parts[1].split(";", 1)[0].strip() if len(parts) == 2 else ""
+
+
 def _via_branch(via: str) -> str:
     """Branch of the top Via (the transaction this request belongs to)."""
     first = via.split(",", 1)[0]
@@ -499,10 +506,11 @@ class SipClient:
         _LOGGER.info("SIP socket bound, local %s:%s", self._local_ip, self._local_port)
         return True
 
-    def _send_raw(self, msg: str) -> None:
+    def _send_raw(self, msg: str, *, traced: bool = True) -> None:
         if self._transport is None:
             return
-        trace.log_sip("TX", msg)
+        if traced:
+            trace.log_sip("TX", msg)
         self._transport.sendto(msg.encode("utf-8"))
 
 
@@ -1353,8 +1361,23 @@ class SipClient:
             self._handle_update(m)
             return
 
-        # OPTIONS / unknown in-dialog request: acknowledge.
+        # Unknown in-dialog request: acknowledge.
         self._send_raw(self._build_response(m, 200, "OK", False))
+
+    def _handle_options(self, m: sm.SipMessage, raw: str) -> None:
+        """Answer a keepalive (PBX qualify) OPTIONS.
+
+        A 200 exchange is one trace line; anything else gets the full
+        RX/TX dump so the failure can be diagnosed.
+        """
+        code, reason = 200, "OK"
+        resp = self._build_response(m, code, reason, False)
+        if code == 200:
+            trace.log_keepalive(_via_sent_by(m.header("Via")) or "?", code, reason)
+            self._send_raw(resp, traced=False)
+            return
+        trace.log_sip("RX", raw)
+        self._send_raw(resp)
 
     # -- call control ---------------------------------------------------
     def answer(self) -> None:
@@ -1630,9 +1653,16 @@ class SipClient:
         # take down the UDP listener or the integration.
         try:
             raw = data.decode("utf-8", errors="replace")
+            try:
+                m = sm.parse_sip_message(raw)
+            except Exception:
+                trace.log_sip("RX", raw)  # keep unparseable packets in the trace
+                raise
+            if m.is_request and m.method == "OPTIONS":
+                self._handle_options(m, raw)  # traces itself
+                return
             trace.log_sip("RX", raw)
 
-            m = sm.parse_sip_message(raw)
             if m.is_request:
                 self._handle_request(m)
                 return

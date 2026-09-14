@@ -76,6 +76,17 @@ def log_sip(direction: str, msg: str) -> None:
     _LOGGER.debug("%s\n%s", direction, mask_sip(msg))
 
 
+def log_keepalive(peer: str, code: int, reason: str) -> None:
+    """Summarize a healthy OPTIONS keepalive exchange in one line.
+
+    PBX qualify pings arrive every minute and carry nothing worth reading
+    when they succeed; dumping both datagrams would bury real traffic.
+    """
+    if not enabled():
+        return
+    _LOGGER.debug("OPTIONS keepalive from %s -> %s %s", peer, code, reason)
+
+
 def log_rtp(fmt: str, *args) -> None:
     """Log an RTP summary line at DEBUG, or no-op if disabled."""
     if not enabled():

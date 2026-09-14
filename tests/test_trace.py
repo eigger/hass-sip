@@ -189,6 +189,47 @@ def test_sip_send_and_recv_traced_when_enabled():
     assert 'response="****"' in text
 
 
+CRLF = "\r\n"
+
+_OPTIONS = (
+    "OPTIONS sip:100@192.168.0.241:50114 SIP/2.0" + CRLF
+    + "Via: SIP/2.0/UDP 192.168.0.245:5060;rport;branch=z9hG4bKPj4ff14083" + CRLF
+    + "From: <sip:100@192.168.0.245>;tag=82674a21" + CRLF
+    + "To: <sip:100@192.168.0.241>" + CRLF
+    + "Contact: <sip:100@192.168.0.245:5060>" + CRLF
+    + "Call-ID: d52428ea-c910-4ccc-9492-f8d7df13bb8e" + CRLF
+    + "CSeq: 396 OPTIONS" + CRLF
+    + "Max-Forwards: 70" + CRLF
+    + "Content-Length: 0" + CRLF + CRLF
+)
+
+
+def test_options_keepalive_traced_as_one_line():
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client._transport = MagicMock()
+        captured = []
+
+        def fake_debug(fmt, *args):
+            captured.append(fmt % args if args else fmt)
+
+        with patch.object(trace._LOGGER, "isEnabledFor", return_value=True):
+            with patch.object(trace._LOGGER, "debug", side_effect=fake_debug):
+                client._on_packet(_OPTIONS.encode("utf-8"))
+        sent = client._transport.sendto.call_args[0][0].decode("utf-8")
+        return captured, sent
+
+    logs, sent = asyncio.run(run())
+    # The PBX still gets its 200 OK...
+    assert sent.startswith("SIP/2.0 200 OK" + CRLF)
+    assert "CSeq: 396 OPTIONS" in sent
+    # ...but the trace holds a single summary instead of both datagrams.
+    assert logs == ["OPTIONS keepalive from 192.168.0.245:5060 -> 200 OK"]
+
+
 def test_sip_send_raw_does_not_format_when_disabled():
     if sip_client is None:
         return
