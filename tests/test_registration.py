@@ -227,6 +227,40 @@ def test_register_refresh_at_half_expiration():
     assert delays[-1] == 60
 
 
+def test_register_refresh_keeps_registered_state():
+    if _skip():
+        return
+
+    async def run():
+        pbx = MockPbx()
+        await pbx.start()
+        states = []
+        client, registered, _failed = await _make_client(pbx, register_expiration=120)
+        client.cb.on_state_change = states.append
+        try:
+            await client.start()
+            for _ in range(20):
+                if registered:
+                    break
+                await asyncio.sleep(0.02)
+            before = list(states)
+            fire_register_timer(client)  # periodic refresh
+            for _ in range(20):
+                if not client._reg_pending:
+                    break
+                await asyncio.sleep(0.02)
+            return before, list(states), client.state, client._reg_pending
+        finally:
+            await _stop(client, pbx)
+
+    before, after, state, pending = asyncio.run(run())
+    assert before[-1] == sip_client.SipState.REGISTERED
+    # A refresh of a live registration must not flip to REGISTERING and back.
+    assert after == before
+    assert state == sip_client.SipState.REGISTERED
+    assert pending is False
+
+
 def test_register_deferred_during_call():
     if _skip():
         return

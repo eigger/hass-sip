@@ -259,6 +259,7 @@ class SipClient:
         self._reg_branch = ""
         self._reg_cseq = 0
         self._register_auth_tried = False
+        self._reg_pending = False  # REGISTER sent, final response not yet seen
         self._service_routes: str | None = None
 
         # current dialog
@@ -442,6 +443,7 @@ class SipClient:
                 self._register_handle.cancel()
                 self._register_handle = None
             self.registered = False
+            self._reg_pending = False
             if self._transport is not None:
                 self._transport.close()
                 self._transport = None
@@ -563,8 +565,13 @@ class SipClient:
         self._reg_branch = sm.gen_branch()
         self._reg_cseq += 1
         self._register_auth_tried = False
+        self._reg_pending = True
         self._send_raw(self._build_register())
-        self._set_state(SipState.REGISTERING)
+        # A refresh of a live registration stays REGISTERED: the registrar
+        # still holds the binding, and flipping to REGISTERING every half
+        # expiry would churn state-change events for nothing.
+        if self.state != SipState.REGISTERED:
+            self._set_state(SipState.REGISTERING)
         self._schedule_register(5)  # retry window if no response
 
     def _schedule_register(self, seconds: float) -> None:
@@ -595,9 +602,7 @@ class SipClient:
         ):
             self._schedule_register(30)
             return
-        if self.state == SipState.REGISTERED:
-            self._do_register()  # periodic refresh
-        elif self.state == SipState.REGISTERING:
+        if self._reg_pending or self.state == SipState.REGISTERING:
             # No response in the window. Resend a few times, then rebuild the
             # socket to recover from a dead transport or a changed local IP.
             self._reg_attempts += 1
@@ -607,6 +612,8 @@ class SipClient:
                 self._loop.create_task(self._reconnect())
             else:
                 self._do_register()
+        elif self.state == SipState.REGISTERED:
+            self._do_register()  # periodic refresh
         else:  # IDLE: the socket is likely gone, rebuild it
             self._loop.create_task(self._reconnect())
 
@@ -624,6 +631,9 @@ class SipClient:
             self._register_auth_tried = True
             self._send_raw(self._authorized_register(m))
             return
+        if m.status_code < 200:
+            return  # provisional; keep waiting for the final response
+        self._reg_pending = False
         if m.status_code == 423:
             # RFC 3261 §10.2.8 / §21.4.17: retry with Expires >= Min-Expires.
             min_expires = self._parse_min_expires(m)
@@ -654,7 +664,9 @@ class SipClient:
             self._reg_attempts = 0
             self._register_backoff = REGISTER_RETRY_MIN
             self._register_auth_failures = 0
-            self._set_state(SipState.REGISTERED)
+            # A refresh may now overlap a call; never clobber a call state.
+            if self.state == SipState.REGISTERING:
+                self._set_state(SipState.REGISTERED)
             self._schedule_register(max(self.config.register_expiration // 2, 30))
             if sr := m.header("Service-Route"):
                 self._service_routes = sr
@@ -685,6 +697,8 @@ class SipClient:
         self._register_backoff = min(delay * factor, cap)
         self.registered = False
         self._reg_attempts = 0
+        if self.state == SipState.REGISTERED:
+            self._set_state(SipState.REGISTERING)
         self._register_failed(reason)
         self._schedule_register(delay)
         _LOGGER.info(
