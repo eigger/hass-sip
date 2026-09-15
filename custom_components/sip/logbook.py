@@ -62,7 +62,9 @@ def async_describe_events(
 
     @callback
     def describe_playback_done(event: Event) -> dict[str, str]:
-        return {LOGBOOK_ENTRY_NAME: _name(event.data), LOGBOOK_ENTRY_MESSAGE: "playback finished"}
+        error = event.data.get("error")
+        message = f"playback failed: {error}" if error else "playback finished"
+        return {LOGBOOK_ENTRY_NAME: _name(event.data), LOGBOOK_ENTRY_MESSAGE: message}
 
     @callback
     def describe_recording_started(event: Event) -> dict[str, str]:

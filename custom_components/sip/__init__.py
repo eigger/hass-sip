@@ -505,6 +505,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             assist_bridge.on_playback_done()
 
     @callback
+    def on_playback_error(reason: str) -> None:
+        LOGGER.warning(
+            "[%s] Audio playback failed: %s", sip_config.username, reason
+        )
+        # Fire playback_done with an ``error`` so automations that wait for it
+        # (answer -> speak -> hang up) do not leave the call open; IVR moves on
+        # to its post_action / input and Assist to its next turn.
+        fire_sip_event(EVENT_SIP_PLAYBACK_DONE, {"error": reason})
+        nonlocal ivr_session, assist_bridge
+        if ivr_session is not None:
+            ivr_session.on_playback_done()
+        if assist_bridge is not None:
+            assist_bridge.on_playback_done()
+
+    @callback
     def on_codec_change(codec) -> None:
         nonlocal assist_bridge
         if assist_bridge is not None:
@@ -528,6 +543,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         on_call_ended=on_call_ended,
         on_dtmf=on_dtmf,
         on_playback_done=on_playback_done,
+        on_playback_error=on_playback_error,
         on_codec_change=on_codec_change,
     )
 

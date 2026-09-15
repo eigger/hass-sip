@@ -70,6 +70,10 @@ class SipCallbacks:
     on_call_ended: Callable[[str], None] | None = None
     on_dtmf: Callable[[str], None] | None = None
     on_playback_done: Callable[[], None] | None = None
+    # The source failed (ffmpeg error, no audio, unreadable URL). Consumers
+    # waiting on on_playback_done must be released; the argument is the
+    # error text.
+    on_playback_error: Callable[[str], None] | None = None
     on_codec_change: Callable[[codecs.Codec], None] | None = None
 
 
@@ -1718,8 +1722,12 @@ class SipClient:
             self._emit("on_playback_done")
         except asyncio.CancelledError:
             raise
-        except Exception:  # noqa: BLE001
+        except Exception as err:  # noqa: BLE001
             _LOGGER.exception("Audio source error")
+            # Not on_playback_done: nothing finished playing. But IVR/Assist
+            # and "wait for playback then hang up" automations are blocked on
+            # completion, so give them a distinct signal to move on.
+            self._emit("on_playback_error", str(err) or err.__class__.__name__)
 
     # -- packet dispatch ------------------------------------------------
     def _on_packet(self, data: bytes) -> None:
