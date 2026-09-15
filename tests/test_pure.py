@@ -3236,6 +3236,83 @@ def test_replaced_audio_source_is_retained_until_cancel_cleanup_finishes():
     asyncio.run(run())
 
 
+def test_stop_waits_for_cancelled_source_cleanup():
+    """stop() must not return while a cancelled source is still in its
+    finally block: the integration discards the client right after."""
+    if sip_client is None:
+        return
+
+    class CleanupSource(audio.AudioSource):
+        def __init__(self):
+            self.cleanup_done = False
+
+        async def run(self, push, is_active):
+            try:
+                await asyncio.Event().wait()
+            finally:
+                await asyncio.sleep(0.05)  # e.g. proc.wait() after kill
+                self.cleanup_done = True
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client.state = sip_client.SipState.IN_CALL
+        source = CleanupSource()
+        client.play_source(source)
+        await asyncio.sleep(0)
+        await client.stop()
+        return source.cleanup_done, client._tx_source_tasks
+
+    cleanup_done, remaining = asyncio.run(run())
+    assert cleanup_done
+    assert not remaining
+
+
+def test_stop_cancels_cleanup_that_outlives_the_drain_timeout():
+    if sip_client is None:
+        return
+
+    class StuckSource(audio.AudioSource):
+        async def run(self, push, is_active):
+            try:
+                await asyncio.Event().wait()
+            finally:
+                await asyncio.Event().wait()  # never finishes on its own
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client.state = sip_client.SipState.IN_CALL
+        client.play_source(StuckSource())
+        await asyncio.sleep(0)
+        task = client._tx_source_task
+        await asyncio.wait_for(client._drain_tasks(timeout=0.05), timeout=1)
+        await asyncio.sleep(0)
+        return task.cancelled() or task.cancelling() > 0
+
+    assert asyncio.run(run())
+
+
+def test_spawned_background_tasks_are_referenced_until_done():
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        gate = asyncio.Event()
+
+        async def work():
+            await gate.wait()
+
+        task = client._spawn(work())
+        await asyncio.sleep(0)
+        assert task in client._background_tasks
+        gate.set()
+        await task
+        await asyncio.sleep(0)
+        return client._background_tasks
+
+    assert asyncio.run(run()) == set()
+
+
 def test_replacing_audio_source_flushes_old_pcm():
     if sip_client is None:
         return

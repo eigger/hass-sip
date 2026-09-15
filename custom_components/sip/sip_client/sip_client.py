@@ -13,7 +13,7 @@ import re
 import socket
 import time
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable, Coroutine
 
 from . import codecs
 from . import sip_message as sm
@@ -75,6 +75,8 @@ class SipCallbacks:
 
 _HOLD_IPS = frozenset({"0.0.0.0", "0:0:0:0:0:0:0:0", "::"})
 _INFO_DTMF_TYPES = ("application/dtmf-relay", "application/dtmf", "audio/telephone-event")
+# How long stop() waits for cancelled sources / background work to finish.
+_STOP_DRAIN_TIMEOUT_SEC = 3.0
 _DIALOG_STATES = frozenset(
     {
         SipState.INVITING,
@@ -310,6 +312,9 @@ class SipClient:
         # A cancelled source may still be cleaning up an ffmpeg subprocess.
         # Keep it alive until that cleanup has actually completed.
         self._tx_source_tasks: set[asyncio.Task] = set()
+        # Fire-and-forget work (reconnect, media start/stop). The loop only
+        # keeps weak references to tasks, so hold them until they finish.
+        self._background_tasks: set[asyncio.Task] = set()
         self._pending_source: AudioSource | None = None
         self._ring_timeout_handle: asyncio.TimerHandle | None = None
         self._max_duration_handle: asyncio.TimerHandle | None = None
@@ -438,10 +443,21 @@ class SipClient:
             self._ring_timeout_handle.cancel()
             self._ring_timeout_handle = None
         await self._stop_media()
+        await self._drain_tasks()
         if self._transport is not None:
             self._transport.close()
             self._transport = None
         self._set_state(SipState.IDLE)
+
+    async def _drain_tasks(self, timeout: float = _STOP_DRAIN_TIMEOUT_SEC) -> None:
+        """Let cancelled sources finish their ffmpeg cleanup before the client
+        is discarded; whatever is still pending after ``timeout`` is cancelled."""
+        pending = {t for t in self._tx_source_tasks | self._background_tasks if not t.done()}
+        if not pending:
+            return
+        _done, still_pending = await asyncio.wait(pending, timeout=timeout)
+        for task in still_pending:
+            task.cancel()
 
     async def _reconnect(self) -> None:
         """Rebuild the SIP socket and re-register (recovers from network loss)."""
@@ -526,6 +542,13 @@ class SipClient:
             cb(*args)
         except Exception:  # noqa: BLE001
             _LOGGER.exception("SIP callback %s raised", name)
+
+    def _spawn(self, coro: Coroutine[Any, Any, Any]) -> asyncio.Task:
+        """Schedule background work and keep a reference until it is done."""
+        task = self._loop.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
 
     def _set_state(self, state: SipState) -> None:
         if self.state != state:
@@ -620,13 +643,13 @@ class SipClient:
             if self._reg_attempts >= 3:
                 _LOGGER.warning("REGISTER unanswered; reconnecting socket")
                 self._reg_attempts = 0
-                self._loop.create_task(self._reconnect())
+                self._spawn(self._reconnect())
             else:
                 self._do_register()
         elif self.state == SipState.REGISTERED:
             self._do_register()  # periodic refresh
         else:  # IDLE: the socket is likely gone, rebuild it
-            self._loop.create_task(self._reconnect())
+            self._spawn(self._reconnect())
 
     def _handle_register_response(self, m: sm.SipMessage) -> None:
         try:
@@ -1006,7 +1029,7 @@ class SipClient:
                     self.play_source(self._pending_source)
                     self._pending_source = None
 
-            self._loop.create_task(_start_and_play())
+            self._spawn(_start_and_play())
             self._set_state(SipState.IN_CALL)
             _LOGGER.info("Call connected")
             self._emit("on_call_connected")
@@ -1110,7 +1133,7 @@ class SipClient:
         # bound a socket. A later re-INVITE / ACK / UPDATE can supply the
         # real endpoint — start then, without tearing anything down.
         if self.state in (SipState.IN_CALL, SipState.ANSWERING):
-            self._loop.create_task(self._start_media())
+            self._spawn(self._start_media())
 
     def _set_hold(self, held: bool) -> None:
         if held == self._on_hold:
@@ -1338,7 +1361,7 @@ class SipClient:
                 self._send_raw(self._build_response(m, 100, "Trying", False))
                 self._set_state(SipState.ANSWERING)
                 self._send_raw(self._build_response(m, 200, "OK", True))
-                self._loop.create_task(self._start_media())
+                self._spawn(self._start_media())
                 self._emit("on_incoming_call", caller)
                 self._set_state(SipState.IN_CALL)
                 _LOGGER.info("Call auto-answered and connected")
@@ -1451,7 +1474,7 @@ class SipClient:
         if self.state != SipState.INCOMING or self._incoming_invite is None:
             _LOGGER.warning("answer() ignored in state %s", self.state)
             return
-        self._loop.create_task(self._start_media())
+        self._spawn(self._start_media())
         self._send_raw(self._build_response(self._incoming_invite, 200, "OK", True))
         self._set_state(SipState.ANSWERING)
         _LOGGER.info("Answered")
@@ -1572,7 +1595,7 @@ class SipClient:
         self.last_call_bytes_tx = self.rtp.bytes_sent
         ended_session = self._media_session
         self._media_session += 1
-        self._loop.create_task(self._stop_media_session(ended_session))
+        self._spawn(self._stop_media_session(ended_session))
         self._set_state(SipState.REGISTERED if self.registered else SipState.IDLE)
         self._emit("on_call_ended", reason)
 
