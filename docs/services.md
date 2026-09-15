@@ -154,7 +154,7 @@ You can use this entity as a trigger in the Home Assistant Automation Editor.
 Supported event types (`event_type` attribute):
 - `incoming`: Fired when an inbound call arrives. Attributes: `caller`, `caller_name`.
 - `connected`: Fired when the call is answered.
-- `playback_done`: Fired when TTS or audio playback finishes. If the source could not be played (ffmpeg error, unreadable file/URL) it still fires, with an `error` attribute describing the failure, so a flow waiting on it does not stall.
+- `playback_done`: Fired when TTS or audio playback finishes. If the source could not be played (ffmpeg error, unreadable file/URL) it still fires, with a short `error` attribute (for example `ffmpeg exited with status 1`) so a flow waiting on it does not stall. The attribute does not include media URLs.
 - `ended`: Fired when the call ends.
 - `dtmf`: Fired when a DTMF key is pressed. Attributes: `digit`.
 - `recording_started` / `recording_stopped`: Fired when call recording starts or stops.
@@ -179,7 +179,7 @@ If you prefer triggering directly from the Event Bus, the integration fires the 
 | `sip_state_changed` | `state` | The SIP line state changes (`idle`, `registering`, `registered`, `inviting`, `ringing_out`, `incoming`, `answering`, `in_call`) |
 | `sip_incoming_call` | `caller`, `caller_name` | An inbound call arrives |
 | `sip_call_connected` | – | A call becomes two-way connected (use this before playing media) |
-| `sip_playback_done` | `error` (only on failure) | A TTS/audio source has **finished transmitting** to the remote party — or could not be played at all, in which case `error` holds the reason |
+| `sip_playback_done` | `error` (only on failure) | A TTS/audio source has **finished transmitting** to the remote party — or could not be played at all, in which case `error` is a short reason (`ffmpeg exited with status N`, `ffmpeg produced no audio`) without media URLs |
 | `sip_call_ended` | – | The call ended (either side hung up) |
 | `sip_dtmf_digit` | `digit` | A DTMF digit was received from the remote party |
 | `sip_recording_started` | `recording_file` | Call recording started |

@@ -524,6 +524,24 @@ def test_failed_audio_source_emits_playback_error_not_done():
     assert errors == ["decoder failed"]
 
 
+def test_public_playback_error_omits_media_urls():
+    if sip_client is None:
+        return
+    ffmpeg = RuntimeError(
+        "ffmpeg exited with status 1: "
+        "https://ha.local/media/local/clip.mp3?authSig=secret"
+    )
+    assert sip_client._public_playback_error(ffmpeg) == "ffmpeg exited with status 1"
+    empty = RuntimeError(
+        "ffmpeg produced no audio: https://ha.local/media/x.wav?authSig=secret"
+    )
+    assert sip_client._public_playback_error(empty) == "ffmpeg produced no audio"
+    other = RuntimeError("download failed https://example/x?authSig=tok")
+    public = sip_client._public_playback_error(other)
+    assert "authSig" not in public
+    assert "https://" not in public.lower()
+
+
 def test_ffmpeg_source_streaming_emits_pcm_before_producer_finishes():
     """First stdout PCM must not wait for the stdin iterable to be exhausted."""
     script = (

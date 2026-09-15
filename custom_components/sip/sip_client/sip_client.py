@@ -147,11 +147,25 @@ def _angle_uri(value: str) -> str:
 # §19.1.1). Match it as a whole parameter so ";lrx" or a userinfo "lr" is not
 # mistaken for one.
 _LOOSE_ROUTE_PARAM = re.compile(r";lr(?=[;=?]|$)", re.IGNORECASE)
+_URL_IN_TEXT = re.compile(r"https?://\S+", re.IGNORECASE)
 
 
 def _is_loose_route(route: str) -> bool:
     """Whether a Record-Route/Route field-value points at a loose router."""
     return bool(_LOOSE_ROUTE_PARAM.search(_angle_uri(route) or route.strip()))
+
+
+def _public_playback_error(err: BaseException) -> str:
+    """Short reason for bus/logbook callbacks; never include media URLs.
+
+    FFmpeg stderr (appended after ``: ``) can contain Home Assistant
+    ``/media`` URLs with ``authSig``. The full exception is already logged.
+    """
+    text = str(err).strip() or err.__class__.__name__
+    if text.startswith("ffmpeg "):
+        text = text.split(":", 1)[0].strip()
+    text = _URL_IN_TEXT.sub("<url>", text)
+    return text[:200]
 
 
 def _cseq_number(header: str) -> int:
@@ -1727,7 +1741,7 @@ class SipClient:
             # Not on_playback_done: nothing finished playing. But IVR/Assist
             # and "wait for playback then hang up" automations are blocked on
             # completion, so give them a distinct signal to move on.
-            self._emit("on_playback_error", str(err) or err.__class__.__name__)
+            self._emit("on_playback_error", _public_playback_error(err))
 
     # -- packet dispatch ------------------------------------------------
     def _on_packet(self, data: bytes) -> None:
