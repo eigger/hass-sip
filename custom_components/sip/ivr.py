@@ -31,43 +31,59 @@ import asyncio
 from collections.abc import Coroutine
 from typing import Any, Callable
 
+import voluptuous as vol
+
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import template
 
 from .const import LOGGER
 
-# ``assist:`` may carry the same tuning options as ``sip.start_assist``; the
-# caller gate (allowed_callers / contacts_only / pin) is deliberately not
-# among them — an IVR menu guards itself with its own ``input: pin``.
-ASSIST_OPTION_KEYS = frozenset(
+# ``assist:`` may carry the same tuning options as ``sip.start_assist``, with
+# the same ranges (mirrors SERVICE_ASSIST_SCHEMA; the menu is ``match_all`` at
+# the service boundary, so nothing else checks these). The caller gate
+# (allowed_callers / contacts_only / pin) is deliberately not among them — an
+# IVR menu guards itself with its own ``input: pin``.
+ASSIST_OPTIONS_SCHEMA = vol.Schema(
     {
-        "pipeline_id",
-        "conversation_id",
-        "initial_prompt",
-        "system_prompt",
-        "max_turns",
-        "max_silent_turns",
-        "barge_in",
-        "silence_seconds",
-        "noise_suppression",
-        "turn_tone",
-        "hangup_on_end",
-        "interrupt_media",
-    }
+        vol.Optional("pipeline_id"): vol.Coerce(str),
+        vol.Optional("conversation_id"): vol.Coerce(str),
+        vol.Optional("initial_prompt"): vol.Coerce(str),
+        vol.Optional("system_prompt"): vol.Coerce(str),
+        vol.Optional("max_turns"): vol.All(vol.Coerce(int), vol.Range(min=0)),
+        vol.Optional("max_silent_turns"): vol.All(vol.Coerce(int), vol.Range(min=1)),
+        vol.Optional("barge_in"): vol.Boolean(),
+        vol.Optional("silence_seconds"): vol.All(
+            vol.Coerce(float), vol.Range(min=0.3, max=5.0)
+        ),
+        vol.Optional("noise_suppression"): vol.All(
+            vol.Coerce(int), vol.Range(min=0, max=4)
+        ),
+        vol.Optional("turn_tone"): vol.Boolean(),
+        vol.Optional("hangup_on_end"): vol.Boolean(),
+        vol.Optional("interrupt_media"): vol.Boolean(),
+    },
+    extra=vol.REMOVE_EXTRA,
 )
+ASSIST_OPTION_KEYS = frozenset(str(key) for key in ASSIST_OPTIONS_SCHEMA.schema)
 
 
 def assist_options(value: Any) -> dict[str, Any] | None:
     """Return the Assist kwargs for a menu ``assist`` value, or None to skip.
 
-    ``true`` hands the call over with defaults; a mapping passes its known
-    ``sip.start_assist`` options through and drops the rest with a warning.
+    ``true`` hands the call over with defaults. A mapping is validated like
+    ``sip.start_assist`` data: unknown keys are dropped with a warning, and an
+    invalid value falls back to the defaults (with an error) rather than
+    crashing the session or leaving the call without Assist.
     """
     if isinstance(value, dict):
         unknown = sorted(k for k in value if k not in ASSIST_OPTION_KEYS)
         if unknown:
             LOGGER.warning("IVR assist: ignoring unknown option(s) %s", unknown)
-        return {k: v for k, v in value.items() if k in ASSIST_OPTION_KEYS}
+        try:
+            return ASSIST_OPTIONS_SCHEMA(value)
+        except vol.Invalid as err:
+            LOGGER.error("IVR assist: invalid options, using defaults: %s", err)
+            return {}
     return {} if value else None
 
 

@@ -100,3 +100,32 @@ def test_assist_false_does_not_hand_off():
     trigger, active = asyncio.run(run())
     trigger.assert_not_awaited()
     assert active is True
+
+
+def test_assist_mapping_coerces_values_like_the_service_schema():
+    async def run():
+        trigger = AsyncMock()
+        session = _session(trigger_assist=trigger)
+        await session._enter_menu(
+            {"assist": {"max_turns": "3", "barge_in": "false", "silence_seconds": 1}}
+        )
+        return trigger
+
+    trigger = asyncio.run(run())
+    trigger.assert_awaited_once_with(max_turns=3, barge_in=False, silence_seconds=1.0)
+
+
+def test_assist_mapping_invalid_value_falls_back_to_defaults():
+    """max_silent_turns=0 would end the session after the first turn; the
+    service schema rejects it, so the menu must not smuggle it through."""
+    async def run():
+        trigger = AsyncMock()
+        session = _session(trigger_assist=trigger)
+        await session._enter_menu(
+            {"assist": {"max_silent_turns": 0, "pipeline_id": "p"}}
+        )
+        return session, trigger
+
+    session, trigger = asyncio.run(run())
+    assert session.is_active is False
+    trigger.assert_awaited_once_with()
