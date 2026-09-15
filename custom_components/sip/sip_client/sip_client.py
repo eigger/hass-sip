@@ -456,8 +456,14 @@ class SipClient:
         if not pending:
             return
         _done, still_pending = await asyncio.wait(pending, timeout=timeout)
+        if not still_pending:
+            return
         for task in still_pending:
             task.cancel()
+        # The first cancel is often consumed by run(); ffmpeg cleanup then
+        # awaits proc.wait() / stderr in finally. Wait for that to finish
+        # so stop() does not drop the client while the task is still pending.
+        await asyncio.wait(still_pending, timeout=timeout)
 
     async def _reconnect(self) -> None:
         """Rebuild the SIP socket and re-register (recovers from network loss)."""

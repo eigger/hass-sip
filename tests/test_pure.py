@@ -3272,22 +3272,27 @@ def test_stop_cancels_cleanup_that_outlives_the_drain_timeout():
         return
 
     class StuckSource(audio.AudioSource):
+        def __init__(self):
+            self.finally_started = False
+
         async def run(self, push, is_active):
             try:
                 await asyncio.Event().wait()
             finally:
+                self.finally_started = True
                 await asyncio.Event().wait()  # never finishes on its own
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
         client.state = sip_client.SipState.IN_CALL
-        client.play_source(StuckSource())
+        source = StuckSource()
+        client.play_source(source)
         await asyncio.sleep(0)
-        task = client._tx_source_task
         await asyncio.wait_for(client._drain_tasks(timeout=0.05), timeout=1)
-        await asyncio.sleep(0)
-        return task.cancelled() or task.cancelling() > 0
+        return source.finally_started
 
+    # Drain cancelled the hung run() so finally started, then returned
+    # without waiting forever for that second wait.
     assert asyncio.run(run())
 
 
