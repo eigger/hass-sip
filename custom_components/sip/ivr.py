@@ -17,7 +17,9 @@ Menu schema (canonical, flat — matches the service TTS parameters):
     on_invalid: { ... }      # target when input matches no choice
     on_timeout: { ... }      # target when no input arrives in time
     action: { ... }          # HA service to call on entry
-    assist: true             # hand the call to Home Assistant Voice Assist
+    assist: true             # hand the call to Home Assistant Voice Assist,
+                             # or a mapping of sip.start_assist options
+                             # (pipeline_id, system_prompt, initial_prompt, ...)
     post_action: hangup      # terminal action: hangup | repeat | back [n] | goto <id> | wait
 
 A target ("choices" value, on_invalid, on_timeout) is either a nested menu dict
@@ -34,6 +36,40 @@ from homeassistant.helpers import template
 
 from .const import LOGGER
 
+# ``assist:`` may carry the same tuning options as ``sip.start_assist``; the
+# caller gate (allowed_callers / contacts_only / pin) is deliberately not
+# among them — an IVR menu guards itself with its own ``input: pin``.
+ASSIST_OPTION_KEYS = frozenset(
+    {
+        "pipeline_id",
+        "conversation_id",
+        "initial_prompt",
+        "system_prompt",
+        "max_turns",
+        "max_silent_turns",
+        "barge_in",
+        "silence_seconds",
+        "noise_suppression",
+        "turn_tone",
+        "hangup_on_end",
+        "interrupt_media",
+    }
+)
+
+
+def assist_options(value: Any) -> dict[str, Any] | None:
+    """Return the Assist kwargs for a menu ``assist`` value, or None to skip.
+
+    ``true`` hands the call over with defaults; a mapping passes its known
+    ``sip.start_assist`` options through and drops the rest with a warning.
+    """
+    if isinstance(value, dict):
+        unknown = sorted(k for k in value if k not in ASSIST_OPTION_KEYS)
+        if unknown:
+            LOGGER.warning("IVR assist: ignoring unknown option(s) %s", unknown)
+        return {k: v for k, v in value.items() if k in ASSIST_OPTION_KEYS}
+    return {} if value else None
+
 
 class IvrSession:
     """Manages the state and execution of a single IVR call session."""
@@ -48,7 +84,7 @@ class IvrSession:
         play_audio_file_fn: Callable[[str], Coroutine[Any, Any, None]],
         hangup_fn: Callable[[], None],
         fire_event_fn: Callable[[str, dict[str, Any]], None],
-        trigger_assist_fn: Callable[[], Coroutine[Any, Any, None]],
+        trigger_assist_fn: Callable[..., Coroutine[Any, Any, None]],
     ) -> None:
         """Initialize the IVR session."""
         self.hass = hass
@@ -121,10 +157,11 @@ class IvrSession:
         if action:
             await self._run_ha_action(action)
 
-        if menu.get("assist"):
+        assist = assist_options(menu.get("assist"))
+        if assist is not None:
             self.is_active = False
             self._reset_timeout()
-            await self.trigger_assist()
+            await self.trigger_assist(**assist)
             return
 
         message = menu.get("message", "")
@@ -209,10 +246,11 @@ class IvrSession:
             await self._execute_post_action(choice)
             return
 
-        if choice.get("assist"):
+        assist = assist_options(choice.get("assist"))
+        if assist is not None:
             self.is_active = False
             self._reset_timeout()
-            await self.trigger_assist()
+            await self.trigger_assist(**assist)
             return
 
         # A sub-menu / prompt handles its own playback and terminal action.

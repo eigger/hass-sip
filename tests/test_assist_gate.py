@@ -520,3 +520,46 @@ def test_start_assist_pin_ok_starts_assist():
     hass, trigger = asyncio.run(run())
     trigger.assert_awaited_once()
     assert _rejected_events(hass) == []
+
+
+def test_start_assist_closes_active_ivr_session():
+    """sip.dial/answer ``message`` arms an announcement IVR (post_action:
+    hangup); sip.start_assist must retire it so Assist's own playback_done
+    does not hang up after the first reply (#92)."""
+    integration = _load_sip_init()
+
+    async def run():
+        hass, trigger, entry, handler = await _register_start_assist(
+            integration, caller="100"
+        )
+        ivr = MagicMock()
+        set_ivr = MagicMock()
+        entry.runtime_data["get_ivr"] = lambda: ivr
+        entry.runtime_data["set_ivr"] = set_ivr
+        data = integration.SERVICE_ASSIST_SCHEMA({})
+        await handler(_service_call(data))
+        return trigger, ivr, set_ivr
+
+    trigger, ivr, set_ivr = asyncio.run(run())
+    ivr.close.assert_called_once()
+    set_ivr.assert_called_once_with(None)
+    trigger.assert_awaited_once()
+
+
+def test_start_assist_rejected_leaves_ivr_session_alone():
+    integration = _load_sip_init()
+
+    async def run():
+        hass, trigger, entry, handler = await _register_start_assist(
+            integration, caller="200"
+        )
+        ivr = MagicMock()
+        entry.runtime_data["get_ivr"] = lambda: ivr
+        entry.runtime_data["set_ivr"] = MagicMock()
+        data = integration.SERVICE_ASSIST_SCHEMA({"allowed_callers": ["100"]})
+        await handler(_service_call(data))
+        return trigger, ivr
+
+    trigger, ivr = asyncio.run(run())
+    ivr.close.assert_not_called()
+    trigger.assert_not_awaited()

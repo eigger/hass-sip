@@ -74,6 +74,8 @@ Supplying only `system_prompt` does not create an additional opening pipeline tu
 
 Use `conversation_id` to continue an existing Home Assistant conversation, such as one started by `conversation.process`. The Assist pipeline must use the same conversation agent. Conversation sessions are short-lived and may be replaced after Home Assistant cleans up their context.
 
+`sip.start_assist` can follow `sip.dial` or `sip.answer` on the same call. If that call was started with a `message` or `menu`, the pending IVR (and its `post_action`) is retired when Assist takes over, so Assist's replies are not cut short by the announcement's `hangup`. To hand a menu to Assist from inside the IVR instead, use the [`assist` menu field](examples.md#menu-fields), which accepts the same tuning options.
+
 The session ends when:
 - The caller says nothing for `max_silent_turns` consecutive turns (default: 2, ~30 s of silence)
 - `max_turns` is reached (default: 0 = unlimited)

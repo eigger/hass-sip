@@ -1108,6 +1108,16 @@ async def async_register_services(hass: HomeAssistant) -> None:
                     LOGGER.info("Assist rejected for caller %s (%s)", caller, pin_result)
                     _fire_assist_rejected(hass, entry_id, data, caller, pin_result)
                     continue
+            # A ``sip.dial`` / ``sip.answer`` ``message`` (or menu) leaves an
+            # IVR session armed, usually with ``post_action: hangup``. Once
+            # Assist owns the line that session must not react to Assist's
+            # own playback_done and hang up after the first reply (#92); an
+            # IVR ``assist:`` choice deactivates itself the same way.
+            get_ivr = data.get("get_ivr")
+            ivr = get_ivr() if get_ivr is not None else None
+            if ivr is not None:
+                ivr.close()
+                data["set_ivr"](None)
             await data["trigger_assist_fn"](**opts)
 
     # Register all services

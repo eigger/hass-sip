@@ -49,3 +49,54 @@ def test_assist_handoff_does_not_leave_an_ivr_timeout():
     timeout_task, trigger = asyncio.run(run())
     assert timeout_task is None
     trigger.assert_awaited_once()
+
+
+def test_assist_mapping_forwards_start_assist_options():
+    async def run():
+        trigger = AsyncMock()
+        session = _session(trigger_assist=trigger)
+        await session._execute_choice(
+            {
+                "assist": {
+                    "pipeline_id": "door-pipeline",
+                    "system_prompt": "Be brief.",
+                    "initial_prompt": "Greet the caller.",
+                    "bogus": 1,
+                    "pin": "1234",  # gate options are not menu options
+                }
+            }
+        )
+        return session, trigger
+
+    session, trigger = asyncio.run(run())
+    assert session.is_active is False
+    trigger.assert_awaited_once_with(
+        pipeline_id="door-pipeline",
+        system_prompt="Be brief.",
+        initial_prompt="Greet the caller.",
+    )
+
+
+def test_assist_mapping_on_menu_entry():
+    async def run():
+        trigger = AsyncMock()
+        session = _session(trigger_assist=trigger)
+        await session._enter_menu({"assist": {"hangup_on_end": True}})
+        return trigger
+
+    trigger = asyncio.run(run())
+    trigger.assert_awaited_once_with(hangup_on_end=True)
+
+
+def test_assist_false_does_not_hand_off():
+    async def run():
+        trigger = AsyncMock()
+        session = _session(trigger_assist=trigger)
+        await session._enter_menu({"assist": False, "timeout": 3600})
+        active = session.is_active
+        session.close()
+        return trigger, active
+
+    trigger, active = asyncio.run(run())
+    trigger.assert_not_awaited()
+    assert active is True
