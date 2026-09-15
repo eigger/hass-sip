@@ -38,53 +38,64 @@ from homeassistant.helpers import template
 
 from .const import LOGGER
 
-# ``assist:`` may carry the same tuning options as ``sip.start_assist``, with
-# the same ranges (mirrors SERVICE_ASSIST_SCHEMA; the menu is ``match_all`` at
-# the service boundary, so nothing else checks these). The caller gate
-# (allowed_callers / contacts_only / pin) is deliberately not among them — an
-# IVR menu guards itself with its own ``input: pin``.
-ASSIST_OPTIONS_SCHEMA = vol.Schema(
-    {
-        vol.Optional("pipeline_id"): vol.Coerce(str),
-        vol.Optional("conversation_id"): vol.Coerce(str),
-        vol.Optional("initial_prompt"): vol.Coerce(str),
-        vol.Optional("system_prompt"): vol.Coerce(str),
-        vol.Optional("max_turns"): vol.All(vol.Coerce(int), vol.Range(min=0)),
-        vol.Optional("max_silent_turns"): vol.All(vol.Coerce(int), vol.Range(min=1)),
-        vol.Optional("barge_in"): vol.Boolean(),
-        vol.Optional("silence_seconds"): vol.All(
-            vol.Coerce(float), vol.Range(min=0.3, max=5.0)
-        ),
-        vol.Optional("noise_suppression"): vol.All(
-            vol.Coerce(int), vol.Range(min=0, max=4)
-        ),
-        vol.Optional("turn_tone"): vol.Boolean(),
-        vol.Optional("hangup_on_end"): vol.Boolean(),
-        vol.Optional("interrupt_media"): vol.Boolean(),
-    },
-    extra=vol.REMOVE_EXTRA,
-)
-ASSIST_OPTION_KEYS = frozenset(str(key) for key in ASSIST_OPTIONS_SCHEMA.schema)
+
+def _string(value: Any) -> str:
+    """Like ``cv.string`` without importing HA helpers (this module is loaded
+    HA-free in tests): reject None/containers, stringify scalars."""
+    if value is None or isinstance(value, (list, dict)):
+        raise vol.Invalid("value must be a string")
+    return str(value)
+
+
+# The tuning options shared by ``sip.start_assist`` (SERVICE_ASSIST_SCHEMA is
+# built from this dict) and the IVR ``assist:`` mapping, so the two cannot
+# drift. The caller gate (allowed_callers / contacts_only / pin) is service-
+# only on purpose — an IVR menu guards itself with its own ``input: pin``.
+ASSIST_OPTION_FIELDS: dict[Any, Any] = {
+    vol.Optional("pipeline_id"): _string,
+    vol.Optional("conversation_id"): _string,
+    vol.Optional("initial_prompt"): _string,
+    vol.Optional("system_prompt"): _string,
+    vol.Optional("max_turns"): vol.All(vol.Coerce(int), vol.Range(min=0)),
+    vol.Optional("max_silent_turns"): vol.All(vol.Coerce(int), vol.Range(min=1)),
+    vol.Optional("barge_in"): vol.Boolean(),
+    vol.Optional("silence_seconds"): vol.All(
+        vol.Coerce(float), vol.Range(min=0.3, max=5.0)
+    ),
+    vol.Optional("noise_suppression"): vol.All(
+        vol.Coerce(int), vol.Range(min=0, max=4)
+    ),
+    vol.Optional("turn_tone"): vol.Boolean(),
+    vol.Optional("hangup_on_end"): vol.Boolean(),
+    vol.Optional("interrupt_media", default=True): vol.Boolean(),
+}
+_ASSIST_OPTION_VALIDATORS: dict[str, Any] = {
+    str(key): validator for key, validator in ASSIST_OPTION_FIELDS.items()
+}
 
 
 def assist_options(value: Any) -> dict[str, Any] | None:
     """Return the Assist kwargs for a menu ``assist`` value, or None to skip.
 
-    ``true`` hands the call over with defaults. A mapping is validated like
-    ``sip.start_assist`` data: unknown keys are dropped with a warning, and an
-    invalid value falls back to the defaults (with an error) rather than
-    crashing the session or leaving the call without Assist.
+    ``true`` hands the call over with defaults. A mapping is validated key by
+    key with the ``sip.start_assist`` rules (the menu is ``match_all`` at the
+    service boundary, so nothing else checks it): unknown keys and invalid
+    values are dropped with a log line and the rest is kept, so one typo does
+    not crash the session or throw away the pipeline choice.
     """
-    if isinstance(value, dict):
-        unknown = sorted(k for k in value if k not in ASSIST_OPTION_KEYS)
-        if unknown:
-            LOGGER.warning("IVR assist: ignoring unknown option(s) %s", unknown)
+    if not isinstance(value, dict):
+        return {} if value else None
+    opts: dict[str, Any] = {}
+    for key, raw in value.items():
+        validator = _ASSIST_OPTION_VALIDATORS.get(key)
+        if validator is None:
+            LOGGER.warning("IVR assist: ignoring unknown option %r", key)
+            continue
         try:
-            return ASSIST_OPTIONS_SCHEMA(value)
+            opts[key] = validator(raw)
         except vol.Invalid as err:
-            LOGGER.error("IVR assist: invalid options, using defaults: %s", err)
-            return {}
-    return {} if value else None
+            LOGGER.error("IVR assist: ignoring invalid %s (%s)", key, err)
+    return opts
 
 
 class IvrSession:
@@ -117,6 +128,8 @@ class IvrSession:
         self.timeout_task: asyncio.Task | None = None
         self.waiting_for_dtmf = False
         self.is_active = True
+        self._suspended = False
+        self._playback_done_while_suspended = False
 
     async def start(self) -> None:
         """Start the IVR session."""
@@ -125,7 +138,7 @@ class IvrSession:
     # -- input handling -------------------------------------------------
     async def handle_dtmf(self, digit: str) -> None:
         """Process a received DTMF digit."""
-        if not self.is_active or not self.waiting_for_dtmf:
+        if not self.is_active or self._suspended or not self.waiting_for_dtmf:
             return
 
         self._reset_timeout()
@@ -209,6 +222,11 @@ class IvrSession:
         """Called when audio playback finishes."""
         if not self.is_active:
             return
+        if self._suspended:
+            # Deliver it on resume(); an announcement's post_action (usually
+            # hangup) must not fire under a sip.start_assist PIN prompt.
+            self._playback_done_while_suspended = True
+            return
 
         if not self.current_menu.get("choices"):
             # An announcement (no choices): run its terminal action immediately.
@@ -229,7 +247,7 @@ class IvrSession:
 
     def _reset_timeout(self) -> None:
         self._cancel_timeout()
-        if not self.is_active:
+        if not self.is_active or self._suspended:
             return
         timeout_sec = self.current_menu.get("timeout", 10)
         self.timeout_task = asyncio.create_task(self._timeout_timer(timeout_sec))
@@ -360,6 +378,26 @@ class IvrSession:
         except Exception as err:  # noqa: BLE001
             LOGGER.error("Failed to render IVR template: %s", err)
             return text
+
+    def suspend(self) -> None:
+        """Pause the menu: no input, no timeout, playback_done held back.
+
+        Used while ``sip.start_assist`` collects a PIN on top of this menu.
+        """
+        self._suspended = True
+        self._cancel_timeout()
+
+    def resume(self) -> None:
+        """Undo suspend(): re-arm the input timeout or deliver a held
+        playback_done. A closed session stays closed."""
+        self._suspended = False
+        if not self.is_active:
+            return
+        if self._playback_done_while_suspended:
+            self._playback_done_while_suspended = False
+            self.on_playback_done()
+        elif self.waiting_for_dtmf:
+            self._reset_timeout()
 
     def close(self) -> None:
         """Close the IVR session and clean up resources."""

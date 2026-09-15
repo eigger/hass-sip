@@ -63,7 +63,7 @@ from .const import (
     LOGGER,
 )
 from .helpers import get_ffmpeg_bin
-from .ivr import IvrSession
+from .ivr import ASSIST_OPTION_FIELDS, IvrSession
 from .recording import (
     close_recorder_slot,
     is_allowed_recording_path,
@@ -239,22 +239,9 @@ SERVICE_GENERIC_SCHEMA = cv.make_entity_service_schema({})
 
 SERVICE_ASSIST_SCHEMA = cv.make_entity_service_schema(
     {
-        vol.Optional("pipeline_id"): cv.string,
-        vol.Optional("conversation_id"): cv.string,
-        vol.Optional("initial_prompt"): cv.string,
-        vol.Optional("system_prompt"): cv.string,
-        vol.Optional("max_turns"): vol.All(vol.Coerce(int), vol.Range(min=0)),
-        vol.Optional("max_silent_turns"): vol.All(vol.Coerce(int), vol.Range(min=1)),
-        vol.Optional("barge_in"): cv.boolean,
-        vol.Optional("silence_seconds"): vol.All(
-            vol.Coerce(float), vol.Range(min=0.3, max=5.0)
-        ),
-        vol.Optional("noise_suppression"): vol.All(
-            vol.Coerce(int), vol.Range(min=0, max=4)
-        ),
-        vol.Optional("turn_tone"): cv.boolean,
-        vol.Optional("hangup_on_end"): cv.boolean,
-        vol.Optional("interrupt_media", default=True): cv.boolean,
+        # Tuning options live in ivr.py so the IVR ``assist:`` mapping is
+        # validated with exactly the same rules.
+        **ASSIST_OPTION_FIELDS,
         vol.Optional("allowed_callers"): vol.All(cv.ensure_list, [cv.string]),
         vol.Optional("contacts_only"): cv.boolean,
         vol.Optional("pin"): cv.string,
@@ -1097,24 +1084,29 @@ async def async_register_services(hass: HomeAssistant) -> None:
                     hass, entry_id, data, caller, REASON_NOT_ALLOWED
                 )
                 continue
+            # A ``sip.dial`` / ``sip.answer`` ``message`` (or menu) leaves an
+            # IVR session armed, usually with ``post_action: hangup``. Hold
+            # it while the PIN is collected (its announcement ending must not
+            # hang up under the prompt) and retire it once Assist owns the
+            # line, so Assist's own playback_done cannot trigger it (#92).
+            get_ivr = data.get("get_ivr")
+            ivr = get_ivr() if get_ivr is not None else None
             if pin:
                 collector = PinCollector(pin)
                 data["pin_collector"] = collector
+                if ivr is not None:
+                    ivr.suspend()
                 try:
                     pin_result = await collector.wait()
                 finally:
                     data["pin_collector"] = None
                 if pin_result != "ok":
+                    if ivr is not None:
+                        ivr.resume()
                     LOGGER.info("Assist rejected for caller %s (%s)", caller, pin_result)
                     _fire_assist_rejected(hass, entry_id, data, caller, pin_result)
                     continue
-            # A ``sip.dial`` / ``sip.answer`` ``message`` (or menu) leaves an
-            # IVR session armed, usually with ``post_action: hangup``. Once
-            # Assist owns the line that session must not react to Assist's
-            # own playback_done and hang up after the first reply (#92); an
-            # IVR ``assist:`` choice deactivates itself the same way.
-            get_ivr = data.get("get_ivr")
-            ivr = get_ivr() if get_ivr is not None else None
+                ivr = get_ivr() if get_ivr is not None else None
             if ivr is not None:
                 ivr.close()
                 data["set_ivr"](None)

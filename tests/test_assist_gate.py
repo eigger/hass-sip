@@ -554,12 +554,59 @@ def test_start_assist_rejected_leaves_ivr_session_alone():
             integration, caller="200"
         )
         ivr = MagicMock()
+        set_ivr = MagicMock()
         entry.runtime_data["get_ivr"] = lambda: ivr
-        entry.runtime_data["set_ivr"] = MagicMock()
+        entry.runtime_data["set_ivr"] = set_ivr
         data = integration.SERVICE_ASSIST_SCHEMA({"allowed_callers": ["100"]})
         await handler(_service_call(data))
-        return trigger, ivr
+        return trigger, ivr, set_ivr
 
-    trigger, ivr = asyncio.run(run())
+    trigger, ivr, set_ivr = asyncio.run(run())
     ivr.close.assert_not_called()
+    ivr.suspend.assert_not_called()
+    set_ivr.assert_not_called()
+    trigger.assert_not_awaited()
+
+
+async def _run_pin_gate(integration, digits):
+    hass, trigger, entry, handler = await _register_start_assist(
+        integration, caller="100"
+    )
+    ivr = MagicMock()
+    set_ivr = MagicMock()
+    entry.runtime_data["get_ivr"] = lambda: ivr
+    entry.runtime_data["set_ivr"] = set_ivr
+    data = integration.SERVICE_ASSIST_SCHEMA({"pin": "1234"})
+    task = asyncio.create_task(handler(_service_call(data)))
+    collector = None
+    for _ in range(50):
+        collector = entry.runtime_data.get("pin_collector")
+        if collector is not None:
+            break
+        await asyncio.sleep(0)
+    assert collector is not None
+    suspended_before_digits = ivr.suspend.call_count
+    for digit in digits:
+        collector.handle_digit(digit)
+    await task
+    return trigger, ivr, set_ivr, suspended_before_digits
+
+
+def test_start_assist_suspends_ivr_during_pin_and_retires_it_on_success():
+    integration = _load_sip_init()
+    trigger, ivr, set_ivr, suspended = asyncio.run(_run_pin_gate(integration, "1234"))
+    assert suspended == 1
+    ivr.resume.assert_not_called()
+    ivr.close.assert_called_once()
+    set_ivr.assert_called_once_with(None)
+    trigger.assert_awaited_once()
+
+
+def test_start_assist_resumes_ivr_when_pin_is_rejected():
+    integration = _load_sip_init()
+    trigger, ivr, set_ivr, suspended = asyncio.run(_run_pin_gate(integration, "9999"))
+    assert suspended == 1
+    ivr.resume.assert_called_once()
+    ivr.close.assert_not_called()
+    set_ivr.assert_not_called()
     trigger.assert_not_awaited()

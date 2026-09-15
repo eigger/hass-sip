@@ -297,7 +297,7 @@ data:
 | `on_invalid` | Target when the input matches no choice. |
 | `on_timeout` | Target when no input arrives in time. |
 | `action` | A Home Assistant service to call on entry (`domain`, `service`, `entity_id`, `data`). |
-| `assist` | `true` to hand the call to Voice Assist, or a mapping of [`sip.start_assist`](services.md#sipstart_assist) options (`pipeline_id`, `system_prompt`, `initial_prompt`, `max_silent_turns`, …). The caller gate (`allowed_callers`, `contacts_only`, `pin`) is not accepted here — protect the menu with `input: pin` instead. |
+| `assist` | `true` to hand the call to Voice Assist, or a mapping of [`sip.start_assist`](services.md#sipstart_assist) options (`pipeline_id`, `system_prompt`, `initial_prompt`, `max_silent_turns`, …). Values are checked with the service's rules; an unknown key or invalid value is logged and dropped, the rest is kept. The caller gate (`allowed_callers`, `contacts_only`, `pin`) is not accepted here — protect the menu with `input: pin` instead. |
 | `post_action` | Terminal action: `hangup` · `repeat` · `back [n]` · `goto <id>` · `wait`. |
 
 ---
