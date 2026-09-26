@@ -35,7 +35,6 @@ from .helpers import get_ffmpeg_bin
 from .sip_client.audio import (
     AudioSink,
     AudioSource,
-    FallbackSource,
     FfmpegAudioSource,
     FillUntilStartSource,
     ToneAudioSource,
@@ -678,19 +677,13 @@ class AssistBridge(AudioSink):
         return self._tone_source(await self._resolve_tone_url(media_id), loop=loop)
 
     def _tone_source(self, url: str | None, *, loop: bool) -> AudioSource:
-        """Build a tone source; ``url`` None means the synthesized beep.
-
-        Media that fails to play (404, undecodable) falls back to the beep, so
-        the turn-tone wait is not left hanging until its timeout.
-        """
-        beep = ToneAudioSource(
-            repeat_gap_ms=_PROCESSING_BEEP_REPEAT_GAP_MS if loop else None
-        )
+        """Build a tone source; ``url`` None means the synthesized beep."""
         if url is None:
-            return beep
-        return FallbackSource(
-            FfmpegAudioSource(url=url, ffmpeg_bin=get_ffmpeg_bin(self.hass), loop=loop),
-            beep,
+            return ToneAudioSource(
+                repeat_gap_ms=_PROCESSING_BEEP_REPEAT_GAP_MS if loop else None
+            )
+        return FfmpegAudioSource(
+            url=url, ffmpeg_bin=get_ffmpeg_bin(self.hass), loop=loop
         )
 
     async def _resolve_tone_url(self, media_id: str | None) -> str | None:

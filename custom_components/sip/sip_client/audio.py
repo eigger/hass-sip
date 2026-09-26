@@ -448,46 +448,6 @@ class FfmpegAudioSource(_ConfiguredPcmSource):
                     pass
 
 
-class FallbackSource(AudioSource):
-    """Play ``primary``; if it fails before emitting audio, play ``fallback``.
-
-    A source that raises never reaches ``on_playback_done`` (the client only
-    logs the error), so a waiter would sit until its timeout. Falling back
-    keeps the cue audible and lets playback complete normally. A failure
-    after audio has started just ends playback.
-    """
-
-    def __init__(self, primary: AudioSource, fallback: AudioSource) -> None:
-        self._primary = primary
-        self._fallback = fallback
-
-    def configure(self, sample_rate: int, pcm_frame_bytes: int) -> None:
-        for source in (self._primary, self._fallback):
-            configure = getattr(source, "configure", None)
-            if callable(configure):
-                configure(sample_rate, pcm_frame_bytes)
-
-    async def run(self, push: PushFn, is_active: ActiveFn) -> None:
-        pushed = False
-
-        def primary_push(chunk: bytes) -> None:
-            nonlocal pushed
-            pushed = True
-            push(chunk)
-
-        try:
-            await self._primary.run(primary_push, is_active)
-            return
-        except asyncio.CancelledError:
-            raise
-        except Exception as err:  # noqa: BLE001
-            if pushed or not is_active():
-                _LOGGER.warning("Audio source failed mid-playback: %s", err)
-                return
-            _LOGGER.warning("Audio source failed; playing fallback: %s", err)
-        await self._fallback.run(push, is_active)
-
-
 class FillUntilStartSource(AudioSource):
     """Play ``filler`` until ``inner`` emits its first frame, then only ``inner``.
 

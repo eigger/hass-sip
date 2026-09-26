@@ -5762,7 +5762,7 @@ def test_assist_turn_tone_media_plays_configured_media_instead_of_beep():
         await bridge._play_turn_tone()
 
     asyncio.run(run())
-    assert play_calls == ["FallbackSource"]
+    assert play_calls == ["FfmpegAudioSource"]
 
 
 def test_assist_turn_tone_media_resolves_media_source_id():
@@ -5799,7 +5799,7 @@ def test_assist_turn_tone_media_resolves_media_source_id():
 
     try:
         asyncio.run(run())
-        assert play_calls == ["FallbackSource"]
+        assert play_calls == ["FfmpegAudioSource"]
         assert resolved_urls == ["http://resolved.local/chime.mp3"]
     finally:
         assist_mod.media_source.is_media_source_id.return_value = False
@@ -6005,8 +6005,8 @@ def test_assist_processing_cue_media_loops_and_disabled_by_default():
         )
         on._on_pipeline_event(PE(PET.STT_END, {}))
         await asyncio.sleep(0.02)
-        assert [type(s).__name__ for s in played] == ["FallbackSource"]
-        assert played[0]._primary._loop is True
+        assert [type(s).__name__ for s in played] == ["FfmpegAudioSource"]
+        assert played[0]._loop is True
         on._stop_processing_cue()
 
     asyncio.run(run())
@@ -6206,49 +6206,6 @@ def test_assist_wait_playback_done_stops_cue_not_handed_over():
         assert stops == [{"flush": True}]
 
     asyncio.run(run())
-
-
-def test_fallback_source_plays_fallback_when_primary_fails_early():
-    pushed: list = []
-
-    class Broken(audio.AudioSource):
-        async def run(self, push, is_active):
-            raise RuntimeError("ffmpeg exited with status 1")
-
-    class Beep(audio.AudioSource):
-        async def run(self, push, is_active):
-            push(b"B")
-
-    asyncio.run(audio.FallbackSource(Broken(), Beep()).run(pushed.append, lambda: True))
-    assert pushed == [b"B"]
-
-
-def test_fallback_source_does_not_restart_after_primary_audio():
-    pushed: list = []
-
-    class Partial(audio.AudioSource):
-        async def run(self, push, is_active):
-            push(b"P")
-            raise RuntimeError("stream broke")
-
-    class Beep(audio.AudioSource):
-        async def run(self, push, is_active):
-            push(b"B")
-
-    asyncio.run(audio.FallbackSource(Partial(), Beep()).run(pushed.append, lambda: True))
-    assert pushed == [b"P"]
-
-
-def test_assist_tone_media_falls_back_to_beep():
-    assist_mod, _, _, _ = _assist_ctx()
-    bridge = assist_mod.AssistBridge(
-        MagicMock(), play_source_fn=MagicMock(), on_done_fn=MagicMock()
-    )
-    src = bridge._tone_source("http://ha/missing.mp3", loop=False)
-    assert type(src).__name__ == "FallbackSource"
-    assert type(src._primary).__name__ == "FfmpegAudioSource"
-    assert type(src._fallback).__name__ == "ToneAudioSource"
-    assert type(bridge._tone_source(None, loop=False)).__name__ == "ToneAudioSource"
 
 
 def _run_validate_registration(fake_client_cls):
