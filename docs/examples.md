@@ -342,9 +342,8 @@ You can automatically bridge incoming calls directly to Home Assistant's Voice A
 ```yaml
 alias: "SIP: Auto-Answer with Voice Assist"
 trigger:
-  - platform: state
-    entity_id: binary_sensor.phone_line_active
-    to: "on"
+  - platform: event
+    event_type: sip_incoming_call
 action:
   - service: sip.answer
     target:
@@ -355,6 +354,8 @@ action:
     data:
       max_silent_turns: 2
 ```
+
+> Trigger on the `sip_incoming_call` event rather than `binary_sensor.phone_line_active`: the sensor turns on for **any** call, including calls the extension places itself (e.g. `sip.dial`), which would answer and start Assist on your own outbound call.
 
 On a noisy or narrowband (G.711) line, the assistant may react to line noise or a breath before the caller speaks. Raise `silence_seconds` and enable `noise_suppression` to compensate:
 
