@@ -268,6 +268,26 @@
           "name": "Rundenstart-Ton",
           "description": "Kurzen Hinweisston abspielen, wenn der Anrufer sprechen darf (Standard false). So ist hörbar, wann das Mikrofon nach TTS geöffnet ist. Wird übersprungen, wenn Barge-in bereits Sprache erfasst hat."
         },
+        "turn_tone_media": {
+          "name": "Medien für Rundenstart-Ton",
+          "description": "Home-Assistant-Medien, die statt des Standardtons für den Rundenstart-Ton abgespielt werden. Eine Medienquellen-ID (z. B. aus dem Medienbrowser) oder eine URL/ein Dateipfad. Leer lassen, um den Standardton zu verwenden."
+        },
+        "turn_end_tone": {
+          "name": "Rundenende-Ton",
+          "description": "Einen Ton abspielen, wenn die Assist-Sitzung endet (Standard false). So merkt der Anrufer, dass der Assistent mit dem Zuhören fertig ist, z. B. kurz vor dem Auflegen."
+        },
+        "turn_end_tone_media": {
+          "name": "Medien für Rundenende-Ton",
+          "description": "Home-Assistant-Medien, die statt des Standardtons für den Rundenende-Ton abgespielt werden. Eine Medienquellen-ID (z. B. aus dem Medienbrowser) oder eine URL/ein Dateipfad. Leer lassen, um den Standardton zu verwenden."
+        },
+        "processing_tone": {
+          "name": "Verarbeitungs-Ton",
+          "description": "Ab dem Moment, in dem die Sprache erkannt wurde, bis die Antwort bereit ist, wiederholt einen kurzen Ton abspielen; überbrückt Wartezeit für LLM, Aktionen und TTS (Standard false). Endet, sobald die Antwort abgespielt wird."
+        },
+        "processing_tone_media": {
+          "name": "Medien für Verarbeitungs-Ton",
+          "description": "Home-Assistant-Medien, die statt des standardmäßig wiederholten Tons für den Verarbeitungs-Ton in Schleife abgespielt werden. Eine Medienquellen-ID (z. B. aus dem Medienbrowser) oder eine URL/ein Dateipfad. Leer lassen, um den Standardton zu verwenden."
+        },
         "hangup_on_end": {
           "name": "Bei Ende auflegen",
           "description": "Anruf beenden, wenn die Assist-Sitzung endet."

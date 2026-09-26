@@ -66,6 +66,11 @@ ASSIST_OPTION_FIELDS: dict[Any, Any] = {
         vol.Coerce(int), vol.Range(min=0, max=4)
     ),
     vol.Optional("turn_tone"): vol.Boolean(),
+    vol.Optional("turn_tone_media"): _string,
+    vol.Optional("turn_end_tone"): vol.Boolean(),
+    vol.Optional("turn_end_tone_media"): _string,
+    vol.Optional("processing_tone"): vol.Boolean(),
+    vol.Optional("processing_tone_media"): _string,
     vol.Optional("hangup_on_end"): vol.Boolean(),
     vol.Optional("interrupt_media", default=True): vol.Boolean(),
 }

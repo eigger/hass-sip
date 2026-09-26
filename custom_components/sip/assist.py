@@ -7,7 +7,7 @@ import math
 from collections.abc import AsyncIterable, Callable
 from typing import Literal
 
-from homeassistant.components import tts
+from homeassistant.components import media_source, tts
 from homeassistant.components.assist_pipeline import (
     AudioSettings,
     PipelineEvent,
@@ -18,6 +18,7 @@ from homeassistant.components.assist_pipeline import (
     async_get_pipeline,
     async_pipeline_from_audio_stream,
 )
+from homeassistant.components.media_player import async_process_play_media_url
 from homeassistant.components.stt import (
     AudioBitRates,
     AudioChannels,
@@ -53,6 +54,11 @@ _GAP_MIN_SPEECH_FRAMES = 5  # 50 ms consecutive speech
 _PREROLL_MAX_BYTES = 16000  # 500 ms @ 16 kHz s16le mono
 _TX_IDLE_TIMEOUT_SECONDS = 60.0
 _TONE_WAIT_TIMEOUT_SECONDS = 3
+# A caller-configured tone media clip may run longer than the synthesized
+# beep; give it a generous ceiling without reaching all the way to the TTS
+# timeout below.
+_TONE_MEDIA_WAIT_TIMEOUT_SECONDS = 30
+_PROCESSING_BEEP_REPEAT_GAP_MS = 1500
 # Real-time playback of an LLM-generated response can legitimately run past a
 # minute; this is a safety net for a lost on_playback_done signal, not a
 # normal-case ceiling, so it stays generous.
@@ -207,6 +213,11 @@ class AssistBridge(AudioSink):
         silence_seconds: float | None = None,
         noise_suppression: int = 0,
         turn_tone: bool = False,
+        turn_tone_media: str | None = None,
+        turn_end_tone: bool = False,
+        turn_end_tone_media: str | None = None,
+        processing_tone: bool = False,
+        processing_tone_media: str | None = None,
         hangup_on_end: bool = False,
         interrupt_media: bool = True,
         stop_audio_fn: Callable[..., None] | None = None,
@@ -233,6 +244,14 @@ class AssistBridge(AudioSink):
         self.silence_seconds = silence_seconds
         self.noise_suppression = noise_suppression
         self.turn_tone = turn_tone
+        self.turn_tone_media = turn_tone_media
+        self.turn_end_tone = turn_end_tone
+        self.turn_end_tone_media = turn_end_tone_media
+        self.processing_tone = processing_tone
+        self.processing_tone_media = processing_tone_media
+        self._processing_active = False
+        self._processing_playing = False
+        self._processing_task: asyncio.Task | None = None
         self._interrupt_media_pending = interrupt_media
         self.stop_audio_fn = stop_audio_fn
         self.media_playing_fn = media_playing_fn
@@ -321,6 +340,7 @@ class AssistBridge(AudioSink):
         self._run_tts_token = None
         self._playing_tts_token = None
         self._cancel_inflight_tts()
+        self._stop_processing_cue(flush=False)
         self._tx_wait = None
         self._tx_done.set()
         if self.session_task:
@@ -486,13 +506,16 @@ class AssistBridge(AudioSink):
             LOGGER.info(
                 "Starting Voice Assist session (pipeline_id=%s, sample_rate=%d, "
                 "barge_in=%s, silence_seconds=%s, noise_suppression=%d, "
-                "turn_tone=%s, initial_prompt=%s, system_prompt=%s)",
+                "turn_tone=%s, turn_end_tone=%s, processing_tone=%s, "
+                "initial_prompt=%s, system_prompt=%s)",
                 pipeline.id,
                 self.sample_rate,
                 self.barge_in,
                 self.silence_seconds if self.silence_seconds is not None else "default",
                 self.noise_suppression,
                 self.turn_tone,
+                self.turn_end_tone,
+                self.processing_tone,
                 bool(self.initial_prompt),
                 bool(self.system_prompt),
             )
@@ -545,6 +568,7 @@ class AssistBridge(AudioSink):
                     )
                 finally:
                     self._listening = False
+                    self._stop_processing_cue()
 
                 turns += 1
                 if self._continue_conversation:
@@ -579,15 +603,18 @@ class AssistBridge(AudioSink):
                     LOGGER.info(
                         "Assist session ending after %d silent turns", silent_streak
                     )
+                    await self._play_turn_end_tone()
                     break
                 if self.max_turns and turns >= self.max_turns:
                     LOGGER.info("Assist session ending after %d turns", turns)
+                    await self._play_turn_end_tone()
                     break
                 if error_streak >= _MAX_CONSECUTIVE_ERRORS:
                     LOGGER.info(
                         "Assist session ending after %d consecutive pipeline errors",
                         error_streak,
                     )
+                    await self._play_turn_end_tone()
                     break
 
                 if self._turn_error and self._turn_error not in _SILENT_TURN_ERRORS:
@@ -631,19 +658,63 @@ class AssistBridge(AudioSink):
             await pipeline_input.validate()
             await pipeline_input.execute()
 
-    async def _play_turn_tone(self) -> None:
-        """Play the turn-start beep and wait until it finishes.
+    async def _resolve_tone_source(
+        self, media_id: str | None, *, loop: bool = False
+    ) -> AudioSource:
+        """Return the caller-configured tone media as a source, or the beep.
 
-        Failures and timeouts must not block the listening turn. The wait uses
-        a dedicated event so tone completion cannot unblock TTS playback wait.
-        A completed beep drops gap capture so speakerphone echo of the tone
-        (and the TTS tail still in the ring) cannot reach STT; a timeout
-        keeps whatever the caller said during the wait.
+        ``media_id`` may be a media-source ID (e.g. picked from the media
+        browser) or a plain URL/file path, mirroring how the media_player
+        entity's ``play_media`` resolves its own ``media_id`` argument.
         """
-        if not self.turn_tone or self.play_source is None:
+        def beep() -> ToneAudioSource:
+            return ToneAudioSource(
+                repeat_gap_ms=_PROCESSING_BEEP_REPEAT_GAP_MS if loop else None
+            )
+
+        if not media_id:
+            return beep()
+        url = media_id
+        if media_source.is_media_source_id(media_id):
+            try:
+                media_item = await media_source.async_resolve_media(
+                    self.hass, media_id, None
+                )
+                url = media_item.url
+            except Exception:
+                LOGGER.exception(
+                    "Assist: failed to resolve tone media '%s'; using default beep",
+                    media_id,
+                )
+                return beep()
+        try:
+            url = async_process_play_media_url(self.hass, url)
+        except Exception:
+            LOGGER.exception(
+                "Assist: failed to prepare tone media URL; using default beep"
+            )
+            return beep()
+        return FfmpegAudioSource(
+            url=url, ffmpeg_bin=get_ffmpeg_bin(self.hass), loop=loop
+        )
+
+    async def _play_tone(self, media_id: str | None) -> None:
+        """Play a turn tone (beep or configured media) and wait until it finishes.
+
+        Shared by the turn-start and turn-end tones. Failures and timeouts
+        must not block the caller; the wait uses a dedicated event so tone
+        completion cannot unblock a TTS playback wait. A completed tone drops
+        gap capture so speakerphone echo of it (and any TTS tail still in the
+        ring) cannot reach STT; a timeout keeps whatever the caller said
+        during the wait.
+        """
+        if self.play_source is None:
             return
         self._tx_wait = "tone"
         self._tx_done.clear()
+        timeout = (
+            _TONE_WAIT_TIMEOUT_SECONDS if not media_id else _TONE_MEDIA_WAIT_TIMEOUT_SECONDS
+        )
         timed_out = False
         played = False
         try:
@@ -651,23 +722,73 @@ class AssistBridge(AudioSink):
             await self._wait_for_tx_idle()
             if not self._running:
                 return
-            self.play_source(ToneAudioSource())
+            source = await self._resolve_tone_source(media_id)
+            self.play_source(source)
             played = True
             try:
-                async with asyncio.timeout(_TONE_WAIT_TIMEOUT_SECONDS):
+                async with asyncio.timeout(timeout):
                     await self._tx_done.wait()
             except TimeoutError:
                 timed_out = True
-                LOGGER.debug("Assist: turn tone playback-done timeout")
+                LOGGER.debug("Assist: tone playback-done timeout")
                 if self.stop_audio_fn:
                     self.stop_audio_fn(flush=True)
         except Exception:
-            LOGGER.exception("Assist: failed to play turn tone")
+            LOGGER.exception("Assist: failed to play tone")
             timed_out = True
         finally:
             self._tx_wait = None
         if played and not timed_out:
             self._discard_gap_capture()
+
+    def _start_processing_cue(self) -> None:
+        """Loop the processing cue from STT end until the reply audio is ready."""
+        if not self.processing_tone or self.play_source is None:
+            return
+        if not self._running or self._processing_active:
+            return
+        self._processing_active = True
+        self._processing_task = asyncio.create_task(self._run_processing_cue())
+
+    async def _run_processing_cue(self) -> None:
+        try:
+            source = await self._resolve_tone_source(
+                self.processing_tone_media, loop=True
+            )
+            if not self._processing_active or not self._running:
+                return
+            self.play_source(source)
+            self._processing_playing = True
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOGGER.exception("Assist: failed to play processing tone")
+
+    def _stop_processing_cue(self, *, flush: bool = True) -> None:
+        """Stop the looping cue (no-op when it is not active)."""
+        if not self._processing_active:
+            return
+        self._processing_active = False
+        task, self._processing_task = self._processing_task, None
+        if task is not None and not task.done():
+            task.cancel()
+        if self._processing_playing:
+            self._processing_playing = False
+            if flush and self.stop_audio_fn:
+                self.stop_audio_fn(flush=True)
+            self._discard_gap_capture()
+
+    async def _play_turn_tone(self) -> None:
+        """Play the turn-start tone (beep or configured media), if enabled."""
+        if not self.turn_tone:
+            return
+        await self._play_tone(self.turn_tone_media)
+
+    async def _play_turn_end_tone(self) -> None:
+        """Play the turn-end tone (beep or configured media), if enabled."""
+        if not self.turn_end_tone:
+            return
+        await self._play_tone(self.turn_end_tone_media)
 
     async def _wait_playback_done(self) -> None:
         """Wait for TTS playback to finish before starting the next turn."""
@@ -718,6 +839,7 @@ class AssistBridge(AudioSink):
                 self._turn_index,
                 _stt_text(event.data),
             )
+            self._start_processing_cue()
         elif event.type == PipelineEventType.INTENT_END:
             if event.data:
                 intent_output = event.data.get("intent_output") or {}
@@ -798,6 +920,7 @@ class AssistBridge(AudioSink):
                     await aclose()
                 return
 
+            self._stop_processing_cue()
             self._interrupt_media_when_ready()
 
             async def chunks() -> AsyncIterable[bytes]:

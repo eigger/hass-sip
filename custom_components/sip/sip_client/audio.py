@@ -308,8 +308,12 @@ class FfmpegAudioSource(_ConfiguredPcmSource):
         chunks: AsyncIterable[bytes] | None = None,
         sample_rate: int = 8000,
         pcm_frame_bytes: int | None = None,
+        loop: bool = False,
     ) -> None:
         super().__init__(sample_rate=sample_rate, pcm_frame_bytes=pcm_frame_bytes)
+        if loop and url is None:
+            raise ValueError("loop requires url")
+        self._loop = loop
         provided = sum(v is not None for v in (url, data, chunks))
         if provided != 1:
             raise ValueError("Provide exactly one of url/data/chunks")
@@ -326,6 +330,7 @@ class FfmpegAudioSource(_ConfiguredPcmSource):
             "-hide_banner",
             "-loglevel",
             "error",
+            *(("-stream_loop", "-1") if self._loop else ()),
             "-i",
             src,
             "-ac",
@@ -498,8 +503,10 @@ class ToneAudioSource(_ConfiguredPcmSource):
         fade_ms: int = 10,
         sample_rate: int = 8000,
         pcm_frame_bytes: int | None = None,
+        repeat_gap_ms: int | None = None,
     ) -> None:
         super().__init__(sample_rate=sample_rate, pcm_frame_bytes=pcm_frame_bytes)
+        self._repeat_gap_ms = repeat_gap_ms
         self._freq_hz = freq_hz
         self._duration_ms = duration_ms
         self._amplitude = amplitude
@@ -515,4 +522,14 @@ class ToneAudioSource(_ConfiguredPcmSource):
         )
 
     async def run(self, push: PushFn, is_active: ActiveFn) -> None:
-        await self._push_paced_pcm(push, is_active, self._render_pcm())
+        pcm = self._render_pcm()
+        if self._repeat_gap_ms is None:
+            await self._push_paced_pcm(push, is_active, pcm)
+            return
+        # Repeat (beep + silence) until cancelled or the call ends.
+        gap_samples = int(self._sample_rate * self._repeat_gap_ms / 1000)
+        cycle = pcm + bytes(gap_samples * 2)
+        # Frame-align so no short chunk is pushed at each cycle boundary.
+        cycle += bytes(-len(cycle) % self._pcm_frame_bytes)
+        while is_active():
+            await self._push_paced_pcm(push, is_active, cycle)

@@ -268,6 +268,26 @@
           "name": "Turn start tone",
           "description": "Play a short beep when it is the caller's turn to speak (default false). Helps callers know when the microphone is open after TTS. Skipped when barge-in already captured speech."
         },
+        "turn_tone_media": {
+          "name": "Turn start tone media",
+          "description": "Home Assistant media to play for the turn-start tone instead of the default beep. A media source ID (e.g. picked from the media browser) or a URL/file path. Leave empty to use the default beep."
+        },
+        "turn_end_tone": {
+          "name": "Turn end tone",
+          "description": "Play a tone when the Assist session ends (default false). Lets the caller know the assistant is done listening, e.g. right before hanging up."
+        },
+        "turn_end_tone_media": {
+          "name": "Turn end tone media",
+          "description": "Home Assistant media to play for the turn-end tone instead of the default beep. A media source ID (e.g. picked from the media browser) or a URL/file path. Leave empty to use the default beep."
+        },
+        "processing_tone": {
+          "name": "Processing tone",
+          "description": "Repeat a short beep from the moment speech is recognized until the reply audio is ready, covering LLM, action and TTS wait time (default false). Stops as soon as the reply starts playing."
+        },
+        "processing_tone_media": {
+          "name": "Processing tone media",
+          "description": "Home Assistant media to loop for the processing tone instead of the default repeating beep. A media source ID (e.g. picked from the media browser) or a URL/file path. Leave empty to use the default beep."
+        },
         "hangup_on_end": {
           "name": "Hang up on end",
           "description": "Hang up the call when the Assist session ends."
