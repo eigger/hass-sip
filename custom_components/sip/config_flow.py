@@ -184,15 +184,21 @@ async def async_validate_sip_registration(
     )
 
     client = SipClient(sip_config, callbacks)
-    await client.start()
-
     try:
+        await client.start()
         # Wait up to 5 seconds for registration success/failure
         await asyncio.wait_for(event.wait(), timeout=5.0)
     except asyncio.TimeoutError:
         error_msg = "timeout"
+    except Exception as err:  # noqa: BLE001
+        error_msg = f"start failed: {err}"
     finally:
-        await client.stop()
+        # A stuck teardown must not leave the config flow hanging, which
+        # would block retries with "already_in_progress".
+        try:
+            await asyncio.wait_for(client.stop(), timeout=5.0)
+        except Exception:  # noqa: BLE001
+            pass
 
     return reg_success, error_msg
 
@@ -211,7 +217,9 @@ class SipConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             # Prevent configuring the same username/server combination
             unique_id = f"{user_input[CONF_USERNAME]}@{user_input[CONF_SERVER]}"
-            await self.async_set_unique_id(unique_id)
+            # raise_on_progress=False: a stale flow left over from an earlier
+            # attempt must not block a retry with "already_in_progress".
+            await self.async_set_unique_id(unique_id, raise_on_progress=False)
             self._abort_if_unique_id_configured()
 
             # Validate connection and authentication via actual REGISTER sequence

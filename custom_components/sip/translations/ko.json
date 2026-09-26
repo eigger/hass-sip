@@ -270,7 +270,7 @@
         },
         "turn_tone_media": {
           "name": "턴 시작 신호음 미디어",
-          "description": "기본 신호음 대신 턴 시작 신호음으로 재생할 Home Assistant 미디어입니다. 미디어 소스 ID(예: 미디어 브라우저에서 선택) 또는 URL/파일 경로입니다. 비워두면 기본 신호음을 사용합니다."
+          "description": "기본 신호음 대신 턴 시작 신호음으로 재생할 Home Assistant 미디어입니다. 미디어 소스 ID(예: 미디어 브라우저에서 선택) 또는 URL입니다. 비워두면 기본 신호음을 사용합니다."
         },
         "processing_tone": {
           "name": "처리 중 신호음",
@@ -278,7 +278,7 @@
         },
         "processing_tone_media": {
           "name": "처리 중 신호음 미디어",
-          "description": "기본 반복 신호음 대신 처리 중 신호음으로 반복 재생할 Home Assistant 미디어입니다. 미디어 소스 ID(예: 미디어 브라우저에서 선택) 또는 URL/파일 경로입니다. 비워두면 기본 신호음을 사용합니다."
+          "description": "기본 반복 신호음 대신 처리 중 신호음으로 반복 재생할 Home Assistant 미디어입니다. 미디어 소스 ID(예: 미디어 브라우저에서 선택) 또는 URL입니다. 비워두면 기본 신호음을 사용합니다."
         },
         "hangup_on_end": {
           "name": "종료 시 끊기",

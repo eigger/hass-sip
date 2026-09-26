@@ -312,7 +312,7 @@ class AssistBridge(AudioSink):
             self.audio_stream.feed_audio(pcm_16k, 16000)
         elif self._post_barge_in_capture:
             self._append_rx_to_ring(pcm_16k)
-        elif self.barge_in and self._speaking:
+        elif self.barge_in and self._speaking and not self._processing_playing:
             self._monitor_barge_in(pcm_16k)
         elif not self._speaking:
             self._append_rx_to_ring(pcm_16k)
@@ -656,8 +656,9 @@ class AssistBridge(AudioSink):
         """Return the caller-configured tone media as a source, or the beep.
 
         ``media_id`` may be a media-source ID (e.g. picked from the media
-        browser) or a plain URL/file path, mirroring how the media_player
-        entity's ``play_media`` resolves its own ``media_id`` argument.
+        browser) or a URL, mirroring how the media_player entity's
+        ``play_media`` resolves its own ``media_id`` argument. A local
+        filesystem path is not supported: it would be rewritten into an HA URL.
         """
         def beep() -> ToneAudioSource:
             return ToneAudioSource(
@@ -693,7 +694,7 @@ class AssistBridge(AudioSink):
     async def _play_tone(self, media_id: str | None) -> None:
         """Play a turn tone (beep or configured media) and wait until it finishes.
 
-        Shared by the turn-start and turn-end tones. Failures and timeouts
+        Used for the turn-start tone. Failures and timeouts
         must not block the caller; the wait uses a dedicated event so tone
         completion cannot unblock a TTS playback wait. A completed tone drops
         gap capture so speakerphone echo of it (and any TTS tail still in the
@@ -748,6 +749,10 @@ class AssistBridge(AudioSink):
                 self.processing_tone_media, loop=True
             )
             if not self._processing_active or not self._running:
+                return
+            # Do not cut into pre-Assist media that interrupt_media=False is
+            # letting finish.
+            if self.media_playing_fn is not None and self.media_playing_fn():
                 return
             self.play_source(source)
             self._processing_playing = True

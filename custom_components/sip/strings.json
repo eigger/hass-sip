@@ -270,7 +270,7 @@
         },
         "turn_tone_media": {
           "name": "Turn start tone media",
-          "description": "Home Assistant media to play for the turn-start tone instead of the default beep. A media source ID (e.g. picked from the media browser) or a URL/file path. Leave empty to use the default beep."
+          "description": "Home Assistant media to play for the turn-start tone instead of the default beep. A media source ID (e.g. picked from the media browser) or a URL. Leave empty to use the default beep."
         },
         "processing_tone": {
           "name": "Processing tone",
@@ -278,7 +278,7 @@
         },
         "processing_tone_media": {
           "name": "Processing tone media",
-          "description": "Home Assistant media to loop for the processing tone instead of the default repeating beep. A media source ID (e.g. picked from the media browser) or a URL/file path. Leave empty to use the default beep."
+          "description": "Home Assistant media to loop for the processing tone instead of the default repeating beep. A media source ID (e.g. picked from the media browser) or a URL. Leave empty to use the default beep."
         },
         "hangup_on_end": {
           "name": "Hang up on end",

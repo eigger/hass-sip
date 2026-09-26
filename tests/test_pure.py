@@ -5942,6 +5942,91 @@ def test_assist_processing_cue_media_loops_and_disabled_by_default():
     asyncio.run(run())
 
 
+def test_ffmpeg_source_loop_passes_stream_loop_before_input():
+    captured: list = []
+
+    async def fake_exec(*args, **kwargs):
+        captured.extend(args)
+        raise RuntimeError("stop here")
+
+    async def go(loop):
+        captured.clear()
+        src = audio.FfmpegAudioSource(url="http://x/a.mp3", loop=loop)
+        try:
+            await src.run(lambda _c: None, lambda: True)
+        except RuntimeError:
+            pass
+        return list(captured)
+
+    with patch("asyncio.create_subprocess_exec", fake_exec):
+        looped = asyncio.run(go(True))
+        plain = asyncio.run(go(False))
+    assert looped[looped.index("-stream_loop") + 1] == "-1"
+    assert looped.index("-stream_loop") < looped.index("-i")
+    assert "-stream_loop" not in plain
+
+
+def test_assist_processing_cue_skipped_while_media_playing():
+    assist_mod, _, PET, PE = _assist_ctx()
+    played: list = []
+
+    async def run():
+        bridge = assist_mod.AssistBridge(
+            MagicMock(),
+            play_source_fn=played.append,
+            on_done_fn=MagicMock(),
+            processing_tone=True,
+            interrupt_media=False,
+            media_playing_fn=lambda: True,
+        )
+        bridge._on_pipeline_event(PE(PET.STT_END, {}))
+        await asyncio.sleep(0.02)
+        assert played == []
+        assert not bridge._processing_playing
+        bridge._stop_processing_cue()
+
+    asyncio.run(run())
+
+
+def test_assist_barge_in_ignores_rx_while_processing_cue_plays():
+    assist_mod, _, _, _ = _assist_ctx()
+    bridge = assist_mod.AssistBridge(
+        MagicMock(), play_source_fn=MagicMock(), on_done_fn=MagicMock()
+    )
+    bridge.barge_in = True
+    bridge._speaking = True
+    bridge._processing_playing = True
+    bridge._monitor_barge_in = MagicMock()
+    bridge.write(b"\x00\x00" * 160)
+    bridge._monitor_barge_in.assert_not_called()
+    bridge._processing_playing = False
+    bridge.write(b"\x00\x00" * 160)
+    bridge._monitor_barge_in.assert_called_once()
+
+
+def test_assist_processing_cue_stopped_on_close():
+    assist_mod, _, PET, PE = _assist_ctx()
+    stops: list = []
+
+    async def run():
+        bridge = assist_mod.AssistBridge(
+            MagicMock(),
+            play_source_fn=MagicMock(),
+            on_done_fn=MagicMock(),
+            processing_tone=True,
+            interrupt_media=False,
+            stop_audio_fn=lambda **kw: stops.append(kw),
+            media_playing_fn=lambda: False,
+        )
+        bridge._on_pipeline_event(PE(PET.STT_END, {}))
+        await asyncio.sleep(0.02)
+        assert bridge._processing_playing
+        bridge.close()
+        assert not bridge._processing_active and not bridge._processing_playing
+
+    asyncio.run(run())
+
+
 def test_assist_processing_cue_stopped_when_turn_ends_without_reply():
     assist_mod, mock_ap, PET, PE = _assist_ctx()
     stops: list = []
@@ -5965,6 +6050,76 @@ def test_assist_processing_cue_stopped_when_turn_ends_without_reply():
     _run_bridge_session(bridge)
     assert not bridge._processing_active
     assert stops == [{"flush": True}]
+
+
+def _run_validate_registration(fake_client_cls):
+    """Run async_validate_sip_registration against a fake SipClient."""
+    fake = types.ModuleType(f"{_CC_PKG}.sip_client.sip_client")
+    fake.SipConfig = lambda **kw: types.SimpleNamespace(**kw)
+    fake.SipCallbacks = lambda **kw: types.SimpleNamespace(**kw)
+    fake.SipClient = fake_client_cls
+    saved = {
+        k: sys.modules.get(k)
+        for k in (f"{_CC_PKG}.sip_client", f"{_CC_PKG}.sip_client.sip_client")
+    }
+    sys.modules[f"{_CC_PKG}.sip_client"] = types.ModuleType(f"{_CC_PKG}.sip_client")
+    sys.modules[f"{_CC_PKG}.sip_client.sip_client"] = fake
+    try:
+        return asyncio.run(
+            config_flow.async_validate_sip_registration(
+                MagicMock(),
+                {
+                    config_flow.CONF_SERVER: "pbx",
+                    config_flow.CONF_USERNAME: "100",
+                    config_flow.CONF_PASSWORD: "pw",
+                },
+            )
+        )
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+
+
+def test_validate_registration_survives_client_start_failure():
+    stopped = []
+
+    class FakeClient:
+        def __init__(self, cfg, callbacks):
+            pass
+
+        async def start(self):
+            raise OSError("port in use")
+
+        async def stop(self):
+            stopped.append(1)
+
+    ok, msg = _run_validate_registration(FakeClient)
+    assert ok is False
+    assert "port in use" in msg
+    assert stopped == [1]
+
+
+def test_validate_registration_does_not_hang_on_stuck_stop():
+    class FakeClient:
+        def __init__(self, cfg, callbacks):
+            self.cb = callbacks
+
+        async def start(self):
+            self.cb.on_registered()
+
+        async def stop(self):
+            await asyncio.sleep(3600)
+
+    async def fast(coro, timeout):
+        return await real_wait_for(coro, 0.05)
+
+    real_wait_for = asyncio.wait_for
+    with patch("asyncio.wait_for", fast):
+        ok, _ = _run_validate_registration(FakeClient)
+    assert ok is True
 
 
 # ------------------------------------------------------- config_flow schema

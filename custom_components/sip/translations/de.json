@@ -270,7 +270,7 @@
         },
         "turn_tone_media": {
           "name": "Medien für Rundenstart-Ton",
-          "description": "Home-Assistant-Medien, die statt des Standardtons für den Rundenstart-Ton abgespielt werden. Eine Medienquellen-ID (z. B. aus dem Medienbrowser) oder eine URL/ein Dateipfad. Leer lassen, um den Standardton zu verwenden."
+          "description": "Home-Assistant-Medien, die statt des Standardtons für den Rundenstart-Ton abgespielt werden. Eine Medienquellen-ID (z. B. aus dem Medienbrowser) oder eine URL. Leer lassen, um den Standardton zu verwenden."
         },
         "processing_tone": {
           "name": "Verarbeitungs-Ton",
@@ -278,7 +278,7 @@
         },
         "processing_tone_media": {
           "name": "Medien für Verarbeitungs-Ton",
-          "description": "Home-Assistant-Medien, die statt des standardmäßig wiederholten Tons für den Verarbeitungs-Ton in Schleife abgespielt werden. Eine Medienquellen-ID (z. B. aus dem Medienbrowser) oder eine URL/ein Dateipfad. Leer lassen, um den Standardton zu verwenden."
+          "description": "Home-Assistant-Medien, die statt des standardmäßig wiederholten Tons für den Verarbeitungs-Ton in Schleife abgespielt werden. Eine Medienquellen-ID (z. B. aus dem Medienbrowser) oder eine URL. Leer lassen, um den Standardton zu verwenden."
         },
         "hangup_on_end": {
           "name": "Bei Ende auflegen",
