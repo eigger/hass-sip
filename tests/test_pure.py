@@ -6027,6 +6027,32 @@ def test_assist_processing_cue_stopped_on_close():
     asyncio.run(run())
 
 
+def test_assist_processing_cue_logs_lifecycle(caplog):
+    import logging
+
+    assist_mod, _, PET, PE = _assist_ctx()
+
+    async def run():
+        bridge = assist_mod.AssistBridge(
+            MagicMock(),
+            play_source_fn=MagicMock(),
+            on_done_fn=MagicMock(),
+            processing_tone=True,
+            interrupt_media=False,
+            media_playing_fn=lambda: False,
+        )
+        bridge._on_pipeline_event(PE(PET.STT_END, {}))
+        await asyncio.sleep(0.02)
+        bridge._stop_processing_cue()
+
+    with caplog.at_level(logging.DEBUG):
+        asyncio.run(run())
+    text = caplog.text
+    assert "starting processing cue" in text
+    assert "processing cue playing" in text
+    assert "stopping processing cue" in text
+
+
 def test_assist_processing_cue_stopped_when_turn_ends_without_reply():
     assist_mod, mock_ap, PET, PE = _assist_ctx()
     stops: list = []

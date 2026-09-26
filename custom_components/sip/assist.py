@@ -687,6 +687,10 @@ class AssistBridge(AudioSink):
                 "Assist: failed to prepare tone media URL; using default beep"
             )
             return beep()
+        # A prepared HA URL may carry an authSig. Never put it in the log.
+        LOGGER.debug(
+            "Assist: using tone media %s (loop=%s)", url.partition("?")[0], loop
+        )
         return FfmpegAudioSource(
             url=url, ffmpeg_bin=get_ffmpeg_bin(self.hass), loop=loop
         )
@@ -741,6 +745,7 @@ class AssistBridge(AudioSink):
         if not self._running or self._processing_active:
             return
         self._processing_active = True
+        LOGGER.debug("Assist turn %d: STT done, starting processing cue", self._turn_index)
         self._processing_task = asyncio.create_task(self._run_processing_cue())
 
     async def _run_processing_cue(self) -> None:
@@ -753,9 +758,11 @@ class AssistBridge(AudioSink):
             # Do not cut into pre-Assist media that interrupt_media=False is
             # letting finish.
             if self.media_playing_fn is not None and self.media_playing_fn():
+                LOGGER.debug("Assist: processing cue skipped; other media is playing")
                 return
             self.play_source(source)
             self._processing_playing = True
+            LOGGER.debug("Assist: processing cue playing")
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -766,6 +773,9 @@ class AssistBridge(AudioSink):
         if not self._processing_active:
             return
         self._processing_active = False
+        LOGGER.debug(
+            "Assist: stopping processing cue (playing=%s)", self._processing_playing
+        )
         task, self._processing_task = self._processing_task, None
         if task is not None and not task.done():
             task.cancel()
@@ -779,6 +789,11 @@ class AssistBridge(AudioSink):
         """Play the turn-start tone (beep or configured media), if enabled."""
         if not self.turn_tone:
             return
+        LOGGER.debug(
+            "Assist turn %d: playing turn tone (%s)",
+            self._turn_index,
+            "media" if self.turn_tone_media else "beep",
+        )
         await self._play_tone(self.turn_tone_media)
 
     async def _wait_playback_done(self) -> None:

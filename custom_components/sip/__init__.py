@@ -252,6 +252,12 @@ SERVICE_ASSIST_SCHEMA = cv.make_entity_service_schema(
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up SIP Client from a config entry."""
     config = entry.data
+    LOGGER.info(
+        "Setting up SIP account %s@%s:%s",
+        config[CONF_USERNAME],
+        config[CONF_SERVER],
+        config.get(CONF_PORT, 5060),
+    )
     sip_config = SipConfig(
         server=config[CONF_SERVER],
         port=config.get(CONF_PORT, 5060),
@@ -543,6 +549,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Start the SIP client in a background task
     async def start_client() -> None:
         try:
+            LOGGER.debug("[%s] Starting SIP client", sip_config.username)
             await client.start()
         except Exception:  # noqa: BLE001 - never let startup crash leave a dead task
             LOGGER.exception("SIP client startup failed; will keep retrying via timer")
@@ -681,12 +688,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Register services
     await async_register_services(hass)
 
+    LOGGER.info("SIP account %s set up", sip_config.username)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     entry_data = entry.runtime_data
+    LOGGER.info("Unloading SIP account %s", entry.data.get(CONF_USERNAME))
     if entry_data:
         client: SipClient = entry_data["client"]
         recorder = close_recorder_slot(entry_data)
@@ -738,6 +747,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Delete the Assist system user created for this account."""
+    LOGGER.info("Removing SIP account %s", entry.data.get(CONF_USERNAME))
     await remove_assist_user(hass, entry)
 
 
