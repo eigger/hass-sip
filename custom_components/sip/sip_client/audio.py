@@ -308,8 +308,12 @@ class FfmpegAudioSource(_ConfiguredPcmSource):
         chunks: AsyncIterable[bytes] | None = None,
         sample_rate: int = 8000,
         pcm_frame_bytes: int | None = None,
+        loop: bool = False,
     ) -> None:
         super().__init__(sample_rate=sample_rate, pcm_frame_bytes=pcm_frame_bytes)
+        if loop and url is None:
+            raise ValueError("loop requires url")
+        self._loop = loop
         provided = sum(v is not None for v in (url, data, chunks))
         if provided != 1:
             raise ValueError("Provide exactly one of url/data/chunks")
@@ -326,6 +330,7 @@ class FfmpegAudioSource(_ConfiguredPcmSource):
             "-hide_banner",
             "-loglevel",
             "error",
+            *(("-stream_loop", "-1") if self._loop else ()),
             "-i",
             src,
             "-ac",
@@ -443,6 +448,54 @@ class FfmpegAudioSource(_ConfiguredPcmSource):
                     pass
 
 
+class FillUntilStartSource(AudioSource):
+    """Play ``filler`` until ``inner`` emits its first frame, then only ``inner``.
+
+    Covers the silence while ``inner`` spins up (e.g. ffmpeg buffering a TTS
+    reply that arrives as one chunk). Queued filler PCM needs no flush: the
+    RTP TX buffer drops its oldest bytes first when the reply bursts in.
+    """
+
+    def __init__(
+        self,
+        inner: AudioSource,
+        filler: AudioSource,
+        on_inner_started: Callable[[], None] | None = None,
+    ) -> None:
+        self._inner = inner
+        self._filler = filler
+        self._on_inner_started = on_inner_started
+
+    def configure(self, sample_rate: int, pcm_frame_bytes: int) -> None:
+        for source in (self._inner, self._filler):
+            configure = getattr(source, "configure", None)
+            if callable(configure):
+                configure(sample_rate, pcm_frame_bytes)
+
+    async def run(self, push: PushFn, is_active: ActiveFn) -> None:
+        started = False
+
+        def filler_active() -> bool:
+            return not started and is_active()
+
+        filler_task = asyncio.create_task(self._filler.run(push, filler_active))
+
+        def inner_push(chunk: bytes) -> None:
+            nonlocal started
+            if not started:
+                started = True
+                filler_task.cancel()
+                if self._on_inner_started is not None:
+                    self._on_inner_started()
+            push(chunk)
+
+        try:
+            await self._inner.run(inner_push, is_active)
+        finally:
+            filler_task.cancel()
+            await asyncio.gather(filler_task, return_exceptions=True)
+
+
 _TONE_PCM_CACHE: dict[tuple[int, int, int, float, int], bytes] = {}
 
 
@@ -498,8 +551,10 @@ class ToneAudioSource(_ConfiguredPcmSource):
         fade_ms: int = 10,
         sample_rate: int = 8000,
         pcm_frame_bytes: int | None = None,
+        repeat_gap_ms: int | None = None,
     ) -> None:
         super().__init__(sample_rate=sample_rate, pcm_frame_bytes=pcm_frame_bytes)
+        self._repeat_gap_ms = repeat_gap_ms
         self._freq_hz = freq_hz
         self._duration_ms = duration_ms
         self._amplitude = amplitude
@@ -515,4 +570,14 @@ class ToneAudioSource(_ConfiguredPcmSource):
         )
 
     async def run(self, push: PushFn, is_active: ActiveFn) -> None:
-        await self._push_paced_pcm(push, is_active, self._render_pcm())
+        pcm = self._render_pcm()
+        if self._repeat_gap_ms is None:
+            await self._push_paced_pcm(push, is_active, pcm)
+            return
+        # Repeat (beep + silence) until cancelled or the call ends.
+        gap_samples = int(self._sample_rate * self._repeat_gap_ms / 1000)
+        cycle = pcm + bytes(gap_samples * 2)
+        # Frame-align so no short chunk is pushed at each cycle boundary.
+        cycle += bytes(-len(cycle) % self._pcm_frame_bytes)
+        while is_active():
+            await self._push_paced_pcm(push, is_active, cycle)

@@ -17,6 +17,7 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import (
+    LOGGER,
     DOMAIN,
     CONF_SERVER,
     CONF_PORT,
@@ -183,16 +184,44 @@ async def async_validate_sip_registration(
         on_register_failed=on_register_failed,
     )
 
+    LOGGER.debug(
+        "Testing SIP registration: %s@%s:%s (local RTP port %s)",
+        sip_config.username,
+        sip_config.server,
+        sip_config.port,
+        sip_config.local_rtp_port,
+    )
     client = SipClient(sip_config, callbacks)
-    await client.start()
-
     try:
+        await client.start()
         # Wait up to 5 seconds for registration success/failure
         await asyncio.wait_for(event.wait(), timeout=5.0)
     except asyncio.TimeoutError:
         error_msg = "timeout"
+    except Exception as err:  # noqa: BLE001
+        LOGGER.warning("SIP registration test could not start: %s", err)
+        error_msg = f"start failed: {err}"
     finally:
-        await client.stop()
+        # A stuck teardown must not leave the config flow hanging, which
+        # would block retries with "already_in_progress".
+        try:
+            await asyncio.wait_for(client.stop(), timeout=5.0)
+        except Exception as err:  # noqa: BLE001
+            LOGGER.debug("SIP registration test client did not stop cleanly: %r", err)
+
+    if reg_success:
+        LOGGER.info(
+            "SIP registration test succeeded for %s@%s",
+            sip_config.username,
+            sip_config.server,
+        )
+    else:
+        LOGGER.warning(
+            "SIP registration test failed for %s@%s: %s",
+            sip_config.username,
+            sip_config.server,
+            error_msg,
+        )
 
     return reg_success, error_msg
 
@@ -211,7 +240,9 @@ class SipConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             # Prevent configuring the same username/server combination
             unique_id = f"{user_input[CONF_USERNAME]}@{user_input[CONF_SERVER]}"
-            await self.async_set_unique_id(unique_id)
+            # raise_on_progress=False: a stale flow left over from an earlier
+            # attempt must not block a retry with "already_in_progress".
+            await self.async_set_unique_id(unique_id, raise_on_progress=False)
             self._abort_if_unique_id_configured()
 
             # Validate connection and authentication via actual REGISTER sequence
@@ -225,6 +256,7 @@ class SipConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 else:
                     errors["base"] = "cannot_connect"
             else:
+                LOGGER.info("Creating SIP entry for %s", unique_id)
                 return self.async_create_entry(
                     title=f"SIP: {user_input[CONF_USERNAME]}",
                     data=user_input,
@@ -261,6 +293,11 @@ class SipConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 else:
                     errors["base"] = "cannot_connect"
             else:
+                LOGGER.info(
+                    "Reconfigured SIP entry %s@%s; reloading",
+                    user_input[CONF_USERNAME],
+                    user_input[CONF_SERVER],
+                )
                 return self.async_update_reload_and_abort(
                     reconfigure_entry, data=candidate
                 )

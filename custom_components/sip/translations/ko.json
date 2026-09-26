@@ -268,6 +268,18 @@
           "name": "턴 시작 신호음",
           "description": "말할 차례가 되면 짧은 신호음을 재생합니다(기본값 false). TTS 이후 마이크가 열린 시점을 알립니다. barge-in으로 이미 발화가 잡힌 턴에서는 건너뜁니다."
         },
+        "turn_tone_media": {
+          "name": "턴 시작 신호음 미디어",
+          "description": "기본 신호음 대신 턴 시작 신호음으로 재생할 Home Assistant 미디어입니다. 미디어 소스 ID(예: 미디어 브라우저에서 선택) 또는 URL입니다. 비워두면 기본 신호음을 사용합니다."
+        },
+        "processing_tone": {
+          "name": "처리 중 신호음",
+          "description": "음성이 인식된 순간부터 응답 오디오가 준비될 때까지 짧은 신호음을 반복 재생하여 LLM, 동작, TTS 대기 시간을 채웁니다(기본값 false). 응답 재생이 시작되면 바로 멈춥니다."
+        },
+        "processing_tone_media": {
+          "name": "처리 중 신호음 미디어",
+          "description": "기본 반복 신호음 대신 처리 중 신호음으로 반복 재생할 Home Assistant 미디어입니다. 미디어 소스 ID(예: 미디어 브라우저에서 선택) 또는 URL입니다. 비워두면 기본 신호음을 사용합니다."
+        },
         "hangup_on_end": {
           "name": "종료 시 끊기",
           "description": "Assist 세션 종료 시 통화를 끊습니다."

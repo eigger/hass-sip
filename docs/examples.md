@@ -342,9 +342,8 @@ You can automatically bridge incoming calls directly to Home Assistant's Voice A
 ```yaml
 alias: "SIP: Auto-Answer with Voice Assist"
 trigger:
-  - platform: state
-    entity_id: binary_sensor.phone_line_active
-    to: "on"
+  - platform: event
+    event_type: sip_incoming_call
 action:
   - service: sip.answer
     target:
@@ -355,6 +354,8 @@ action:
     data:
       max_silent_turns: 2
 ```
+
+> Trigger on the `sip_incoming_call` event rather than `binary_sensor.phone_line_active`: the sensor turns on for **any** call, including calls the extension places itself (e.g. `sip.dial`), which would answer and start Assist on your own outbound call.
 
 On a noisy or narrowband (G.711) line, the assistant may react to line noise or a breath before the caller speaks. Raise `silence_seconds` and enable `noise_suppression` to compensate:
 
@@ -368,6 +369,50 @@ On a noisy or narrowband (G.711) line, the assistant may react to line noise or 
       noise_suppression: 2
       turn_tone: true
 ```
+
+### Audio cues: turn tone and processing tone
+
+Two optional cues help callers follow the conversation on a phone line:
+
+- `turn_tone` plays once when the microphone opens for the caller's turn.
+- `processing_tone` repeats from the moment speech is recognized until the reply starts playing, covering the LLM, action and TTS wait. It stops mid-cycle as soon as the reply is heard.
+
+Both default to a synthesized beep. Enable them with no other setup:
+
+```yaml
+  - service: sip.start_assist
+    target:
+      entity_id: media_player.phone_line
+    data:
+      turn_tone: true
+      processing_tone: true
+```
+
+To use your own sounds instead, set the matching `*_media` option to a media source ID or a URL. For a file uploaded to **My media** (`/media`), the ID is `media-source://media_source/local/<file>`. The processing clip is looped until the reply starts playing, so a short, unobtrusive sound works best:
+
+```yaml
+  - service: sip.start_assist
+    target:
+      entity_id: media_player.phone_line
+    data:
+      turn_tone: true
+      turn_tone_media: media-source://media_source/local/ding.mp3
+      processing_tone: true
+      processing_tone_media: media-source://media_source/local/thinking.mp3
+```
+
+The same options work in an IVR `assist:` mapping (a URL is also accepted):
+
+```yaml
+      "2":
+        assist:
+          pipeline_id: "support-pipeline"
+          turn_tone: true
+          processing_tone: true
+          processing_tone_media: "https://example.com/sounds/thinking.mp3"
+```
+
+If a configured media item cannot be resolved, the default beep is played instead.
 
 Each SIP account gets a Home Assistant system user named `SIP Assist ({extension})` in the Users group. Assist intents run as that user and reuse one `Context` for the whole session, so Logbook can attribute those actions to that call. Grant this user access to the entities the phone should control. Removing the SIP entry deletes the user.
 
