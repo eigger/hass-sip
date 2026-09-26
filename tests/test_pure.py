@@ -3651,7 +3651,7 @@ def _setup_assist_deps():
     mock_components.ffmpeg = mock_ffmpeg
     sys.modules["homeassistant.components.ffmpeg"] = mock_ffmpeg
 
-    # Tone media resolution (turn_tone_media / turn_end_tone_media): default
+    # Tone media resolution (turn_tone_media / processing_tone_media): default
     # to "not a media-source ID" and an identity URL passthrough, so a plain
     # URL/path exercises the FfmpegAudioSource path without extra setup;
     # tests can reconfigure assist.media_source / assist.async_process_play_media_url.
@@ -5738,112 +5738,6 @@ def test_assist_close_unblocks_turn_tone_wait():
     asyncio.run(run())
 
 
-def test_assist_turn_end_tone_plays_on_silent_streak_end():
-    """The end tone fires on the natural "session over" break, not mid-turn."""
-    assist_mod, mock_ap, PET, PE = _assist_ctx()
-    play_calls: list[str] = []
-    holder: dict = {}
-
-    async def mock_pipeline(hass, **kwargs):
-        kwargs["event_callback"](PE(PET.ERROR, {"code": "stt-no-text-recognized"}))
-
-    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
-
-    def play(src):
-        play_calls.append(type(src).__name__)
-        holder["bridge"]._tx_done.set()
-
-    bridge = assist_mod.AssistBridge(
-        MagicMock(),
-        play_source_fn=play,
-        on_done_fn=MagicMock(),
-        max_silent_turns=1,
-        turn_end_tone=True,
-    )
-    holder["bridge"] = bridge
-    _run_bridge_session(bridge)
-    assert play_calls == ["ToneAudioSource"]
-
-
-def test_assist_turn_end_tone_plays_on_max_turns_end():
-    assist_mod, mock_ap, _, _ = _assist_ctx()
-    play_calls: list[str] = []
-    holder: dict = {}
-
-    async def mock_pipeline(hass, **kwargs):
-        pass
-
-    mock_ap.async_pipeline_from_audio_stream.reset_mock()
-    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
-
-    def play(src):
-        play_calls.append(type(src).__name__)
-        holder["bridge"]._tx_done.set()
-
-    bridge = assist_mod.AssistBridge(
-        MagicMock(),
-        play_source_fn=play,
-        on_done_fn=MagicMock(),
-        max_turns=1,
-        turn_end_tone=True,
-    )
-    holder["bridge"] = bridge
-    _run_bridge_session(bridge)
-    assert play_calls == ["ToneAudioSource"]
-
-
-def test_assist_turn_end_tone_disabled_by_default():
-    assist_mod, mock_ap, PET, PE = _assist_ctx()
-    play = MagicMock()
-
-    async def mock_pipeline(hass, **kwargs):
-        kwargs["event_callback"](PE(PET.ERROR, {"code": "stt-no-text-recognized"}))
-
-    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
-    bridge = assist_mod.AssistBridge(
-        MagicMock(),
-        play_source_fn=play,
-        on_done_fn=MagicMock(),
-        max_silent_turns=1,
-    )
-    _run_bridge_session(bridge)
-    play.assert_not_called()
-    assert bridge.turn_end_tone is False
-
-
-def test_assist_turn_end_tone_skipped_when_closed_externally():
-    """An external close() cancels the session mid-turn; that is not the
-    natural "session over" break, so no end tone should play into a call
-    that may already be gone (and would otherwise race a replacement
-    Assist/IVR session's own opening audio)."""
-    assist_mod, mock_ap, PET, PE = _assist_ctx()
-    play_calls: list[str] = []
-
-    async def mock_pipeline(hass, **kwargs):
-        await asyncio.sleep(1)
-        kwargs["event_callback"](PE(PET.ERROR, {"code": "stt-no-text-recognized"}))
-
-    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
-    bridge = assist_mod.AssistBridge(
-        MagicMock(),
-        play_source_fn=lambda src: play_calls.append(type(src).__name__),
-        on_done_fn=MagicMock(),
-        max_silent_turns=99,
-        turn_end_tone=True,
-    )
-
-    async def run():
-        bridge.start()
-        await asyncio.sleep(0.02)
-        bridge.close()
-        if bridge.session_task:
-            with __import__("contextlib").suppress(asyncio.CancelledError):
-                await bridge.session_task
-
-    asyncio.run(run())
-    assert play_calls == []
-
-
 def test_assist_turn_tone_media_plays_configured_media_instead_of_beep():
     """A plain URL/path (not a media-source ID) goes straight to ffmpeg."""
     assist_mod, _, _, _ = _assist_ctx()
@@ -5871,7 +5765,7 @@ def test_assist_turn_tone_media_plays_configured_media_instead_of_beep():
     assert play_calls == ["FfmpegAudioSource"]
 
 
-def test_assist_turn_end_tone_media_resolves_media_source_id():
+def test_assist_turn_tone_media_resolves_media_source_id():
     """A media-source ID is resolved and signed before being handed to ffmpeg."""
     assist_mod, _, _, _ = _assist_ctx()
     play_calls: list[str] = []
@@ -5895,21 +5789,19 @@ def test_assist_turn_end_tone_media_resolves_media_source_id():
             MagicMock(),
             play_source_fn=play,
             on_done_fn=MagicMock(),
-            turn_end_tone=True,
-            turn_end_tone_media="media-source://media_source/local/chime.mp3",
+            turn_tone=True,
+            turn_tone_media="media-source://media_source/local/chime.mp3",
             interrupt_media=False,
         )
         holder["bridge"] = bridge
         bridge._running = True
-        await bridge._play_turn_end_tone()
+        await bridge._play_turn_tone()
 
     try:
         asyncio.run(run())
         assert play_calls == ["FfmpegAudioSource"]
         assert resolved_urls == ["http://resolved.local/chime.mp3"]
     finally:
-        # This mock is shared via the cached _assist_ctx(); restore the
-        # defaults other tests rely on.
         assist_mod.media_source.is_media_source_id.return_value = False
         assist_mod.async_process_play_media_url.side_effect = (
             lambda hass, url: url

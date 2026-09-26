@@ -214,8 +214,6 @@ class AssistBridge(AudioSink):
         noise_suppression: int = 0,
         turn_tone: bool = False,
         turn_tone_media: str | None = None,
-        turn_end_tone: bool = False,
-        turn_end_tone_media: str | None = None,
         processing_tone: bool = False,
         processing_tone_media: str | None = None,
         hangup_on_end: bool = False,
@@ -245,8 +243,6 @@ class AssistBridge(AudioSink):
         self.noise_suppression = noise_suppression
         self.turn_tone = turn_tone
         self.turn_tone_media = turn_tone_media
-        self.turn_end_tone = turn_end_tone
-        self.turn_end_tone_media = turn_end_tone_media
         self.processing_tone = processing_tone
         self.processing_tone_media = processing_tone_media
         self._processing_active = False
@@ -506,7 +502,7 @@ class AssistBridge(AudioSink):
             LOGGER.info(
                 "Starting Voice Assist session (pipeline_id=%s, sample_rate=%d, "
                 "barge_in=%s, silence_seconds=%s, noise_suppression=%d, "
-                "turn_tone=%s, turn_end_tone=%s, processing_tone=%s, "
+                "turn_tone=%s, processing_tone=%s, "
                 "initial_prompt=%s, system_prompt=%s)",
                 pipeline.id,
                 self.sample_rate,
@@ -514,7 +510,6 @@ class AssistBridge(AudioSink):
                 self.silence_seconds if self.silence_seconds is not None else "default",
                 self.noise_suppression,
                 self.turn_tone,
-                self.turn_end_tone,
                 self.processing_tone,
                 bool(self.initial_prompt),
                 bool(self.system_prompt),
@@ -603,18 +598,15 @@ class AssistBridge(AudioSink):
                     LOGGER.info(
                         "Assist session ending after %d silent turns", silent_streak
                     )
-                    await self._play_turn_end_tone()
                     break
                 if self.max_turns and turns >= self.max_turns:
                     LOGGER.info("Assist session ending after %d turns", turns)
-                    await self._play_turn_end_tone()
                     break
                 if error_streak >= _MAX_CONSECUTIVE_ERRORS:
                     LOGGER.info(
                         "Assist session ending after %d consecutive pipeline errors",
                         error_streak,
                     )
-                    await self._play_turn_end_tone()
                     break
 
                 if self._turn_error and self._turn_error not in _SILENT_TURN_ERRORS:
@@ -783,12 +775,6 @@ class AssistBridge(AudioSink):
         if not self.turn_tone:
             return
         await self._play_tone(self.turn_tone_media)
-
-    async def _play_turn_end_tone(self) -> None:
-        """Play the turn-end tone (beep or configured media), if enabled."""
-        if not self.turn_end_tone:
-            return
-        await self._play_tone(self.turn_end_tone_media)
 
     async def _wait_playback_done(self) -> None:
         """Wait for TTS playback to finish before starting the next turn."""
