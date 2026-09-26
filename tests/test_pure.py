@@ -5762,7 +5762,7 @@ def test_assist_turn_tone_media_plays_configured_media_instead_of_beep():
         await bridge._play_turn_tone()
 
     asyncio.run(run())
-    assert play_calls == ["FfmpegAudioSource"]
+    assert play_calls == ["FallbackSource"]
 
 
 def test_assist_turn_tone_media_resolves_media_source_id():
@@ -5799,7 +5799,7 @@ def test_assist_turn_tone_media_resolves_media_source_id():
 
     try:
         asyncio.run(run())
-        assert play_calls == ["FfmpegAudioSource"]
+        assert play_calls == ["FallbackSource"]
         assert resolved_urls == ["http://resolved.local/chime.mp3"]
     finally:
         assist_mod.media_source.is_media_source_id.return_value = False
@@ -6005,8 +6005,8 @@ def test_assist_processing_cue_media_loops_and_disabled_by_default():
         )
         on._on_pipeline_event(PE(PET.STT_END, {}))
         await asyncio.sleep(0.02)
-        assert [type(s).__name__ for s in played] == ["FfmpegAudioSource"]
-        assert played[0]._loop is True
+        assert [type(s).__name__ for s in played] == ["FallbackSource"]
+        assert played[0]._primary._loop is True
         on._stop_processing_cue()
 
     asyncio.run(run())
@@ -6146,6 +6146,109 @@ def test_assist_processing_cue_stopped_when_turn_ends_without_reply():
     _run_bridge_session(bridge)
     assert not bridge._processing_active
     assert stops == [{"flush": True}]
+
+
+def test_assist_processing_cue_kept_when_pipeline_ends_with_reply_pending():
+    # Non-streamed TTS: TTS_END schedules the reply task, then the pipeline
+    # returns before that task runs. The cue must survive for the handover.
+    assist_mod, mock_ap, PET, PE = _assist_ctx()
+    stops: list = []
+    seen: dict = {}
+
+    async def mock_pipeline(hass, **kwargs):
+        kwargs["event_callback"](PE(PET.STT_END, {}))
+        await asyncio.sleep(0.02)
+        bridge._speaking = True  # _begin_tts_playback ran at TTS_END
+
+    async def fake_wait_playback_done():
+        seen["active"] = bridge._processing_active
+        bridge._stop_processing_cue()
+        bridge._speaking = False
+
+    mock_ap.async_pipeline_from_audio_stream.side_effect = mock_pipeline
+    bridge = assist_mod.AssistBridge(
+        MagicMock(),
+        play_source_fn=MagicMock(),
+        on_done_fn=MagicMock(),
+        max_turns=1,
+        processing_tone=True,
+        interrupt_media=False,
+        stop_audio_fn=lambda **kw: stops.append(kw),
+        media_playing_fn=lambda: False,
+    )
+    bridge._wait_playback_done = fake_wait_playback_done
+    _run_bridge_session(bridge)
+    assert seen["active"] is True
+
+
+def test_assist_wait_playback_done_stops_cue_not_handed_over():
+    assist_mod, _, PET, PE = _assist_ctx()
+    stops: list = []
+
+    async def run():
+        bridge = assist_mod.AssistBridge(
+            MagicMock(),
+            play_source_fn=MagicMock(),
+            on_done_fn=MagicMock(),
+            processing_tone=True,
+            interrupt_media=False,
+            stop_audio_fn=lambda **kw: stops.append(kw),
+            media_playing_fn=lambda: False,
+        )
+        bridge._on_pipeline_event(PE(PET.STT_END, {}))
+        await asyncio.sleep(0.02)
+        assert bridge._processing_playing
+        # The reply ended with no audio (e.g. empty TTS).
+        bridge._speaking = True
+        bridge._tx_done.set()
+        await bridge._wait_playback_done()
+        assert not bridge._processing_active
+        assert stops == [{"flush": True}]
+
+    asyncio.run(run())
+
+
+def test_fallback_source_plays_fallback_when_primary_fails_early():
+    pushed: list = []
+
+    class Broken(audio.AudioSource):
+        async def run(self, push, is_active):
+            raise RuntimeError("ffmpeg exited with status 1")
+
+    class Beep(audio.AudioSource):
+        async def run(self, push, is_active):
+            push(b"B")
+
+    asyncio.run(audio.FallbackSource(Broken(), Beep()).run(pushed.append, lambda: True))
+    assert pushed == [b"B"]
+
+
+def test_fallback_source_does_not_restart_after_primary_audio():
+    pushed: list = []
+
+    class Partial(audio.AudioSource):
+        async def run(self, push, is_active):
+            push(b"P")
+            raise RuntimeError("stream broke")
+
+    class Beep(audio.AudioSource):
+        async def run(self, push, is_active):
+            push(b"B")
+
+    asyncio.run(audio.FallbackSource(Partial(), Beep()).run(pushed.append, lambda: True))
+    assert pushed == [b"P"]
+
+
+def test_assist_tone_media_falls_back_to_beep():
+    assist_mod, _, _, _ = _assist_ctx()
+    bridge = assist_mod.AssistBridge(
+        MagicMock(), play_source_fn=MagicMock(), on_done_fn=MagicMock()
+    )
+    src = bridge._tone_source("http://ha/missing.mp3", loop=False)
+    assert type(src).__name__ == "FallbackSource"
+    assert type(src._primary).__name__ == "FfmpegAudioSource"
+    assert type(src._fallback).__name__ == "ToneAudioSource"
+    assert type(bridge._tone_source(None, loop=False)).__name__ == "ToneAudioSource"
 
 
 def _run_validate_registration(fake_client_cls):
