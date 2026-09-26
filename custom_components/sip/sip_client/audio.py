@@ -452,8 +452,8 @@ class FillUntilStartSource(AudioSource):
     """Play ``filler`` until ``inner`` emits its first frame, then only ``inner``.
 
     Covers the silence while ``inner`` spins up (e.g. ffmpeg buffering a TTS
-    reply that arrives as one chunk). Queued filler PCM needs no flush: the
-    RTP TX buffer drops its oldest bytes first when the reply bursts in.
+    reply that arrives as one chunk). Filler PCM already queued in the RTP TX
+    buffer (a few paced frames) still plays out just ahead of the reply.
     """
 
     def __init__(

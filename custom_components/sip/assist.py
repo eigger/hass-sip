@@ -578,7 +578,12 @@ class AssistBridge(AudioSink):
                     )
                 finally:
                     self._listening = False
-                    self._stop_processing_cue()
+                    # With a reply pending, _play_tts_stream hands the cue over
+                    # (or _wait_playback_done stops it). Non-streamed TTS ends
+                    # the pipeline before the reply task runs, so stopping here
+                    # would leave silence while ffmpeg starts up.
+                    if not self._speaking:
+                        self._stop_processing_cue()
 
                 turns += 1
                 if self._continue_conversation:
@@ -837,6 +842,9 @@ class AssistBridge(AudioSink):
             # RTP keeps playing — flushing there would cut long responses.
             if self._background_tasks:
                 self._cancel_inflight_tts(stop_audio=True)
+        # The reply ended without audio (empty, error, barge-in): the cue was
+        # never handed over. A looping cue never goes idle, so stop it first.
+        self._stop_processing_cue()
         await self._wait_for_tx_idle()
         ended_by_barge_in = self._post_barge_in_capture
         self._tx_done.clear()
