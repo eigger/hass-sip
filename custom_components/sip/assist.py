@@ -32,7 +32,13 @@ from homeassistant.helpers import chat_session
 
 from .const import LOGGER
 from .helpers import get_ffmpeg_bin
-from .sip_client.audio import AudioSink, AudioSource, FfmpegAudioSource, ToneAudioSource
+from .sip_client.audio import (
+    AudioSink,
+    AudioSource,
+    FfmpegAudioSource,
+    FillUntilStartSource,
+    ToneAudioSource,
+)
 
 try:
     from pymicro_vad import MicroVad
@@ -248,6 +254,10 @@ class AssistBridge(AudioSink):
         self._processing_active = False
         self._processing_playing = False
         self._processing_task: asyncio.Task | None = None
+        self._processing_url: str | None = None
+        # The cue keeps playing inside the reply's source until the reply
+        # emits its first frame; barge-in stays off until then.
+        self._cue_handover = False
         self._interrupt_media_pending = interrupt_media
         self.stop_audio_fn = stop_audio_fn
         self.media_playing_fn = media_playing_fn
@@ -312,7 +322,11 @@ class AssistBridge(AudioSink):
             self.audio_stream.feed_audio(pcm_16k, 16000)
         elif self._post_barge_in_capture:
             self._append_rx_to_ring(pcm_16k)
-        elif self.barge_in and self._speaking and not self._processing_playing:
+        elif (
+            self.barge_in
+            and self._speaking
+            and not (self._processing_playing or self._cue_handover)
+        ):
             self._monitor_barge_in(pcm_16k)
         elif not self._speaking:
             self._append_rx_to_ring(pcm_16k)
@@ -337,6 +351,7 @@ class AssistBridge(AudioSink):
         self._playing_tts_token = None
         self._cancel_inflight_tts()
         self._stop_processing_cue(flush=False)
+        self._cue_handover = False
         self._tx_wait = None
         self._tx_done.set()
         if self.session_task:
@@ -653,20 +668,29 @@ class AssistBridge(AudioSink):
     async def _resolve_tone_source(
         self, media_id: str | None, *, loop: bool = False
     ) -> AudioSource:
-        """Return the caller-configured tone media as a source, or the beep.
+        """Return the caller-configured tone media as a source, or the beep."""
+        return self._tone_source(await self._resolve_tone_url(media_id), loop=loop)
+
+    def _tone_source(self, url: str | None, *, loop: bool) -> AudioSource:
+        """Build a tone source; ``url`` None means the synthesized beep."""
+        if url is None:
+            return ToneAudioSource(
+                repeat_gap_ms=_PROCESSING_BEEP_REPEAT_GAP_MS if loop else None
+            )
+        return FfmpegAudioSource(
+            url=url, ffmpeg_bin=get_ffmpeg_bin(self.hass), loop=loop
+        )
+
+    async def _resolve_tone_url(self, media_id: str | None) -> str | None:
+        """Resolve tone media to a playable URL, or None for the default beep.
 
         ``media_id`` may be a media-source ID (e.g. picked from the media
         browser) or a URL, mirroring how the media_player entity's
         ``play_media`` resolves its own ``media_id`` argument. A local
         filesystem path is not supported: it would be rewritten into an HA URL.
         """
-        def beep() -> ToneAudioSource:
-            return ToneAudioSource(
-                repeat_gap_ms=_PROCESSING_BEEP_REPEAT_GAP_MS if loop else None
-            )
-
         if not media_id:
-            return beep()
+            return None
         url = media_id
         if media_source.is_media_source_id(media_id):
             try:
@@ -679,21 +703,17 @@ class AssistBridge(AudioSink):
                     "Assist: failed to resolve tone media '%s'; using default beep",
                     media_id,
                 )
-                return beep()
+                return None
         try:
             url = async_process_play_media_url(self.hass, url)
         except Exception:
             LOGGER.exception(
                 "Assist: failed to prepare tone media URL; using default beep"
             )
-            return beep()
+            return None
         # A prepared HA URL may carry an authSig. Never put it in the log.
-        LOGGER.debug(
-            "Assist: using tone media %s (loop=%s)", url.partition("?")[0], loop
-        )
-        return FfmpegAudioSource(
-            url=url, ffmpeg_bin=get_ffmpeg_bin(self.hass), loop=loop
-        )
+        LOGGER.debug("Assist: using tone media %s", url.partition("?")[0])
+        return url
 
     async def _play_tone(self, media_id: str | None) -> None:
         """Play a turn tone (beep or configured media) and wait until it finishes.
@@ -750,9 +770,10 @@ class AssistBridge(AudioSink):
 
     async def _run_processing_cue(self) -> None:
         try:
-            source = await self._resolve_tone_source(
-                self.processing_tone_media, loop=True
+            self._processing_url = await self._resolve_tone_url(
+                self.processing_tone_media
             )
+            source = self._tone_source(self._processing_url, loop=True)
             if not self._processing_active or not self._running:
                 return
             # Do not cut into pre-Assist media that interrupt_media=False is
@@ -785,6 +806,11 @@ class AssistBridge(AudioSink):
                 self.stop_audio_fn(flush=True)
             self._discard_gap_capture()
 
+    def _end_cue_handover(self) -> None:
+        if self._cue_handover:
+            self._cue_handover = False
+            LOGGER.debug("Assist: reply audio started; processing cue ended")
+
     async def _play_turn_tone(self) -> None:
         """Play the turn-start tone (beep or configured media), if enabled."""
         if not self.turn_tone:
@@ -816,6 +842,8 @@ class AssistBridge(AudioSink):
         self._tx_done.clear()
         self._tx_wait = None
         self._speaking = False
+        # A reply that never produced audio must not leave barge-in disabled.
+        self._cue_handover = False
         if not ended_by_barge_in:
             # Drop barge-in residue, then settle so speakerphone echo of the
             # response is less likely to look like the next command. write()
@@ -926,7 +954,11 @@ class AssistBridge(AudioSink):
                     await aclose()
                 return
 
-            self._stop_processing_cue()
+            # A playing cue is not stopped here: it carries on inside the
+            # reply's source until the reply emits real audio, covering
+            # ffmpeg start-up and buffering of a non-streamed reply.
+            handover = self._processing_playing
+            self._stop_processing_cue(flush=not handover)
             self._interrupt_media_when_ready()
 
             async def chunks() -> AsyncIterable[bytes]:
@@ -938,12 +970,23 @@ class AssistBridge(AudioSink):
                     if chunk:
                         yield chunk
 
-            await self._wait_for_tx_idle()
-            if epoch != self._tts_epoch:
-                return
-            source = FfmpegAudioSource(
+            if not handover:
+                # The looping cue never goes idle, so only wait for other
+                # audio. The handover path has no await before play_source,
+                # so a barge-in cannot slip between the check and playback.
+                await self._wait_for_tx_idle()
+                if epoch != self._tts_epoch:
+                    return
+            source: AudioSource = FfmpegAudioSource(
                 chunks=chunks(), ffmpeg_bin=get_ffmpeg_bin(self.hass)
             )
+            if handover:
+                self._cue_handover = True
+                source = FillUntilStartSource(
+                    source,
+                    self._tone_source(self._processing_url, loop=True),
+                    on_inner_started=self._end_cue_handover,
+                )
             self.play_source(source)
             self._tx_wait = "tts"
         except asyncio.CancelledError:

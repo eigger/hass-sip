@@ -5906,13 +5906,83 @@ def test_assist_processing_cue_loops_until_tts_ready():
         assert bridge._processing_playing and not stops
         await bridge._play_tts_stream(stream, epoch=0)
         assert not bridge._processing_active and not bridge._processing_playing
-        assert stops == [{"flush": True}]
+        # The cue is not stopped; it hands over into the reply's source.
+        assert stops == []
         assert [type(s).__name__ for s in played] == [
             "ToneAudioSource",
-            "FfmpegAudioSource",
+            "FillUntilStartSource",
         ]
+        assert bridge._cue_handover
+        bridge._end_cue_handover()
+        assert not bridge._cue_handover
 
     asyncio.run(run())
+
+
+def test_assist_reply_without_cue_is_played_directly():
+    assist_mod, _, _, _ = _assist_ctx()
+    played: list = []
+
+    async def stream_result():
+        yield b"RIFF...."
+
+    stream = MagicMock()
+    stream.async_stream_result = stream_result
+
+    async def run():
+        bridge = assist_mod.AssistBridge(
+            MagicMock(),
+            play_source_fn=played.append,
+            on_done_fn=MagicMock(),
+            processing_tone=True,
+            interrupt_media=False,
+            media_playing_fn=lambda: False,
+        )
+        await bridge._play_tts_stream(stream, epoch=0)
+        assert [type(s).__name__ for s in played] == ["FfmpegAudioSource"]
+        assert not bridge._cue_handover
+
+    asyncio.run(run())
+
+
+def test_assist_barge_in_ignored_during_cue_handover():
+    assist_mod, _, _, _ = _assist_ctx()
+    bridge = assist_mod.AssistBridge(
+        MagicMock(), play_source_fn=MagicMock(), on_done_fn=MagicMock()
+    )
+    bridge.barge_in = True
+    bridge._speaking = True
+    bridge._cue_handover = True
+    bridge._monitor_barge_in = MagicMock()
+    bridge.write(b"\x00\x00" * 160)
+    bridge._monitor_barge_in.assert_not_called()
+
+
+def test_fill_until_start_plays_filler_until_inner_audio():
+    events: list = []
+    started: list = []
+
+    class Inner(audio.AudioSource):
+        async def run(self, push, is_active):
+            await asyncio.sleep(0.1)  # ffmpeg start-up / buffering
+            push(b"R" * 320)
+            push(b"R" * 320)
+
+    filler = audio.ToneAudioSource(duration_ms=20, repeat_gap_ms=20)
+    src = audio.FillUntilStartSource(
+        Inner(), filler, on_inner_started=lambda: started.append(1)
+    )
+    src.configure(8000, 320)
+
+    def push(chunk):
+        events.append("R" if chunk == b"R" * 320 else "F")
+
+    asyncio.run(src.run(push, lambda: True))
+    first_reply = events.index("R")
+    assert first_reply > 0
+    assert set(events[:first_reply]) == {"F"}
+    assert events[first_reply:] == ["R", "R"]
+    assert started == [1]
 
 
 def test_assist_processing_cue_media_loops_and_disabled_by_default():

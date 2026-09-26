@@ -448,6 +448,54 @@ class FfmpegAudioSource(_ConfiguredPcmSource):
                     pass
 
 
+class FillUntilStartSource(AudioSource):
+    """Play ``filler`` until ``inner`` emits its first frame, then only ``inner``.
+
+    Covers the silence while ``inner`` spins up (e.g. ffmpeg buffering a TTS
+    reply that arrives as one chunk). Queued filler PCM needs no flush: the
+    RTP TX buffer drops its oldest bytes first when the reply bursts in.
+    """
+
+    def __init__(
+        self,
+        inner: AudioSource,
+        filler: AudioSource,
+        on_inner_started: Callable[[], None] | None = None,
+    ) -> None:
+        self._inner = inner
+        self._filler = filler
+        self._on_inner_started = on_inner_started
+
+    def configure(self, sample_rate: int, pcm_frame_bytes: int) -> None:
+        for source in (self._inner, self._filler):
+            configure = getattr(source, "configure", None)
+            if callable(configure):
+                configure(sample_rate, pcm_frame_bytes)
+
+    async def run(self, push: PushFn, is_active: ActiveFn) -> None:
+        started = False
+
+        def filler_active() -> bool:
+            return not started and is_active()
+
+        filler_task = asyncio.create_task(self._filler.run(push, filler_active))
+
+        def inner_push(chunk: bytes) -> None:
+            nonlocal started
+            if not started:
+                started = True
+                filler_task.cancel()
+                if self._on_inner_started is not None:
+                    self._on_inner_started()
+            push(chunk)
+
+        try:
+            await self._inner.run(inner_push, is_active)
+        finally:
+            filler_task.cancel()
+            await asyncio.gather(filler_task, return_exceptions=True)
+
+
 _TONE_PCM_CACHE: dict[tuple[int, int, int, float, int], bytes] = {}
 
 

@@ -375,7 +375,7 @@ On a noisy or narrowband (G.711) line, the assistant may react to line noise or 
 Two optional cues help callers follow the conversation on a phone line:
 
 - `turn_tone` plays once when the microphone opens for the caller's turn.
-- `processing_tone` repeats from the moment speech is recognized until the reply audio is ready, covering the LLM, action and TTS wait. It stops mid-cycle as soon as the reply starts.
+- `processing_tone` repeats from the moment speech is recognized until the reply starts playing, covering the LLM, action and TTS wait. It stops mid-cycle as soon as the reply is heard.
 
 Both default to a synthesized beep. Enable them with no other setup:
 
@@ -388,7 +388,7 @@ Both default to a synthesized beep. Enable them with no other setup:
       processing_tone: true
 ```
 
-To use your own sounds instead, set the matching `*_media` option to a media source ID or a URL. For a file uploaded to **My media** (`/media`), the ID is `media-source://media_source/local/<file>`. The processing clip is looped until the reply is ready, so a short, unobtrusive sound works best:
+To use your own sounds instead, set the matching `*_media` option to a media source ID or a URL. For a file uploaded to **My media** (`/media`), the ID is `media-source://media_source/local/<file>`. The processing clip is looped until the reply starts playing, so a short, unobtrusive sound works best:
 
 ```yaml
   - service: sip.start_assist
