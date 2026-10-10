@@ -193,6 +193,18 @@ def _via_branch(via: str) -> str:
     return match.group(1) if match else ""
 
 
+def _via_received(via: str) -> str:
+    """Source IP the peer saw for the top Via (``received=``), or ""."""
+    first = via.split(",", 1)[0]
+    match = re.search(r";received=([^;,\s]+)", first, re.IGNORECASE)
+    return match.group(1) if match else ""
+
+
+# Bytes of our own RTP sent (~3 s of 8 kHz G.711) before a silent far end is
+# worth a warning.
+_NO_RTP_WARN_TX_BYTES = 24000
+
+
 def _answer_direction(sdp: sm.SdpInfo) -> str:
     """RFC 3264 answer direction for a remote offer, including RFC 2543 hold."""
     if sdp.direction == "inactive":
@@ -268,6 +280,7 @@ class SipClient:
         self._loop = asyncio.get_running_loop()
         self._transport: asyncio.DatagramTransport | None = None
         self._local_ip = ""
+        self._warned_observed_ip = ""
         self._local_port = 0
         self._closing = False
 
@@ -687,6 +700,29 @@ class SipClient:
         else:  # IDLE: the socket is likely gone, rebuild it
             self._spawn(self._reconnect())
 
+    def _check_observed_address(self, m: sm.SipMessage) -> None:
+        """Warn once when the peer sees a different source IP than we advertise.
+
+        Contact and SDP carry the locally probed address. Behind NAT (a VM in
+        NAT mode, several NICs, VPN) the peer sends RTP there and it never
+        arrives, which shows up as one-way / no audio.
+        """
+        received = _via_received(m.header("Via"))
+        if (
+            not received
+            or received == self._local_ip
+            or received == self._warned_observed_ip
+        ):
+            return
+        self._warned_observed_ip = received
+        _LOGGER.warning(
+            "The server sees this client as %s but SIP/SDP advertise %s; "
+            "RTP audio will likely not arrive (VM in NAT mode, multiple "
+            "network interfaces or VPN?)",
+            received,
+            self._local_ip,
+        )
+
     def _handle_register_response(self, m: sm.SipMessage) -> None:
         try:
             cseq_num = int(m.header("CSeq").split()[0])
@@ -696,6 +732,8 @@ class SipClient:
         if cseq_num != self._reg_cseq:
             _LOGGER.debug("Ignoring REGISTER response for old CSeq %s", cseq_num)
             return
+
+        self._check_observed_address(m)
 
         if m.status_code in (401, 407) and not self._register_auth_tried:
             self._register_auth_tried = True
@@ -995,6 +1033,7 @@ class SipClient:
 
         # Any response means the INVITE was received: stop retransmitting it.
         self._cancel_invite_retx()
+        self._check_observed_address(m)
 
         if m.status_code in (401, 407) and not self._invite_auth_tried:
             self._send_raw(self._build_ack(m))
@@ -1717,6 +1756,8 @@ class SipClient:
         self.rtp.queue_dtmf(digits)
 
     def _end_call(self, reason: str = "local") -> None:
+        was_in_call = self.state in (SipState.IN_CALL, SipState.ANSWERING)
+        was_on_hold = self._on_hold
         self._cancel_invite_retx()
         if self._ring_timeout_handle is not None:
             self._ring_timeout_handle.cancel()
@@ -1730,6 +1771,22 @@ class SipClient:
         self.last_call_reason = reason
         self.last_call_bytes_rx = self.rtp.bytes_received
         self.last_call_bytes_tx = self.rtp.bytes_sent
+        if (
+            was_in_call
+            and not was_on_hold
+            and self.last_call_bytes_rx == 0
+            and self.last_call_bytes_tx >= _NO_RTP_WARN_TX_BYTES
+        ):
+            remote = self.rtp.sdp_remote
+            _LOGGER.warning(
+                "Call ended without receiving any RTP (sent %d bytes to %s, "
+                "local RTP port %s); check firewall/NAT and that the "
+                "advertised address %s is reachable from the server",
+                self.last_call_bytes_tx,
+                f"{remote[0]}:{remote[1]}" if remote else "unknown",
+                self.config.local_rtp_port,
+                self._local_ip,
+            )
         ended_session = self._media_session
         self._media_session += 1
         self._spawn(self._stop_media_session(ended_session))
