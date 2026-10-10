@@ -722,8 +722,14 @@ def test_parse_sdp_offered_pts_from_rtpmap_only():
 
 
 # -------------------------------------------------------------- codecs
-def _sdp(pts, *, pcmu=-1, pcma=-1, g722=-1):
-    info = sm.SdpInfo(offered_pts=set(pts), pcmu_pt=pcmu, pcma_pt=pcma, g722_pt=g722)
+def _sdp(pts, *, pcmu=-1, pcma=-1, g722=-1, tel=-1):
+    info = sm.SdpInfo(
+        offered_pts=set(pts),
+        pcmu_pt=pcmu,
+        pcma_pt=pcma,
+        g722_pt=g722,
+        telephone_event_pt=tel,
+    )
     return info
 
 
@@ -731,7 +737,7 @@ def test_codecs_choose_preference():
     assert codecs.choose(_sdp({9, 0, 8}, pcmu=0, pcma=8, g722=9)).payload_type == 9
     assert codecs.choose(_sdp({0, 8}, pcmu=0, pcma=8)).payload_type == 0
     assert codecs.choose(_sdp({8}, pcma=8)).payload_type == 8
-    assert codecs.choose(_sdp({101})).payload_type == 0  # default PCMU
+    assert codecs.choose(_sdp({101}, tel=101)).payload_type == 0  # default PCMU
     assert codecs.choose(_sdp(set())).payload_type == 0
 
 
@@ -831,7 +837,9 @@ def test_codecs_g711_only_never_chooses_g722():
         assert codecs.choose(_sdp({110}, g722=110), order) is None
         assert codecs.choose(_sdp({9}, g722=9), order) is None
         # telephone-event only is not an audio offer: legacy fallback.
-        assert codecs.choose(_sdp({101}), order) is codecs.fallback(order)
+        assert codecs.choose(_sdp({101}, tel=101), order) is codecs.fallback(order)
+        # PT 101 is only telephone-event when the SDP says so.
+        assert codecs.choose(_sdp({101}), order) is None
     # PCMA first, but the remote only has PCMU: fall through the order.
     order = codecs.preset_order("g711_only_pcma_first")
     assert codecs.choose(_sdp({0}, pcmu=0), order).name == "PCMU"
@@ -1128,6 +1136,105 @@ def test_offerless_invite_200_offers_ordered_codecs_and_ack_answers(preset, pts)
     assert client.codec.name == "PCMA"
     assert client._build_response(invite, 200, "OK", True).count("a=rtpmap:8 ") == 1
     assert "RTP/AVP 8 101" in client._build_response(invite, 200, "OK", True)
+
+
+@_in_loop
+def test_rejected_reinvite_retransmit_replays_488_and_keeps_dialog_state():
+    if sip_client is None:
+        pytest.skip("needs Python 3.11+")
+    client = _pcma_only_client()
+    with patch.object(client, "_send_raw"):
+        client._handle_request(_invite_request())
+    client.state = sip_client.SipState.IN_CALL
+    target = client._d_remote_target
+    req = _invite_request(
+        cseq=2, branch="z9hG4bKre", contact="<sip:bob@moved.example>", body=_G722_ONLY_BODY
+    )
+    for _ in range(2):  # original + retransmission
+        with patch.object(client, "_send_raw") as send:
+            client._handle_request(req)
+        sent = [c.args[0] for c in send.call_args_list]
+        assert len(sent) == 1 and sent[0].startswith("SIP/2.0 488 ")
+    assert client._remote_invite_cseq == 1
+    assert client._d_remote_target == target
+    # A later, acceptable re-INVITE still works and refreshes the target.
+    good = _invite_request(cseq=3, branch="z9hG4bKre3", contact="<sip:bob@moved.example>")
+    with patch.object(client, "_send_raw") as send:
+        client._handle_request(good)
+    assert send.call_args.args[0].startswith("SIP/2.0 200 OK")
+    assert client._d_remote_target == "sip:bob@moved.example"
+
+
+@_in_loop
+def test_awaiting_answer_cleared_by_later_sdp_offer():
+    if sip_client is None:
+        pytest.skip("needs Python 3.11+")
+    client = _pcma_only_client()
+    with patch.object(client, "_send_raw"):
+        client._handle_request(_invite_request(body=""))
+    client.state = sip_client.SipState.ANSWERING  # ACK lost
+    assert client._awaiting_answer is True
+    pcmu_only = _sdp_body(pts="0", rtpmap="a=rtpmap:0 PCMU/8000\r\n")
+    with patch.object(client, "_send_raw") as send:
+        client._handle_request(_invite_request(cseq=2, branch="z9hG4bKre", body=pcmu_only))
+    assert client._awaiting_answer is False
+    assert "RTP/AVP 0 101" in send.call_args.args[0]
+
+
+@_in_loop
+def test_out_of_dialog_rejections_carry_fresh_stable_to_tag():
+    if sip_client is None:
+        pytest.skip("needs Python 3.11+")
+    client = _pcma_only_client()
+    client._d_local_tag = "stale"
+    invite = _invite_request(body=_G722_ONLY_BODY)
+    tags = []
+    for _ in range(2):
+        with patch.object(client, "_send_raw") as send:
+            client._handle_request(invite)
+        resp = send.call_args.args[0]
+        assert resp.startswith("SIP/2.0 488 ")
+        tag = resp.split("To: ", 1)[1].split("\r\n", 1)[0].split("tag=", 1)[1]
+        assert tag and tag != "stale"
+        tags.append(tag)
+    assert tags[0] == tags[1]
+    # DND busy response gets a tag too, even on a fresh client.
+    fresh = _pcma_only_client()
+    fresh.dnd = True
+    with patch.object(fresh, "_send_raw") as send:
+        fresh._handle_request(_invite_request())
+    busy = [c.args[0] for c in send.call_args_list][-1]
+    assert busy.startswith("SIP/2.0 486 ")
+    assert "tag=\r\n" not in busy and ";tag=" in busy
+
+
+@_in_loop
+def test_ack_answer_without_allowed_codec_sends_bye():
+    if sip_client is None:
+        pytest.skip("needs Python 3.11+")
+    ended = []
+    client = _pcma_only_client()
+    client.cb.on_call_ended = ended.append
+    with patch.object(client, "_send_raw"):
+        client._handle_request(_invite_request(body=""))
+    client.state = sip_client.SipState.ANSWERING
+    ack = sm.parse_sip_message(
+        "ACK sip:alice@example SIP/2.0\r\n"
+        "Via: SIP/2.0/UDP pbx.example;branch=z9hG4bKack\r\n"
+        "Call-ID: dlg@example\r\nCSeq: 1 ACK\r\n"
+        "Content-Type: application/sdp\r\n"
+        f"Content-Length: {len(_G722_ONLY_BODY)}\r\n\r\n{_G722_ONLY_BODY}"
+    )
+    with (
+        patch.object(client, "_send_raw") as send,
+        patch.object(client, "_spawn") as spawn,
+    ):
+        client._handle_request(ack)
+        for call in spawn.call_args_list:
+            call.args[0].close()
+    assert send.call_args.args[0].startswith("BYE ")
+    assert ended == ["codec_mismatch"]
+    assert client.state == sip_client.SipState.REGISTERED
 
 
 def test_options_flow_shows_and_saves_codec_preference():

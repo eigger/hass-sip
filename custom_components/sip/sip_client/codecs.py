@@ -129,10 +129,10 @@ def fallback(order: tuple[Codec, ...]) -> Codec:
 
 
 def has_audio_offer(sdp: SdpInfo) -> bool:
-    """True when the SDP lists audio payloads beyond telephone-event / CN."""
+    """True when the SDP lists audio payloads beyond telephone-event / static CN."""
     if max(sdp.pcmu_pt, sdp.pcma_pt, sdp.g722_pt) >= 0:
         return True
-    ignored = {sdp.telephone_event_pt, TELEPHONE_EVENT_PT, 13}
+    ignored = {sdp.telephone_event_pt, 13}  # telephone-event, static CN
     return any(pt not in ignored for pt in sdp.offered_pts)
 
 

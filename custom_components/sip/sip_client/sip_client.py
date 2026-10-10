@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import hashlib
 import logging
 import re
 import socket
@@ -321,6 +322,8 @@ class SipClient:
         self._codec: codecs.Codec = codecs.DEFAULT
         # Our 200 OK was the offer (offerless INVITE); the answer is in the ACK.
         self._awaiting_answer = False
+        # (CSeq, branch) of the last re-INVITE we answered 488, to replay it.
+        self._rejected_reinvite: tuple[int, str] | None = None
         self._chosen_pt = self._codec.payload_type
         self._remote_dtmf_pt = -1
         self._sdp_negotiated = False
@@ -1161,6 +1164,7 @@ class SipClient:
         """Clear per-call media state so the previous dialog cannot leak."""
         self._codec = codecs.fallback(self._codec_order)
         self._awaiting_answer = False
+        self._rejected_reinvite = None
         self._chosen_pt = self._codec.payload_type
         self._remote_dtmf_pt = -1
         self._remote_offered_pts = []
@@ -1216,10 +1220,27 @@ class SipClient:
             end = len(frm)
         return frm[lt + 4:end]
 
-    def _build_response(self, req: sm.SipMessage, code: int, reason: str, with_sdp: bool) -> str:
+    @staticmethod
+    def _stateless_tag(req: sm.SipMessage) -> str:
+        """To-tag for a final response outside any dialog.
+
+        Derived from the transaction so a retransmitted request gets the same
+        tag, and independent of the previous call's ``_d_local_tag``.
+        """
+        key = f"{req.header('Call-ID')}|{_via_branch(req.header('Via'))}"
+        return hashlib.sha1(key.encode()).hexdigest()[:10]
+
+    def _build_response(
+        self,
+        req: sm.SipMessage,
+        code: int,
+        reason: str,
+        with_sdp: bool,
+        tag: str | None = None,
+    ) -> str:
         to = req.header("To")
         if "tag=" not in to:
-            to += f";tag={self._d_local_tag}"
+            to += f";tag={tag or self._d_local_tag}"
         # Answers carry only the negotiated codec (RFC 3264); offers use the
         # full set, including a 200 to an offerless INVITE.
         sdp = ""
@@ -1265,6 +1286,9 @@ class SipClient:
 
         cseq = _cseq_number(m.header("CSeq"))
         branch = _via_branch(m.header("Via"))
+        if self._rejected_reinvite == (cseq, branch):
+            self._reject_media(m)
+            return True
         # RFC 3261: re-INVITE raises CSeq. Accept higher-CSeq while ANSWERING
         # too: a lost ACK is often followed by a media re-INVITE before the
         # original transaction completes. Same CSeq + different branch is a
@@ -1293,23 +1317,31 @@ class SipClient:
 
     def _handle_reinvite(self, m: sm.SipMessage) -> None:
         """Answer an in-dialog re-INVITE without restarting the media session."""
-        self._remote_invite_cseq = _cseq_number(m.header("CSeq"))
-        self._remote_invite_branch = _via_branch(m.header("Via"))
+        cseq = _cseq_number(m.header("CSeq"))
+        branch = _via_branch(m.header("Via"))
+        if m.body.strip():
+            if not self._apply_remote_sdp(sm.parse_sdp(m.body)):
+                # Dialog state stays untouched (RFC 3261 §12.2.2: the target
+                # refreshes on 2xx only); remember it to replay the 488.
+                self._rejected_reinvite = (cseq, branch)
+                self._reject_media(m)
+                return
+            self._awaiting_answer = False
+        else:
+            self._awaiting_answer = True
+        self._rejected_reinvite = None
+        self._remote_invite_cseq = cseq
+        self._remote_invite_branch = branch
         contact = _angle_uri(m.header("Contact"))
         if contact:
             self._d_remote_target = contact
-        if m.body.strip():
-            if not self._apply_remote_sdp(sm.parse_sdp(m.body)):
-                self._reject_media(m)
-                return
-        else:
-            self._awaiting_answer = True
         _LOGGER.info("Accepted re-INVITE (cseq=%s)", self._remote_invite_cseq)
         self._send_raw(self._build_response(m, 200, "OK", True))
 
-    def _reject_media(self, req: sm.SipMessage) -> None:
+    def _reject_media(self, req: sm.SipMessage, *, in_dialog: bool = True) -> None:
         """488 a request whose SDP has no codec we allow; session stays as is."""
-        resp = self._build_response(req, 488, "Not Acceptable Here", False)
+        tag = None if in_dialog else self._stateless_tag(req)
+        resp = self._build_response(req, 488, "Not Acceptable Here", False, tag=tag)
         warning = f'Warning: 305 {self._local_ip} "Incompatible media format"\r\n'
         self._send_raw(resp.replace("Content-Length:", warning + "Content-Length:", 1))
 
@@ -1329,6 +1361,7 @@ class SipClient:
             if not self._apply_remote_sdp(sm.parse_sdp(m.body)):
                 self._reject_media(m)
                 return
+            self._awaiting_answer = False
             contact = _angle_uri(m.header("Contact"))
             if contact:
                 self._d_remote_target = contact
@@ -1384,14 +1417,18 @@ class SipClient:
                     _LOGGER.info("Call rejected due to DND: Busy Here")
                     self._emit("on_incoming_call", caller)
                     self._emit("on_call_ended", "local")
-                self._send_raw(self._build_response(m, 486, "Busy Here", False))
+                self._send_raw(
+                    self._build_response(
+                        m, 486, "Busy Here", False, tag=self._stateless_tag(m)
+                    )
+                )
                 return
             offer = sm.parse_sdp(m.body)
             if codecs.choose(offer, self._codec_order) is None:
                 _LOGGER.warning(
                     "Rejecting call from %s: no allowed codec in its offer", caller
                 )
-                self._reject_media(m)
+                self._reject_media(m, in_dialog=False)
                 return
             self._outbound = False
             self._incoming_invite = m
@@ -1459,9 +1496,15 @@ class SipClient:
                 return
             # Offerless INVITE/re-INVITE: our 200 was the offer; the answer
             # arrives in the ACK body (RFC 3261 §13.2.1 / §14.1).
-            if m.body.strip():
-                self._apply_remote_sdp(sm.parse_sdp(m.body))
+            was_offerer = self._awaiting_answer
             self._awaiting_answer = False
+            if m.body.strip() and not self._apply_remote_sdp(sm.parse_sdp(m.body)):
+                if was_offerer and self.state in (SipState.ANSWERING, SipState.IN_CALL):
+                    _LOGGER.warning("Ending call: the ACK answer has no allowed codec")
+                    self._d_cseq += 1
+                    self._send_raw(self._build_in_dialog("BYE"))
+                    self._end_call("codec_mismatch")
+                    return
             if self.state == SipState.ANSWERING:
                 self._set_state(SipState.IN_CALL)
                 _LOGGER.info("Call connected (inbound)")
