@@ -4670,6 +4670,8 @@ def test_assist_initial_prompt_waits_for_tts_before_listening():
 
 def test_assist_initial_prompt_barge_in_becomes_first_turn_preroll():
     assist_mod, mock_ap, PET, PE = _assist_ctx()
+    original_grace = assist_mod._BARGE_IN_VAD_GRACE_SECONDS
+    assist_mod._BARGE_IN_VAD_GRACE_SECONDS = 0
     mock_tts = sys.modules["homeassistant.components.tts"]
     original_get_stream = mock_tts.async_get_stream.return_value
     original_min = assist_mod._VAD_MIN_SPEECH_FRAMES
@@ -4736,6 +4738,7 @@ def test_assist_initial_prompt_barge_in_becomes_first_turn_preroll():
         mock_tts.async_get_stream.return_value = original_get_stream
         assist_mod._VAD_MIN_SPEECH_FRAMES = original_min
         assist_mod.MicroVad = original_micro_vad
+        assist_mod._BARGE_IN_VAD_GRACE_SECONDS = original_grace
 
     stop_audio.assert_called_once_with(flush=True)
     assert preroll_queue_sizes[0] > 0
@@ -5009,7 +5012,7 @@ def test_assist_tts_starts_before_stream_completes():
         return played_before_rest
 
     played = asyncio.run(run())
-    assert played == ["FfmpegAudioSource"]
+    assert played == ["_OnStartSource"]
 
 
 def test_assist_streaming_tts_plays_without_waiting_for_tts_end():
@@ -5065,7 +5068,7 @@ def test_assist_streaming_tts_plays_without_waiting_for_tts_end():
             played.clear()
             mock_tts.async_get_stream.reset_mock()
             asyncio.run(run(emit_tts_end))
-            assert played == ["FfmpegAudioSource"]
+            assert played == ["_OnStartSource"]
             assert mock_tts.async_get_stream.call_count == 1
             assert mock_tts.async_get_stream.call_args.args[1] == "stream-token"
     finally:
@@ -5571,6 +5574,138 @@ def test_assist_barge_in_triggers_stop_and_preroll():
         assist_mod.MicroVad = original_micro_vad
 
 
+def test_assist_barge_in_vad_waits_for_echo_canceller_grace_period():
+    assist_mod, _, _, _ = _assist_ctx()
+    original_micro_vad = assist_mod.MicroVad
+
+    class _StubVad:
+        def Process10ms(self, frame: bytes) -> float:
+            return 0.9
+
+    assist_mod.MicroVad = lambda: _StubVad()
+    try:
+        bridge = assist_mod.AssistBridge(
+            MagicMock(),
+            play_source_fn=MagicMock(),
+            on_done_fn=MagicMock(),
+            barge_in=True,
+        )
+        bridge._speaking = True
+        with patch.object(assist_mod, "_monotonic", return_value=100.0):
+            bridge._tts_armed_at = assist_mod._monotonic()
+            frame = b"\x00\x01" * (assist_mod._VAD_FRAME_BYTES // 2)
+            for _ in range(50):
+                bridge.write(frame)
+        assert bridge._post_barge_in_capture is False
+        assert bridge._vad_speech_frames == 0
+    finally:
+        assist_mod.MicroVad = original_micro_vad
+
+
+def test_assist_barge_in_grace_starts_at_first_reply_frame():
+    """Grace is armed by the first pushed frame, not when playback is queued."""
+    assist_mod, _, _, _ = _assist_ctx()
+    stream = MagicMock()
+
+    async def one_chunk():
+        yield b"RIFF...."
+
+    stream.async_stream_result = one_chunk
+    played = []
+
+    async def run():
+        bridge = assist_mod.AssistBridge(
+            MagicMock(), play_source_fn=played.append, on_done_fn=MagicMock()
+        )
+        await bridge._play_tts_stream(stream, epoch=0)
+        assert bridge._tts_armed_at is None
+        source = played[0]
+        assert isinstance(source, assist_mod._OnStartSource)
+
+        class _Inner:
+            async def run(self, push, is_active):
+                push(b"\x00\x00")
+                push(b"\x00\x00")
+
+        source._inner = _Inner()
+        pushed = []
+        with patch.object(assist_mod, "_monotonic", return_value=100.0):
+            await source.run(pushed.append, lambda: True)
+        assert bridge._tts_armed_at == 100.0
+        assert len(pushed) == 2
+        bridge.close()
+
+    asyncio.run(run())
+
+
+def test_assist_end_cue_handover_arms_barge_in_grace():
+    assist_mod, _, _, _ = _assist_ctx()
+    bridge = assist_mod.AssistBridge(
+        MagicMock(), play_source_fn=MagicMock(), on_done_fn=MagicMock()
+    )
+    bridge._cue_handover = True
+    with patch.object(assist_mod, "_monotonic", return_value=50.0):
+        bridge._end_cue_handover()
+    assert bridge._tts_armed_at == 50.0
+
+
+def test_assist_barge_in_resumes_after_grace_and_keeps_grace_audio():
+    assist_mod, _, _, _ = _assist_ctx()
+    original_micro_vad = assist_mod.MicroVad
+    original_min = assist_mod._VAD_MIN_SPEECH_FRAMES
+
+    class _StubVad:
+        def Process10ms(self, frame: bytes) -> float:
+            return 0.9
+
+    assist_mod.MicroVad = lambda: _StubVad()
+    assist_mod._VAD_MIN_SPEECH_FRAMES = 3
+    try:
+        bridge = assist_mod.AssistBridge(
+            MagicMock(),
+            play_source_fn=MagicMock(),
+            on_done_fn=MagicMock(),
+            barge_in=True,
+        )
+        bridge._speaking = True
+        bridge._tts_armed_at = 100.0
+        frame = b"\x00\x01" * (assist_mod._VAD_FRAME_BYTES // 2)
+        with patch.object(assist_mod, "_monotonic", return_value=101.0):
+            for _ in range(100):  # 1 s inside the grace window
+                bridge.write(frame)
+        assert bridge._post_barge_in_capture is False
+        # Grace audio is retained beyond the normal 500 ms preroll.
+        assert len(bridge._ring_buffer) > assist_mod._PREROLL_MAX_BYTES
+        grace_bytes = len(bridge._ring_buffer)
+        with patch.object(assist_mod, "_monotonic", return_value=102.1):
+            for _ in range(3):
+                bridge.write(frame)
+        assert bridge._post_barge_in_capture is True
+        assert len(bridge._barge_in_preroll) >= grace_bytes
+
+        # A barge-in long after the grace window keeps only the normal preroll.
+        bridge2 = assist_mod.AssistBridge(
+            MagicMock(),
+            play_source_fn=MagicMock(),
+            on_done_fn=MagicMock(),
+            barge_in=True,
+        )
+        bridge2._speaking = True
+        bridge2._tts_armed_at = 100.0
+        with patch.object(assist_mod, "_monotonic", return_value=101.0):
+            for _ in range(100):  # grow the ring inside the grace window
+                bridge2.write(frame)
+        assert len(bridge2._ring_buffer) > assist_mod._PREROLL_MAX_BYTES
+        with patch.object(assist_mod, "_monotonic", return_value=110.0):
+            for _ in range(250):
+                bridge2.write(frame)
+        assert bridge2._post_barge_in_capture is True
+        assert len(bridge2._barge_in_preroll) <= assist_mod._PREROLL_MAX_BYTES
+    finally:
+        assist_mod._VAD_MIN_SPEECH_FRAMES = original_min
+        assist_mod.MicroVad = original_micro_vad
+
+
 def test_assist_barge_in_disabled_without_micro_vad():
     assist_mod, _, _, _ = _assist_ctx()
     original_micro_vad = assist_mod.MicroVad
@@ -5599,6 +5734,7 @@ def test_assist_barge_in_cancels_inflight_tts():
     mock_tts = sys.modules["homeassistant.components.tts"]
     original_get_stream = mock_tts.async_get_stream.return_value
     original_min = assist_mod._VAD_MIN_SPEECH_FRAMES
+    original_grace = assist_mod._BARGE_IN_VAD_GRACE_SECONDS
     original_micro_vad = assist_mod.MicroVad
     play_calls = []
 
@@ -5608,6 +5744,7 @@ def test_assist_barge_in_cancels_inflight_tts():
 
     assist_mod.MicroVad = lambda: _StubVad()
     assist_mod._VAD_MIN_SPEECH_FRAMES = 2
+    assist_mod._BARGE_IN_VAD_GRACE_SECONDS = 0
 
     async def slow_stream():
         await asyncio.sleep(0.15)
@@ -5648,6 +5785,7 @@ def test_assist_barge_in_cancels_inflight_tts():
         assert not play_calls
     finally:
         assist_mod._VAD_MIN_SPEECH_FRAMES = original_min
+        assist_mod._BARGE_IN_VAD_GRACE_SECONDS = original_grace
         assist_mod.MicroVad = original_micro_vad
         mock_tts.async_get_stream.return_value = original_get_stream
 
@@ -6436,7 +6574,7 @@ def test_assist_reply_without_cue_is_played_directly():
             media_playing_fn=lambda: False,
         )
         await bridge._play_tts_stream(stream, epoch=0)
-        assert [type(s).__name__ for s in played] == ["FfmpegAudioSource"]
+        assert [type(s).__name__ for s in played] == ["_OnStartSource"]
         assert not bridge._cue_handover
 
     asyncio.run(run())

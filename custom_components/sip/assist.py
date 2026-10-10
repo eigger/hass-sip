@@ -4,6 +4,7 @@ from __future__ import annotations
 import array
 import asyncio
 import math
+import time
 from collections.abc import AsyncIterable, Callable
 from typing import Literal
 
@@ -55,8 +56,11 @@ _ERROR_TURN_BACKOFF_SECONDS = 1.0
 _VAD_FRAME_BYTES = 320  # 10 ms @ 16 kHz s16le mono
 _VAD_SPEECH_THRESHOLD = 0.5
 _VAD_MIN_SPEECH_FRAMES = 30  # 300 ms consecutive speech
+_BARGE_IN_VAD_GRACE_SECONDS = 2.0
+_monotonic = time.monotonic  # patched in tests without touching the event loop
 # Shorter than barge-in: a 100 ms utterance after TTS must still count.
 _GAP_MIN_SPEECH_FRAMES = 5  # 50 ms consecutive speech
+_PREROLL_BYTES_PER_SECOND = 32000  # 16 kHz s16le mono
 _PREROLL_MAX_BYTES = 16000  # 500 ms @ 16 kHz s16le mono
 _TX_IDLE_TIMEOUT_SECONDS = 60.0
 _TONE_WAIT_TIMEOUT_SECONDS = 3
@@ -199,6 +203,31 @@ class AssistAudioStream(AsyncIterable[bytes]):
         return await self.queue.get()
 
 
+class _OnStartSource(AudioSource):
+    """Run ``on_started`` when ``inner`` pushes its first frame."""
+
+    def __init__(self, inner: AudioSource, on_started: Callable[[], None]) -> None:
+        self._inner = inner
+        self._on_started = on_started
+
+    def configure(self, sample_rate: int, pcm_frame_bytes: int) -> None:
+        configure = getattr(self._inner, "configure", None)
+        if callable(configure):
+            configure(sample_rate, pcm_frame_bytes)
+
+    async def run(self, push, is_active) -> None:
+        started = False
+
+        def inner_push(chunk: bytes) -> None:
+            nonlocal started
+            if not started:
+                started = True
+                self._on_started()
+            push(chunk)
+
+        await self._inner.run(inner_push, is_active)
+
+
 class AssistBridge(AudioSink):
     """Bridges RTP incoming audio to Assist pipeline and plays back responses."""
 
@@ -295,6 +324,7 @@ class AssistBridge(AudioSink):
         self._gap_pending = bytearray()
         self._gap_speech_frames = 0
         self._gap_has_speech = False
+        self._tts_armed_at: float | None = None
 
     def start(self) -> None:
         """Start the Assist session loop in the background."""
@@ -353,6 +383,7 @@ class AssistBridge(AudioSink):
         self._stop_processing_cue(flush=False)
         self._cue_handover = False
         self._tx_wait = None
+        self._tts_armed_at = None
         self._tx_done.set()
         if self.session_task:
             self.session_task.cancel()
@@ -363,8 +394,13 @@ class AssistBridge(AudioSink):
 
     def _append_rx_to_ring(self, pcm_16k: bytes) -> None:
         self._ring_buffer.extend(pcm_16k)
-        if len(self._ring_buffer) > _PREROLL_MAX_BYTES:
-            del self._ring_buffer[: len(self._ring_buffer) - _PREROLL_MAX_BYTES]
+        limit = _PREROLL_MAX_BYTES
+        if self.barge_in and self._speaking:
+            # VAD is held off during the grace window, so keep that audio too:
+            # speech that began inside it must still reach STT on barge-in.
+            limit += int(_BARGE_IN_VAD_GRACE_SECONDS * _PREROLL_BYTES_PER_SECOND)
+        if len(self._ring_buffer) > limit:
+            del self._ring_buffer[: len(self._ring_buffer) - limit]
 
     def _discard_gap_capture(self) -> None:
         """Drop turn-gap RX (used after a completed turn-start tone)."""
@@ -450,6 +486,15 @@ class AssistBridge(AudioSink):
     def _monitor_barge_in(self, pcm_16k: bytes) -> None:
         """Detect caller speech during TTS playback and trigger barge-in."""
         self._append_rx_to_ring(pcm_16k)
+        if (
+            self._tts_armed_at is not None
+            and _monotonic() - self._tts_armed_at < _BARGE_IN_VAD_GRACE_SECONDS
+        ):
+            # Let the phone's echo canceller adapt to the new downlink signal
+            # before treating received audio as caller speech.
+            self._vad_pending.clear()
+            self._vad_speech_frames = 0
+            return
 
         self._vad_pending.extend(pcm_16k)
         while len(self._vad_pending) >= _VAD_FRAME_BYTES:
@@ -467,7 +512,14 @@ class AssistBridge(AudioSink):
         """Interrupt TTS playback and preserve preroll for the next STT turn."""
         LOGGER.info("Assist barge-in detected")
         self._cancel_inflight_tts(stop_audio=True)
-        self._barge_in_preroll = bytes(self._ring_buffer)
+        preroll = bytes(self._ring_buffer)
+        armed_at = self._tts_armed_at
+        # Audio from the grace window is only worth keeping when the caller
+        # started speaking inside it; later on it is just residual echo.
+        grace_tail = _BARGE_IN_VAD_GRACE_SECONDS + _VAD_MIN_SPEECH_FRAMES * 0.01
+        if armed_at is None or _monotonic() - armed_at > grace_tail + 0.5:
+            preroll = preroll[-_PREROLL_MAX_BYTES:]
+        self._barge_in_preroll = preroll
         self._vad_pending.clear()
         self._vad_speech_frames = 0
         self._ring_buffer.clear()
@@ -814,7 +866,12 @@ class AssistBridge(AudioSink):
     def _end_cue_handover(self) -> None:
         if self._cue_handover:
             self._cue_handover = False
+            self._arm_barge_in_grace()
             LOGGER.debug("Assist: reply audio started; processing cue ended")
+
+    def _arm_barge_in_grace(self) -> None:
+        """Start the barge-in grace window at the first reply frame."""
+        self._tts_armed_at = _monotonic()
 
     async def _play_turn_tone(self) -> None:
         """Play the turn-start tone (beep or configured media), if enabled."""
@@ -921,6 +978,7 @@ class AssistBridge(AudioSink):
         self._playing_tts_token = token
         self._listening = False  # STT has ended; RX now belongs to the TTS turn.
         self._speaking = True
+        self._tts_armed_at = None
         self._tx_done.clear()
         self._reset_barge_in_state()
         self._tts_epoch += 1
@@ -995,6 +1053,8 @@ class AssistBridge(AudioSink):
                     self._tone_source(self._processing_url, loop=True),
                     on_inner_started=self._end_cue_handover,
                 )
+            else:
+                source = _OnStartSource(source, self._arm_barge_in_grace)
             self.play_source(source)
             self._tx_wait = "tts"
         except asyncio.CancelledError:
