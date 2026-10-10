@@ -317,7 +317,7 @@ You can map incoming numbers or extensions to friendly names. Create a file name
 }
 ```
 
-If mapped, the `last_call` Friendly Name sensor will display the contact name instead of the raw number. It also exposes a `caller_name` attribute in the `sip_incoming_call` event.
+If mapped, the `last_call` Friendly Name sensor will display the contact name instead of the raw number. The `sip_incoming_call` event exposes `contact_name` for that contact lookup and `sip_display_name` for the display name supplied by the remote SIP `From` header. The existing `caller_name` attribute remains an alias of `contact_name`.
 Changes to `sip_contacts.json` are reloaded in the background within five seconds;
 you do not need to place a call or reload the integration.
 

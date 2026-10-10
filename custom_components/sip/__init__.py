@@ -400,7 +400,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         async_dispatcher_send(hass, f"{DOMAIN}_state_update_{entry.entry_id}")
         fire_sip_event(
-            EVENT_SIP_INCOMING_CALL, {"caller": caller, "caller_name": caller_name}
+            EVENT_SIP_INCOMING_CALL,
+            {
+                "caller": caller,
+                "caller_name": caller_name,
+                "contact_name": caller_name,
+                "sip_display_name": client.last_caller_id_name,
+            },
         )
 
     @callback

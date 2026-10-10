@@ -274,6 +274,7 @@ class SipClient:
         self.state = SipState.IDLE
         self.registered = False
         self.last_caller = ""
+        self.last_caller_id_name = ""
         self.last_registered_at: float | None = None
         self.last_register_failed: str | None = None
         self.last_call_reason: str | None = None
@@ -1230,6 +1231,18 @@ class SipClient:
         key = f"{req.header('Call-ID')}|{_via_branch(req.header('Via'))}"
         return hashlib.sha1(key.encode()).hexdigest()[:10]
 
+    @staticmethod
+    def _extract_caller_id_name(m: sm.SipMessage) -> str:
+        """Return the display-name portion of the SIP From header."""
+        frm = m.header("From").strip()
+        quoted = re.match(r'"((?:[^"\\]|\\.)*)"\s*<', frm)
+        if quoted:
+            return re.sub(r"\\(.)", r"\1", quoted.group(1)).strip()
+        angle = frm.find("<")
+        if angle <= 0:
+            return ""
+        return frm[:angle].strip().lstrip('"').strip()
+
     def _build_response(
         self,
         req: sm.SipMessage,
@@ -1412,6 +1425,7 @@ class SipClient:
                 return
             caller = self._extract_caller(m)
             self.last_caller = caller
+            self.last_caller_id_name = self._extract_caller_id_name(m)
             if self.state != SipState.REGISTERED or self.dnd:
                 if self.dnd:
                     _LOGGER.info("Call rejected due to DND: Busy Here")

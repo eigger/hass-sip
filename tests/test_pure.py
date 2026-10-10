@@ -1863,6 +1863,41 @@ def _inbound_in_call():
     return client, orig, incoming
 
 
+def test_incoming_call_extracts_sip_caller_id_name():
+    if sip_client is None:
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client.state = sip_client.SipState.REGISTERED
+        client._local_ip = "192.0.2.1"
+        invite = _invite_request(frm='"Doe, Alice" <sip:1234@example>;tag=remote')
+
+        with patch.object(client, "_send_raw"):
+            client._handle_request(invite)
+        return client.last_caller, client.last_caller_id_name
+
+    assert asyncio.run(run()) == ("1234", "Doe, Alice")
+
+
+def test_caller_id_name_handles_unquoted_escaped_and_missing_names():
+    if sip_client is None:
+        return
+
+    quoted = _invite_request(frm='"Alice \\"Support\\"" <sip:100@example>')
+    unquoted = _invite_request(frm="Front Desk <sip:101@example>")
+    unnamed = _invite_request(frm="<sip:102@example>")
+
+    assert sip_client.SipClient._extract_caller_id_name(quoted) == 'Alice "Support"'
+    assert sip_client.SipClient._extract_caller_id_name(unquoted) == "Front Desk"
+    assert sip_client.SipClient._extract_caller_id_name(unnamed) == ""
+
+    angle_in_quotes = _invite_request(frm='"A <B>" <sip:103@example>')
+    unterminated = _invite_request(frm='"Alice <sip:104@example>')
+    assert sip_client.SipClient._extract_caller_id_name(angle_in_quotes) == "A <B>"
+    assert sip_client.SipClient._extract_caller_id_name(unterminated) == "Alice"
+
+
 def _outbound_in_call():
     incoming = []
     client = sip_client.SipClient(
