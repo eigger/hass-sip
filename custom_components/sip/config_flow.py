@@ -11,6 +11,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.selector import (
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
     TextSelector,
     TextSelectorConfig,
     TextSelectorType,
@@ -34,6 +37,9 @@ from .const import (
     DEFAULT_LOCAL_RTP_PORT,
     CONF_MEDIA_TIMEOUT,
     CONF_MAX_CALL_DURATION,
+    CONF_CODEC_PREFERENCE,
+    CODEC_PREFERENCE_OPTIONS,
+    DEFAULT_CODEC_PREFERENCE,
     DEFAULT_MEDIA_TIMEOUT,
     DEFAULT_MAX_CALL_DURATION,
 )
@@ -109,6 +115,24 @@ def _build_schema(
                 CONF_MAX_CALL_DURATION,
                 default=_default(CONF_MAX_CALL_DURATION, DEFAULT_MAX_CALL_DURATION),
             ): vol.All(vol.Coerce(int), vol.Range(min=0)),
+        }
+    )
+
+
+def _build_options_schema(defaults: Mapping[str, Any]) -> vol.Schema:
+    """Schema for the options form (settings applied without re-registering)."""
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_CODEC_PREFERENCE,
+                default=defaults.get(CONF_CODEC_PREFERENCE, DEFAULT_CODEC_PREFERENCE),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=list(CODEC_PREFERENCE_OPTIONS),
+                    mode=SelectSelectorMode.DROPDOWN,
+                    translation_key=CONF_CODEC_PREFERENCE,
+                )
+            ),
         }
     )
 
@@ -231,6 +255,13 @@ class SipConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    @staticmethod
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> SipOptionsFlow:
+        """Return the options flow handler."""
+        return SipOptionsFlow()
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -312,4 +343,18 @@ class SipConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 omit_password_default=True,
             ),
             errors=errors,
+        )
+
+
+class SipOptionsFlow(config_entries.OptionsFlowWithReload):
+    """Options for an existing SIP account; saving reloads the entry."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        if user_input is not None:
+            return self.async_create_entry(data=user_input)
+        return self.async_show_form(
+            step_id="init",
+            data_schema=_build_options_schema(self.config_entry.options),
         )

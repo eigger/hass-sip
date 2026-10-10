@@ -21,7 +21,7 @@ Then on the extension:
 1. **Advanced → DTMF Mode**: `RFC 4733` (RFC 2833). hass-sip also accepts SIP INFO if an ATA sends that instead.
 2. **Advanced → Direct Media**: `No`. FreePBX defaults this to `Yes`, which sends a re-INVITE to hairpin RTP. The client answers in-dialog re-INVITE, but pinning media through the PBX is the predictable path — especially with NAT.
 3. **Advanced → Media Encryption**: `No` (SRTP is not implemented).
-4. **Codecs**: enable `g722`, `ulaw`, and `alaw` (order does not have to match; hass-sip offers G.722, then PCMU, then PCMA).
+4. **Codecs**: enable `g722`, `ulaw`, and `alaw` (order does not have to match; by default hass-sip offers G.722, then PCMU, then PCMA; see [Codec preference](#codec-preference)).
 5. **Submit** and **Apply Config**.
 
 Allow **UDP 5060** from the Home Assistant host to the PBX, and **UDP `local_rtp_port`** (default `7078`) for RTP. The client binds that one port only; **RTCP is not used**, so do not open or debug the next odd/even port.
@@ -74,6 +74,20 @@ Device setup is done entirely through the Home Assistant UI. The [Quick start](#
    - **Outbound proxy** *(Optional)*: Use when the registrar answers `407 Proxy Authentication Required` (see [generic SIP / ITSP](#pbx-compatibility)).
    - **Authentication username** *(Optional)*: Digest username when it differs from the extension.
 
+### Codec preference
+
+Under **Settings** > **Devices & Services** > **SIP Client** > **Configure** you can choose which codecs are offered and in what order. Saving reloads the account. The default (`Automatic`) matches earlier versions.
+
+| Preset | Order | Use when |
+|--------|-------|----------|
+| Automatic | G.722 → PCMU → PCMA | Default; wideband when the PBX offers it |
+| G.711 preferred | PCMU → PCMA → G.722 | Narrowband preferred, wideband as fallback |
+| G.711 preferred, A-law first | PCMA → PCMU → G.722 | European PBXs, wideband as fallback |
+| G.711 only (PCMU → PCMA) | PCMU → PCMA | G.722 disabled |
+| G.711 only (PCMA → PCMU) | PCMA → PCMU | G.722 disabled; recommended for FRITZ!Box and other EU PBXs with one-way audio |
+
+If the PBX offers only a codec the preset excludes, the call is flagged as a codec mismatch in the diagnostics.
+
 ---
 
 ## PBX compatibility
@@ -96,7 +110,7 @@ Use these in FreePBX or in `pjsip.conf`.
 | Setting | Value | Why |
 |---------|-------|-----|
 | Transport | UDP `5060` | Only SIP/2.0/UDP is implemented |
-| Codecs | `g722`, `ulaw` (`PCMU`), `alaw` (`PCMA`) | Offer order is G.722 → PCMU → PCMA |
+| Codecs | `g722`, `ulaw` (`PCMU`), `alaw` (`PCMA`) | Default offer order is G.722 → PCMU → PCMA (configurable, see [Codec preference](#codec-preference)) |
 | DTMF | RFC 4733 (`telephone-event`) | RTP events plus SIP INFO (`application/dtmf-relay`) |
 | `direct_media` | `no` | Avoids a media hairpin re-INVITE; set `yes` only if you need it and audio stays up |
 | `rtp_symmetric` / `force_rport` / `rewrite_contact` | `yes` | NAT; the client also latches the RTP source address |

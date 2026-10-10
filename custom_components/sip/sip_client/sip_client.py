@@ -58,6 +58,7 @@ class SipConfig:
     outbound_proxy: str = ""
     media_timeout: int = 30
     max_call_duration: int = 3600
+    codec_preference: str = codecs.DEFAULT_PRESET
 
 
 @dataclass
@@ -212,16 +213,19 @@ def _offered_codec_names(sdp: sm.SdpInfo) -> list[str]:
 
 
 def _codec_mismatch(
-    remote_names: list[str], remote_pts: list[int], dtmf_pt: int
+    remote_names: list[str],
+    remote_pts: list[int],
+    dtmf_pt: int,
+    order: tuple[codecs.Codec, ...] = codecs.SUPPORTED,
 ) -> bool:
     """True when the remote offer has audio we cannot negotiate."""
-    supported = {c.name for c in codecs.SUPPORTED}
+    supported = {c.name for c in order}
     if remote_names:
         return supported.isdisjoint(remote_names)
     audio_pts = {pt for pt in remote_pts if pt != dtmf_pt and pt != 13}
     if not audio_pts:
         return False
-    known = {c.payload_type for c in codecs.SUPPORTED}
+    known = {c.payload_type for c in order}
     return audio_pts.isdisjoint(known)
 
 
@@ -258,6 +262,7 @@ class SipClient:
         if not self.config.domain:
             self.config.domain = config.server
         self.cb = callbacks or SipCallbacks()
+        self._codec_order = codecs.preset_order(config.codec_preference)
 
         self._loop = asyncio.get_running_loop()
         self._transport: asyncio.DatagramTransport | None = None
@@ -413,13 +418,14 @@ class SipClient:
                 "payload_type": self._codec.payload_type,
                 "sample_rate": self._codec.sample_rate,
                 "telephone_event_pt": self._remote_dtmf_pt,
-                "local_supported": [c.name for c in codecs.SUPPORTED],
+                "local_supported": [c.name for c in self._codec_order],
                 "remote_offered": list(self._remote_offered_names),
                 "remote_offered_pts": list(self._remote_offered_pts),
                 "mismatch": _codec_mismatch(
                     self._remote_offered_names,
                     self._remote_offered_pts,
                     self._remote_dtmf_pt,
+                    self._codec_order,
                 ),
             },
             "rtp": {
@@ -872,21 +878,24 @@ class SipClient:
     def _local_sdp(self, only: codecs.Codec | None = None) -> str:
         """Build a local SDP body.
 
-        With ``only=None`` this is a full offer (all supported codecs). Pass the
-        negotiated codec for an answer so we do not re-advertise codecs the
-        remote never offered (RFC 3264).
+        With ``only=None`` this is a full offer (the allowed codecs in
+        preference order). Pass the negotiated codec for an answer so we do
+        not re-advertise codecs the remote never offered (RFC 3264).
         """
         sid = str(int(time.time()))
         # RFC 3264: answer sendonly with recvonly, inactive with inactive.
         direction = self._local_direction
+        media_line = codecs.sdp_media_line(
+            self.config.local_rtp_port, only=only, order=self._codec_order
+        )
         return (
             "v=0\r\n"
             f"o=- {sid} {sid} IN IP4 {self._local_ip}\r\n"
             "s=homeassistant\r\n"
             f"c=IN IP4 {self._local_ip}\r\n"
             "t=0 0\r\n"
-            f"{codecs.sdp_media_line(self.config.local_rtp_port, only=only)}"
-            f"{codecs.sdp_rtpmaps(only=only)}"
+            f"{media_line}"
+            f"{codecs.sdp_rtpmaps(only=only, order=self._codec_order)}"
             "a=fmtp:101 0-15\r\n"
             "a=ptime:20\r\n"
             f"a={direction}\r\n"
@@ -1089,9 +1098,9 @@ class SipClient:
         # First SDP of a dialog picks the preferred codec. Later re-INVITE /
         # UPDATE keep the current one when it is still offered.
         if in_dialog:
-            new_codec = codecs.keep_or_choose(self._codec, sdp)
+            new_codec = codecs.keep_or_choose(self._codec, sdp, self._codec_order)
         else:
-            new_codec = codecs.choose(sdp)
+            new_codec = codecs.choose(sdp, self._codec_order)
         codec_changed = (
             new_codec.name != old_codec.name
             or new_codec.payload_type != old_codec.payload_type

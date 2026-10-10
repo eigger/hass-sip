@@ -56,6 +56,7 @@ except AttributeError:  # enum.StrEnum needs Python 3.11+ (CI runs 3.12+)
 # standalone too — not just under pytest, where conftest.py already mocks
 # `homeassistant`/`homeassistant.core`/`homeassistant.config_entries`.
 from unittest.mock import AsyncMock, MagicMock, patch  # noqa: E402
+import pytest  # noqa: E402
 import voluptuous as vol  # noqa: E402
 
 for _mod_name in (
@@ -92,10 +93,32 @@ class _TextSelector:
         return data
 
 
+class _SelectSelectorMode:
+    DROPDOWN = "dropdown"
+
+
+class _SelectSelectorConfig(dict):
+    def __init__(self, **kwargs):
+        super().__init__(kwargs)
+
+
+class _SelectSelector:
+    def __init__(self, config=None):
+        self.config = dict(config) if config is not None else {}
+
+    def __call__(self, data):
+        if data not in self.config.get("options", ()):
+            raise ValueError(f"invalid option {data!r}")
+        return data
+
+
 _selector_mod = types.ModuleType("homeassistant.helpers.selector")
 _selector_mod.TextSelector = _TextSelector
 _selector_mod.TextSelectorConfig = _TextSelectorConfig
 _selector_mod.TextSelectorType = _TextSelectorType
+_selector_mod.SelectSelector = _SelectSelector
+_selector_mod.SelectSelectorConfig = _SelectSelectorConfig
+_selector_mod.SelectSelectorMode = _SelectSelectorMode
 sys.modules["homeassistant.helpers.selector"] = _selector_mod
 
 _COMPONENT = os.path.join(os.path.dirname(__file__), "..", "custom_components", "sip")
@@ -118,7 +141,7 @@ def _load_component_module(name):
     return mod
 
 
-_load_component_module("const")
+const = _load_component_module("const")
 config_flow = _load_component_module("config_flow")
 
 
@@ -761,6 +784,109 @@ def test_codecs_sdp_offer_includes_g722():
     assert codecs.G722.ts_increment == 160
 
 
+_ALL_OFFER = dict(pcmu=0, pcma=8, g722=9)
+
+
+def _names(order):
+    return [c.name for c in order]
+
+
+def test_codec_presets_order():
+    assert set(codecs.PRESETS) == set(const.CODEC_PREFERENCE_OPTIONS)
+    assert _names(codecs.PRESETS["auto"]) == ["G722", "PCMU", "PCMA"]
+    assert _names(codecs.PRESETS["g711_pcmu_first"]) == ["PCMU", "PCMA", "G722"]
+    assert _names(codecs.PRESETS["g711_pcma_first"]) == ["PCMA", "PCMU", "G722"]
+    assert _names(codecs.PRESETS["g711_only_pcmu_first"]) == ["PCMU", "PCMA"]
+    assert _names(codecs.PRESETS["g711_only_pcma_first"]) == ["PCMA", "PCMU"]
+    # Missing / unknown value behaves like the historic default.
+    assert codecs.preset_order(None) == codecs.SUPPORTED
+    assert codecs.preset_order("nonsense") == codecs.SUPPORTED
+
+
+@pytest.mark.parametrize(
+    "preset,expected",
+    [
+        ("auto", "G722"),
+        ("g711_pcmu_first", "PCMU"),
+        ("g711_pcma_first", "PCMA"),
+        ("g711_only_pcmu_first", "PCMU"),
+        ("g711_only_pcma_first", "PCMA"),
+    ],
+)
+def test_codecs_choose_follows_preset(preset, expected):
+    order = codecs.preset_order(preset)
+    offer = _sdp({9, 0, 8}, **_ALL_OFFER)
+    assert codecs.choose(offer, order).name == expected
+    # Remote order is irrelevant; only our preference counts.
+    assert codecs.choose(_sdp({8, 0, 9}, **_ALL_OFFER), order).name == expected
+
+
+def test_codecs_g711_only_never_chooses_g722():
+    for preset in ("g711_only_pcmu_first", "g711_only_pcma_first"):
+        order = codecs.preset_order(preset)
+        assert codecs.choose(_sdp({9, 8}, pcma=8, g722=9), order).name == "PCMA"
+        assert codecs.choose(_sdp({9, 0}, pcmu=0, g722=9), order).name == "PCMU"
+        # Dynamic-PT G.722 is excluded too; only the fallback remains.
+        assert codecs.choose(_sdp({110}, g722=110), order) is codecs.DEFAULT
+        assert codecs.choose(_sdp({9}, g722=9), order) is codecs.DEFAULT
+    # PCMA first, but the remote only has PCMU: fall through the order.
+    order = codecs.preset_order("g711_only_pcma_first")
+    assert codecs.choose(_sdp({0}, pcmu=0), order).name == "PCMU"
+    assert codecs.choose(_sdp({96}, pcmu=96), order).payload_type == 96
+
+
+def test_codecs_keep_or_choose_respects_preset():
+    order = codecs.preset_order("g711_only_pcma_first")
+    # A disabled codec is never kept, even when the refresh still lists it.
+    moved = codecs.keep_or_choose(codecs.G722, _sdp({9, 0, 8}, **_ALL_OFFER), order)
+    assert moved.name == "PCMA"
+    # Allowed codec still offered: kept even though another is preferred.
+    assert codecs.keep_or_choose(codecs.PCMU, _sdp({9, 0, 8}, **_ALL_OFFER), order) is codecs.PCMU
+    # Remote dropped the current codec: pick by our order, skipping G.722.
+    assert codecs.keep_or_choose(codecs.PCMU, _sdp({9, 8}, pcma=8, g722=9), order).name == "PCMA"
+    # Offerless refresh keeps the current codec.
+    assert codecs.keep_or_choose(codecs.PCMU, sm.SdpInfo(), order) is codecs.PCMU
+
+
+@pytest.mark.parametrize(
+    "preset,pts,rtpmap",
+    [
+        ("auto", "9 0 8", ["G722", "PCMU", "PCMA"]),
+        ("g711_pcmu_first", "0 8 9", ["PCMU", "PCMA", "G722"]),
+        ("g711_pcma_first", "8 0 9", ["PCMA", "PCMU", "G722"]),
+        ("g711_only_pcmu_first", "0 8", ["PCMU", "PCMA"]),
+        ("g711_only_pcma_first", "8 0", ["PCMA", "PCMU"]),
+    ],
+)
+def test_codecs_sdp_offer_follows_preset(preset, pts, rtpmap):
+    order = codecs.preset_order(preset)
+    assert codecs.sdp_media_line(7078, order=order) == f"m=audio 7078 RTP/AVP {pts} 101\r\n"
+    lines = codecs.sdp_rtpmaps(order=order).splitlines()
+    assert [ln.split()[1].split("/")[0] for ln in lines[:-1]] == rtpmap
+    assert lines[-1] == "a=rtpmap:101 telephone-event/8000"
+    # An answer is unaffected by the order: single negotiated codec only.
+    assert codecs.sdp_media_line(7078, only=codecs.PCMA, order=order) == "m=audio 7078 RTP/AVP 8 101\r\n"
+
+
+def test_codec_mismatch_and_offered_names_follow_preset():
+    if sip_client is None:
+        return
+    g722_only = _sdp({9}, g722=9)
+    names = sip_client._offered_codec_names(g722_only)
+    assert names == ["G722"]  # what the remote offered is reported as-is
+    order = codecs.preset_order("g711_only_pcma_first")
+    assert sip_client._codec_mismatch(names, [9], 101) is False
+    assert sip_client._codec_mismatch(names, [9], 101, order) is True
+    assert sip_client._codec_mismatch(["PCMU", "G722"], [0, 9], 101, order) is False
+    # No rtpmap names: payload types are checked against the allowed set.
+    assert sip_client._codec_mismatch([], [9], 101, order) is True
+    assert sip_client._codec_mismatch([], [8], 101, order) is False
+
+
+def test_rx_decoder_lookup_stays_lenient():
+    assert set(codecs.BY_PT) == {9, 0, 8}
+
+
 def test_codecs_sdp_answer_only_negotiated():
     only = codecs.PCMU
     assert codecs.sdp_media_line(7078, only=only) == "m=audio 7078 RTP/AVP 0 101\r\n"
@@ -792,6 +918,38 @@ def test_local_sdp_offer_and_answer():
     assert "RTP/AVP 0 101" in answer
     assert "G722" not in answer
     assert "PCMA" not in answer
+
+
+def test_client_sdp_and_diagnostics_follow_codec_preference():
+    if sip_client is None:
+        return
+
+    async def run(preference):
+        cfg = sip_client.SipConfig(
+            server="pbx.example", local_rtp_port=7078, codec_preference=preference
+        )
+        client = sip_client.SipClient(cfg)
+        client._local_ip = "192.0.2.1"
+        return client._local_sdp(), client.diagnostics_snapshot()["codec"]["local_supported"]
+
+    offer, supported = asyncio.run(run("g711_only_pcma_first"))
+    assert "RTP/AVP 8 0 101" in offer
+    assert "G722" not in offer
+    assert supported == ["PCMA", "PCMU"]
+    offer, supported = asyncio.run(run("auto"))
+    assert "RTP/AVP 9 0 8 101" in offer
+    assert supported == ["G722", "PCMU", "PCMA"]
+
+
+def test_codec_preference_option_schema():
+    schema = config_flow._build_options_schema({})
+    assert schema({})[const.CONF_CODEC_PREFERENCE] == "auto"
+    for key in const.CODEC_PREFERENCE_OPTIONS:
+        assert schema({const.CONF_CODEC_PREFERENCE: key})[const.CONF_CODEC_PREFERENCE] == key
+    with pytest.raises(vol.Invalid):
+        schema({const.CONF_CODEC_PREFERENCE: "g722_only"})
+    stored = config_flow._build_options_schema({const.CONF_CODEC_PREFERENCE: "g711_only_pcma_first"})
+    assert stored({})[const.CONF_CODEC_PREFERENCE] == "g711_only_pcma_first"
 
 
 def test_auth_param():

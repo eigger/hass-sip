@@ -47,6 +47,8 @@ from .const import (
     CONF_AUTH_USERNAME,
     CONF_MEDIA_TIMEOUT,
     CONF_MAX_CALL_DURATION,
+    CONF_CODEC_PREFERENCE,
+    DEFAULT_CODEC_PREFERENCE,
     DEFAULT_MEDIA_TIMEOUT,
     DEFAULT_MAX_CALL_DURATION,
     DOMAIN,
@@ -271,6 +273,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         local_rtp_port=config.get(CONF_LOCAL_RTP_PORT, 7078),
         media_timeout=config.get(CONF_MEDIA_TIMEOUT, DEFAULT_MEDIA_TIMEOUT),
         max_call_duration=config.get(CONF_MAX_CALL_DURATION, DEFAULT_MAX_CALL_DURATION),
+        codec_preference=entry.options.get(
+            CONF_CODEC_PREFERENCE, DEFAULT_CODEC_PREFERENCE
+        ),
     )
 
     # Load contacts asynchronously from file to avoid blocking event loop on startup

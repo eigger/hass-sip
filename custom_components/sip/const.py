@@ -18,6 +18,7 @@ CONF_AUTH_USERNAME = "authentication_username"
 CONF_MEDIA_TIMEOUT = "media_timeout"
 CONF_MAX_CALL_DURATION = "max_call_duration"
 CONF_ASSIST_USER = "assist_user"
+CONF_CODEC_PREFERENCE = "codec_preference"
 
 # Defaults
 DEFAULT_PORT = 5060
@@ -25,6 +26,15 @@ DEFAULT_REGISTER_EXPIRATION = 300
 DEFAULT_LOCAL_RTP_PORT = 7078
 DEFAULT_MEDIA_TIMEOUT = 30
 DEFAULT_MAX_CALL_DURATION = 3600
+DEFAULT_CODEC_PREFERENCE = "auto"
+# Keys of sip_client.codecs.PRESETS (kept in sync by a test).
+CODEC_PREFERENCE_OPTIONS = (
+    "auto",
+    "g711_pcmu_first",
+    "g711_pcma_first",
+    "g711_only_pcmu_first",
+    "g711_only_pcma_first",
+)
 
 # Events fired by the integration
 EVENT_SIP_STATE_CHANGED = "sip_state_changed"

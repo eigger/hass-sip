@@ -111,7 +111,7 @@ Field list, firewall notes, and the pjsip snippet: **[Setup](docs/setup.md)**.
 - `media_player` line: TTS or audio URLs into the active call
 - Services: `sip.dial`, `sip.hangup`, `sip.answer`, `sip.send_dtmf`, `sip.start_recording`, `sip.stop_recording`, `sip.start_assist` (multi-turn)
 - IVR trees with DTMF, PIN, and Home Assistant service actions
-- G.722 (16 kHz) when the far end offers it, otherwise G.711
+- G.722 (16 kHz) when the far end offers it, otherwise G.711; the codec order (or G.711-only) is selectable under **Configure** on the integration
 - Sensors: registration, last caller, codec, audio path (`none` / `no_rx` / `no_tx` / `bidirectional`)
 
 ## ESPHome External Component

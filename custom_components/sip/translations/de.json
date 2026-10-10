@@ -48,6 +48,19 @@
       "unique_id_mismatch": "Benutzername und Server können hier nicht geändert werden. Bitte entferne dieses Konto und füge stattdessen ein neues hinzu."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Optionen",
+        "data": {
+          "codec_preference": "Codec-Präferenz"
+        },
+        "data_description": {
+          "codec_preference": "Legt fest, welche Audio-Codecs in welcher Reihenfolge angeboten werden. Bei einseitigem Audio (z. B. an einer FRITZ!Box, die G.722 aushandelt) wähle eine reine G.711-Voreinstellung. Beim Speichern wird das Konto neu geladen."
+        }
+      }
+    }
+  },
   "entity": {
     "sensor": {
       "registration_status": {
@@ -307,6 +320,17 @@
     "register_auth_failed": {
       "title": "SIP-Registrierung wurde abgelehnt",
       "description": "Der SIP-Server `{server}` hat die Registrierung für `{username}` abgelehnt ({reason}). Benutzername und Passwort in den Integrationseinstellungen prüfen. Wiederholungen werden automatisch verlangsamt, damit der Server diese IP nicht sperrt."
+    }
+  },
+  "selector": {
+    "codec_preference": {
+      "options": {
+        "auto": "Automatisch (G.722 → PCMU → PCMA)",
+        "g711_pcmu_first": "G.711 bevorzugt (PCMU → PCMA → G.722)",
+        "g711_pcma_first": "G.711 bevorzugt, A-law zuerst (PCMA → PCMU → G.722)",
+        "g711_only_pcmu_first": "Nur G.711 (PCMU → PCMA)",
+        "g711_only_pcma_first": "Nur G.711 (PCMA → PCMU)"
+      }
     }
   }
 }

@@ -141,8 +141,30 @@ class _TextSelector:
         return data
 
 
+class _SelectSelectorMode:
+    DROPDOWN = "dropdown"
+
+
+class _SelectSelectorConfig(dict):
+    def __init__(self, **kwargs):
+        super().__init__(kwargs)
+
+
+class _SelectSelector:
+    def __init__(self, config=None):
+        self.config = dict(config) if config is not None else {}
+
+    def __call__(self, data):
+        if data not in self.config.get("options", ()):
+            raise ValueError(f"invalid option {data!r}")
+        return data
+
+
 _selector_mod = types.ModuleType("homeassistant.helpers.selector")
 _selector_mod.TextSelector = _TextSelector
 _selector_mod.TextSelectorConfig = _TextSelectorConfig
 _selector_mod.TextSelectorType = _TextSelectorType
+_selector_mod.SelectSelector = _SelectSelector
+_selector_mod.SelectSelectorConfig = _SelectSelectorConfig
+_selector_mod.SelectSelectorMode = _SelectSelectorMode
 sys.modules["homeassistant.helpers.selector"] = _selector_mod
