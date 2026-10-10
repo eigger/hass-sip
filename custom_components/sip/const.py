@@ -3,6 +3,8 @@ import logging
 
 DOMAIN = "sip"
 LOGGER = logging.getLogger(__package__)
+ASSIST_HANGUP_TOOL_NAME = "sip__hang_up_current_call"
+ASSIST_HANGUP_MERGED_TOOL_NAME = f"assist__{ASSIST_HANGUP_TOOL_NAME}"
 
 # Config fields
 CONF_SERVER = "server"
@@ -47,4 +49,3 @@ EVENT_SIP_PLAYBACK_DONE = "sip_playback_done"
 EVENT_SIP_RECORDING_STARTED = "sip_recording_started"
 EVENT_SIP_RECORDING_STOPPED = "sip_recording_stopped"
 EVENT_SIP_ASSIST_REJECTED = "sip_assist_rejected"
-

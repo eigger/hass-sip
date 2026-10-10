@@ -303,6 +303,13 @@ start_assist:
       default: false
       selector:
         boolean:
+    allow_llm_hangup:
+      name: Allow Assist to hang up
+      description: Expose a SIP-specific Hang Up tool to Assist. The call ends after the current turn and its spoken response finish.
+      required: false
+      default: false
+      selector:
+        boolean:
     interrupt_media:
       name: Interrupt media
       description: Stop and discard current media playback when Assist is ready to listen or play its first response. Media may continue during pipeline, LLM, and TTS warm-up. Set to false to let the current playback finish before Assist's first turn.

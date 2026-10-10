@@ -70,6 +70,7 @@ ASSIST_OPTION_FIELDS: dict[Any, Any] = {
     vol.Optional("processing_tone"): vol.Boolean(),
     vol.Optional("processing_tone_media"): _string,
     vol.Optional("hangup_on_end"): vol.Boolean(),
+    vol.Optional("allow_llm_hangup", default=False): vol.Boolean(),
     vol.Optional("interrupt_media", default=True): vol.Boolean(),
 }
 _ASSIST_OPTION_VALIDATORS: dict[str, Any] = {

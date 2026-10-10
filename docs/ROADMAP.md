@@ -34,7 +34,7 @@
 - 로그·버스 이벤트·로그북에 크리덴셜, `Authorization` 값, digest response,
   미디어 URL/`authSig`를 절대 남기지 않는다.
 - `ruff check custom_components/` 통과. CI는 Python 3.14, Home Assistant 최솟값은
-  `hacs.json` (`homeassistant`, 현재 `2026.9.0`).
+  `hacs.json` (`homeassistant`, 현재 `2026.10.0`).
 - 사용자에게 보이는 동작이 바뀌면 `strings.json` + `translations/{en,ko,de,ru}.json`을
   함께 갱신한다.
 

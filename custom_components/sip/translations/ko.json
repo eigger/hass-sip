@@ -302,6 +302,10 @@
           "name": "종료 시 끊기",
           "description": "Assist 세션 종료 시 통화를 끊습니다."
         },
+        "allow_llm_hangup": {
+          "name": "Assist의 통화 종료 허용",
+          "description": "Assist에 SIP 전용 통화 종료 도구를 제공합니다. 현재 턴과 음성 응답이 끝난 뒤 통화가 종료됩니다."
+        },
         "interrupt_media": {
           "name": "미디어 중단",
           "description": "Assist가 듣기 또는 첫 응답 재생을 시작할 준비가 되면 현재 미디어 재생을 중지하고 버립니다. 파이프라인, LLM 및 TTS 준비 중에는 미디어가 계속 재생될 수 있습니다. false로 두면 현재 재생이 끝난 뒤 Assist의 첫 턴이 시작됩니다."

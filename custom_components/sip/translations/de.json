@@ -302,6 +302,10 @@
           "name": "Bei Ende auflegen",
           "description": "Anruf beenden, wenn die Assist-Sitzung endet."
         },
+        "allow_llm_hangup": {
+          "name": "Assist darf auflegen",
+          "description": "Stellt Assist ein SIP-spezifisches Auflegen-Werkzeug bereit. Der Anruf endet, nachdem die aktuelle Runde und die gesprochene Antwort beendet sind."
+        },
         "interrupt_media": {
           "name": "Medienwiedergabe unterbrechen",
           "description": "Aktuelle Medienwiedergabe stoppen und verwerfen, sobald Assist zum Zuhören oder Abspielen der ersten Antwort bereit ist. Während Pipeline-, LLM- und TTS-Start kann die Wiedergabe weiterlaufen. Auf false setzen, damit die aktuelle Wiedergabe vor der ersten Assist-Runde zu Ende läuft."

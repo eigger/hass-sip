@@ -628,6 +628,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         processing_tone: bool = False,
         processing_tone_media: str | None = None,
         hangup_on_end: bool = False,
+        allow_llm_hangup: bool = False,
         interrupt_media: bool = True,
     ) -> None:
         nonlocal assist_bridge
@@ -654,9 +655,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             processing_tone=processing_tone,
             processing_tone_media=processing_tone_media,
             hangup_on_end=hangup_on_end,
+            allow_llm_hangup=allow_llm_hangup,
             interrupt_media=interrupt_media,
             stop_audio_fn=client.stop_audio,
             media_playing_fn=lambda: client.media_playing,
+            hangup_fn=client.hangup,
+            hangup_allowed_fn=lambda: client.state
+            in (SipState.IN_CALL, SipState.ANSWERING),
             user_id=assist_user_id,
             device_id=_sip_device_id(hass, entry.entry_id),
         )
@@ -1094,6 +1099,7 @@ async def async_register_services(hass: HomeAssistant) -> None:
                 "processing_tone",
                 "processing_tone_media",
                 "hangup_on_end",
+                "allow_llm_hangup",
                 "interrupt_media",
             )
             if k in call.data

@@ -31,7 +31,11 @@ from homeassistant.components.stt import (
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import chat_session
 
-from .const import LOGGER
+from .const import (
+    ASSIST_HANGUP_MERGED_TOOL_NAME,
+    ASSIST_HANGUP_TOOL_NAME,
+    LOGGER,
+)
 from .helpers import get_ffmpeg_bin
 from .sip_client.audio import (
     AudioSink,
@@ -255,6 +259,9 @@ class AssistBridge(AudioSink):
         interrupt_media: bool = True,
         stop_audio_fn: Callable[..., None] | None = None,
         media_playing_fn: Callable[[], bool] | None = None,
+        hangup_fn: Callable[[], None] | None = None,
+        hangup_allowed_fn: Callable[[], bool] | None = None,
+        allow_llm_hangup: bool = False,
         user_id: str | None = None,
         device_id: str | None = None,
     ) -> None:
@@ -290,6 +297,9 @@ class AssistBridge(AudioSink):
         self._interrupt_media_pending = interrupt_media
         self.stop_audio_fn = stop_audio_fn
         self.media_playing_fn = media_playing_fn
+        self.hangup_fn = hangup_fn
+        self.hangup_allowed_fn = hangup_allowed_fn
+        self.allow_llm_hangup = allow_llm_hangup
         self._context = Context(user_id=user_id)
         self._device_id = device_id
 
@@ -304,6 +314,7 @@ class AssistBridge(AudioSink):
         self._running = True
         self._listening = False
         self._speaking = False
+        self._hangup_requested = False
         self._tx_done = asyncio.Event()
         self._tx_wait: _TxWaitKind | None = None
         self._turn_error: str | None = None
@@ -373,6 +384,7 @@ class AssistBridge(AudioSink):
 
     def close(self) -> None:
         """Stop the bridge and cancel running tasks."""
+        self._hangup_requested = False
         self._running = False
         self._listening = False
         self._speaking = False
@@ -391,6 +403,61 @@ class AssistBridge(AudioSink):
         for task in list(self._background_tasks):
             task.cancel()
         self._background_tasks.clear()
+
+    def _observe_hangup_tool_calls(self, data: dict) -> None:
+        """Schedule Hang Up from live SIP intent progress, even if Core rejects it."""
+        delta = data.get("chat_log_delta") or {}
+        for tool_call in delta.get("tool_calls") or []:
+            if isinstance(tool_call, dict):
+                tool_name = tool_call.get("tool_name")
+                tool_args = tool_call.get("tool_args")
+                external = tool_call.get("external", False)
+            else:
+                # Core emits ToolInput objects here; traces serialize those
+                # same calls as dictionaries.
+                tool_name = getattr(tool_call, "tool_name", None)
+                tool_args = getattr(tool_call, "tool_args", None)
+                external = getattr(tool_call, "external", True)
+            if (
+                tool_name in (
+                    ASSIST_HANGUP_TOOL_NAME,
+                    ASSIST_HANGUP_MERGED_TOOL_NAME,
+                )
+                and tool_args == {}
+                and not external
+            ):
+                # The Assist API may omit a per-call tool from the current
+                # dispatch list even though the agent emitted its call.
+                self.request_hangup_after_turn()
+
+    @property
+    def is_running(self) -> bool:
+        """Whether the Assist session is still active."""
+        return self._running
+
+    def matches_llm_context(self, device_id: str | None, user_id: str | None) -> bool:
+        """Whether an LLM request belongs to this bridge's device and user."""
+        return device_id == self._device_id and user_id == self._context.user_id
+
+    def request_hangup_after_turn(self) -> bool:
+        """Queue a SIP hang-up after this intent turn and its TTS finish."""
+        if not self.allow_llm_hangup or not self._running or self.hangup_fn is None:
+            return False
+        if self.hangup_allowed_fn is not None and not self.hangup_allowed_fn():
+            return False
+        if not self._hangup_requested:
+            self._hangup_requested = True
+            LOGGER.info("Assist Hang Up tool scheduled after current turn")
+        return True
+
+    def _complete_deferred_hangup(self) -> None:
+        """End the current call once the turn and its spoken reply are done."""
+        if not self._hangup_requested or not self._running:
+            return
+        self._hangup_requested = False
+        LOGGER.info("Assist Hang Up tool ending call after turn")
+        if self.hangup_fn is not None:
+            self.hangup_fn()
 
     def _append_rx_to_ring(self, pcm_16k: bytes) -> None:
         self._ring_buffer.extend(pcm_16k)
@@ -587,6 +654,7 @@ class AssistBridge(AudioSink):
                 self._turn_index = 0
                 await self._run_initial_prompt(pipeline)
                 await self._wait_playback_done()
+                self._complete_deferred_hangup()
                 if not self._running:
                     return
 
@@ -663,6 +731,7 @@ class AssistBridge(AudioSink):
                 )
 
                 await self._wait_playback_done()
+                self._complete_deferred_hangup()
 
                 if not self._running:
                     break
@@ -688,6 +757,8 @@ class AssistBridge(AudioSink):
         except Exception as err:
             LOGGER.exception("Assist session error: %s", err)
         finally:
+            # A scheduled hang-up must not be lost if the session ends first.
+            self._complete_deferred_hangup()
             self._running = False
             self._listening = False
             self._speaking = False
@@ -923,6 +994,9 @@ class AssistBridge(AudioSink):
             return
 
         LOGGER.debug("Assist pipeline event: %s", event.type)
+
+        if event.type == PipelineEventType.INTENT_PROGRESS and event.data:
+            self._observe_hangup_tool_calls(event.data)
 
         if event.type == PipelineEventType.RUN_START:
             self._run_tts_token = None
