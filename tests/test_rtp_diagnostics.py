@@ -51,11 +51,32 @@ def test_nat_mismatch_warns_once(caplog):
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
         client._schedule_register = lambda *_: None
         client._reg_cseq = 1
-        client._local_ip = "192.0.2.10"
-        with caplog.at_level(logging.WARNING):
-            client._handle_register_response(_reg_response("198.51.100.7"))
-            client._handle_register_response(_reg_response("198.51.100.7"))
-        assert len(_warnings(caplog, "sees this client as 198.51.100.7")) == 1
+        client._local_ip = "192.168.1.10"
+        with caplog.at_level(logging.INFO):
+            client._handle_register_response(_reg_response("10.0.0.7"))
+            client._handle_register_response(_reg_response("10.0.0.7"))
+        assert len(_warnings(caplog, "sees this client as 10.0.0.7")) == 1
+        assert client._observed_ip == "10.0.0.7"
+
+    asyncio.run(run())
+
+
+def test_public_received_address_is_only_info(caplog):
+    if _skip():
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client._schedule_register = lambda *_: None
+        client._reg_cseq = 1
+        client._local_ip = "192.168.1.10"
+        with caplog.at_level(logging.INFO):
+            client._handle_register_response(_reg_response("8.8.8.8"))
+        assert _warnings(caplog, "sees this client") == []
+        assert any(
+            r.levelno == logging.INFO and "sees this client as 8.8.8.8" in r.getMessage()
+            for r in caplog.records
+        )
 
     asyncio.run(run())
 
@@ -77,12 +98,16 @@ def test_matching_or_missing_received_does_not_warn(caplog):
     asyncio.run(run())
 
 
-def _in_call_client(rx: int, tx: int, state=None, on_hold=False):
+def _in_call_client(
+    rx: int, tx: int, state=None, on_hold=False, expect_rx=True, rx_packets=None
+):
     client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
     client.state = state or sip_client.SipState.IN_CALL
     client._local_ip = "192.0.2.10"
     client._on_hold = on_hold
     client.rtp.bytes_received = rx
+    client.rtp.rx_packets = rx_packets if rx_packets is not None else (1 if rx else 0)
+    client.rtp.expect_rx = expect_rx
     client.rtp.bytes_sent = tx
     client.rtp._sdp_remote = ("192.0.2.1", 7084)
     return client
@@ -98,12 +123,28 @@ def test_call_without_any_rtp_warns(caplog):
         return
 
     async def run():
-        client = _in_call_client(rx=0, tx=40000)
+        client = _in_call_client(rx=0, tx=80000)
         with caplog.at_level(logging.WARNING):
             _end(client)
         msgs = _warnings(caplog, "without receiving any RTP")
         assert len(msgs) == 1
         assert "192.0.2.1:7084" in msgs[0]
+        assert "saw this client" not in msgs[0]
+
+    asyncio.run(run())
+
+
+def test_end_of_call_warning_includes_observed_address(caplog):
+    if _skip():
+        return
+
+    async def run():
+        client = _in_call_client(rx=0, tx=80000)
+        client._observed_ip = "10.0.0.7"
+        with caplog.at_level(logging.WARNING):
+            _end(client)
+        msgs = _warnings(caplog, "without receiving any RTP")
+        assert "saw this client as 10.0.0.7" in msgs[0]
 
     asyncio.run(run())
 
@@ -116,6 +157,9 @@ def test_no_rtp_warning_when_audio_arrived_short_or_held(caplog):
         cases = [
             _in_call_client(rx=32000, tx=40000),  # audio came in
             _in_call_client(rx=0, tx=1000),  # too short to judge
+            _in_call_client(rx=0, tx=47999),  # just under 3 s of G.711
+            _in_call_client(rx=0, tx=80000, rx_packets=5),  # only CN/undecodable
+            _in_call_client(rx=0, tx=80000, expect_rx=False),  # paging speaker
             _in_call_client(rx=0, tx=40000, on_hold=True),  # remote on hold
             _in_call_client(
                 rx=0, tx=40000, state=sip_client.SipState.INVITING
@@ -125,5 +169,31 @@ def test_no_rtp_warning_when_audio_arrived_short_or_held(caplog):
             for client in cases:
                 _end(client)
         assert _warnings(caplog, "without receiving any RTP") == []
+
+    asyncio.run(run())
+
+
+def test_first_rtp_packet_source_is_logged_once(caplog):
+    if _skip():
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        rtp = client.rtp
+        rtp._sdp_remote = ("192.0.2.1", 7084)
+        packet = bytes([0x80, 8]) + (1).to_bytes(2, "big") + bytes(8) + b"\x00" * 160
+        with caplog.at_level(logging.INFO):
+            rtp._receive(packet, ("192.0.2.1", 7084))
+            rtp._receive(packet, ("192.0.2.1", 7084))
+        first = [r.getMessage() for r in caplog.records if "First RTP packet" in r.getMessage()]
+        assert len(first) == 1 and "differs" not in first[0]
+        assert rtp.rx_packets == 2
+
+        caplog.clear()
+        rtp.reset_byte_counters()
+        with caplog.at_level(logging.INFO):
+            rtp._receive(packet, ("203.0.113.9", 4000))
+        first = [r.getMessage() for r in caplog.records if "First RTP packet" in r.getMessage()]
+        assert len(first) == 1 and "differs from SDP" in first[0]
 
     asyncio.run(run())

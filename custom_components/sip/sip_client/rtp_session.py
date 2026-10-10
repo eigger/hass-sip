@@ -136,6 +136,8 @@ class RtpSession:
         self._trace_handle: asyncio.TimerHandle | None = None
         self.bytes_received = 0
         self.bytes_sent = 0
+        self.rx_packets = 0
+        self._rx_first_logged = False
         self._reset_trace_stats()
 
         # Codec-derived pacing / encode state (defaults = G.711 PCMU).
@@ -321,6 +323,8 @@ class RtpSession:
         """Drop TX/RX PCM totals so a new dialog cannot inherit the last call."""
         self.bytes_received = 0
         self.bytes_sent = 0
+        self.rx_packets = 0
+        self._rx_first_logged = False
 
     # -- TX -------------------------------------------------------------
     def push_tx_audio(self, pcm_le: bytes) -> None:
@@ -595,6 +599,22 @@ class RtpSession:
         # Comfort noise (PT 13) and other keepalives must reset the watchdog
         # even when we cannot decode them. Latch still requires a known PT.
         self._note_rx()
+        self.rx_packets += 1
+        if not self._rx_first_logged:
+            self._rx_first_logged = True
+            if addr is not None:
+                _LOGGER.info(
+                    "First RTP packet from %s:%s (SDP %s)%s",
+                    addr[0],
+                    addr[1],
+                    _fmt_endpoint(self._sdp_remote),
+                    (
+                        " - differs from SDP"
+                        if self._sdp_remote is not None
+                        and tuple(addr[:2]) != tuple(self._sdp_remote)
+                        else ""
+                    ),
+                )
         pt = data[1] & 0x7F
         marker = (data[1] & 0x80) != 0
         header_len = 12 + 4 * (data[0] & 0x0F)  # CSRC count

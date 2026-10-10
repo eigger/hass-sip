@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import enum
 import hashlib
+import ipaddress
 import logging
 import re
 import socket
@@ -200,9 +201,17 @@ def _via_received(via: str) -> str:
     return match.group(1) if match else ""
 
 
-# Bytes of our own RTP sent (~3 s of 8 kHz G.711) before a silent far end is
-# worth a warning.
-_NO_RTP_WARN_TX_BYTES = 24000
+# Seconds of our own RTP (PCM s16le counted at the codec rate) sent before a
+# silent far end is worth a warning.
+_NO_RTP_WARN_SECONDS = 3
+
+
+def _is_lan_address(value: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return ip.is_private or ip.is_link_local
 
 
 def _answer_direction(sdp: sm.SdpInfo) -> str:
@@ -281,6 +290,7 @@ class SipClient:
         self._transport: asyncio.DatagramTransport | None = None
         self._local_ip = ""
         self._warned_observed_ip = ""
+        self._observed_ip = ""
         self._local_port = 0
         self._closing = False
 
@@ -701,26 +711,36 @@ class SipClient:
             self._spawn(self._reconnect())
 
     def _check_observed_address(self, m: sm.SipMessage) -> None:
-        """Warn once when the peer sees a different source IP than we advertise.
+        """Log once when the peer sees a different source IP than we advertise.
 
-        Contact and SDP carry the locally probed address. Behind NAT (a VM in
-        NAT mode, several NICs, VPN) the peer sends RTP there and it never
-        arrives, which shows up as one-way / no audio.
+        Contact and SDP carry the locally probed address. When the server sees
+        another LAN address (VM in NAT mode, several NICs, VPN), RTP sent to the
+        advertised address never arrives, which shows up as one-way / no audio.
+        A public address is normal behind a home router and only logged.
         """
         received = _via_received(m.header("Via"))
-        if (
-            not received
-            or received == self._local_ip
-            or received == self._warned_observed_ip
-        ):
+        if not received or received == self._local_ip:
+            return
+        self._observed_ip = received
+        if received == self._warned_observed_ip:
             return
         self._warned_observed_ip = received
-        _LOGGER.warning(
-            "The server sees this client as %s but SIP/SDP advertise %s; "
-            "RTP audio will likely not arrive (VM in NAT mode, multiple "
-            "network interfaces or VPN?)",
+        level = (
+            logging.WARNING
+            if _is_lan_address(received) and _is_lan_address(self._local_ip)
+            else logging.INFO
+        )
+        _LOGGER.log(
+            level,
+            "The server sees this client as %s but SIP/SDP advertise %s%s",
             received,
             self._local_ip,
+            (
+                "; RTP audio will likely not arrive (VM in NAT mode, multiple "
+                "network interfaces or VPN?)"
+                if level == logging.WARNING
+                else ""
+            ),
         )
 
     def _handle_register_response(self, m: sm.SipMessage) -> None:
@@ -1758,6 +1778,7 @@ class SipClient:
     def _end_call(self, reason: str = "local") -> None:
         was_in_call = self.state in (SipState.IN_CALL, SipState.ANSWERING)
         was_on_hold = self._on_hold
+        expects_rx = self.rtp.expect_rx
         self._cancel_invite_retx()
         if self._ring_timeout_handle is not None:
             self._ring_timeout_handle.cancel()
@@ -1774,17 +1795,24 @@ class SipClient:
         if (
             was_in_call
             and not was_on_hold
-            and self.last_call_bytes_rx == 0
-            and self.last_call_bytes_tx >= _NO_RTP_WARN_TX_BYTES
+            and expects_rx
+            and self.rtp.rx_packets == 0
+            and self.last_call_bytes_tx
+            >= _NO_RTP_WARN_SECONDS * self._codec.sample_rate * 2
         ):
             remote = self.rtp.sdp_remote
             _LOGGER.warning(
                 "Call ended without receiving any RTP (sent %d bytes to %s, "
-                "local RTP port %s); check firewall/NAT and that the "
+                "local RTP port %s)%s; check firewall/NAT and that the "
                 "advertised address %s is reachable from the server",
                 self.last_call_bytes_tx,
                 f"{remote[0]}:{remote[1]}" if remote else "unknown",
                 self.config.local_rtp_port,
+                (
+                    f"; the server saw this client as {self._observed_ip}"
+                    if self._observed_ip
+                    else ""
+                ),
                 self._local_ip,
             )
         ended_session = self._media_session
@@ -1848,6 +1876,10 @@ class SipClient:
             self.rtp.on_audio = self._on_rx_audio
             self.rtp.on_dtmf = self._on_rx_dtmf
             if not await self.rtp.start(self.config.local_rtp_port):
+                _LOGGER.warning(
+                    "Media not started: RTP port %s unavailable; call has no audio",
+                    self.config.local_rtp_port,
+                )
                 return
             if session != self._media_session:
                 await self.rtp.stop()
