@@ -61,6 +61,11 @@
       }
     }
   },
+  "exceptions": {
+    "no_active_call": {
+      "message": "Kein aktiver SIP-Anruf zum Auflegen."
+    }
+  },
   "entity": {
     "sensor": {
       "registration_status": {

@@ -1,17 +1,21 @@
 """Button platform for SIP Client integration."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .helpers import build_device_info
 from .sip_client.sip_client import SipClient, SipState
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -100,8 +104,31 @@ class SipHangupButton(SipCallButton):
     @property
     def _can_press(self) -> bool:
         """Hanging up applies whenever any call leg is active."""
-        return self.entry_data.get("state") not in (None, SipState.IDLE, SipState.REGISTERED)
+        return self.entry_data.get("state") in (
+            SipState.INVITING,
+            SipState.RINGING_OUT,
+            SipState.INCOMING,
+            SipState.ANSWERING,
+            SipState.IN_CALL,
+        )
 
     async def async_press(self) -> None:
         """Press the button to hang up."""
+        state = self.entry_data.get("state")
+        _LOGGER.debug(
+            "Hang Up button press requested for entry %s (entity state=%s, client state=%s)",
+            self.entry.entry_id,
+            state,
+            self._client.state,
+        )
+        if not self._can_press:
+            _LOGGER.debug("Hang Up button press rejected: no active call")
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="no_active_call"
+            )
         self._client.hangup()
+        _LOGGER.debug(
+            "Hang Up button press returned for entry %s (client state=%s)",
+            self.entry.entry_id,
+            self._client.state,
+        )

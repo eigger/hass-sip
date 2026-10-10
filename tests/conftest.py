@@ -101,7 +101,12 @@ for mod in [
 # homeassistant.exceptions / auth constants: real exception classes so
 # integration code can raise/catch them and tests can assert on them.
 class HomeAssistantError(Exception):
-    pass
+    def __init__(self, *args, translation_domain=None, translation_key=None,
+                 translation_placeholders=None):
+        super().__init__(*args)
+        self.translation_domain = translation_domain
+        self.translation_key = translation_key
+        self.translation_placeholders = translation_placeholders
 
 
 class ServiceValidationError(HomeAssistantError):

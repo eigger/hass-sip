@@ -61,6 +61,11 @@
       }
     }
   },
+  "exceptions": {
+    "no_active_call": {
+      "message": "종료할 활성 SIP 통화가 없습니다."
+    }
+  },
   "entity": {
     "sensor": {
       "registration_status": {

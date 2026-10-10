@@ -61,6 +61,11 @@
       }
     }
   },
+  "exceptions": {
+    "no_active_call": {
+      "message": "Нет активного SIP-вызова для завершения."
+    }
+  },
   "entity": {
     "sensor": {
       "registration_status": {
