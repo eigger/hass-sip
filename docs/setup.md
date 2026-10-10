@@ -86,7 +86,7 @@ Under **Settings** > **Devices & Services** > **SIP Client** > **Configure** you
 | G.711 only (PCMU → PCMA) | PCMU → PCMA | G.722 disabled |
 | G.711 only (PCMA → PCMU) | PCMA → PCMU | G.722 disabled; recommended for FRITZ!Box and other EU PBXs with one-way audio |
 
-If the PBX offers only a codec the preset excludes, the call is flagged as a codec mismatch in the diagnostics.
+If the other side offers only codecs the preset excludes, the call is refused instead of answered with a codec it never offered: an incoming INVITE (or a re-INVITE/UPDATE, which keeps the current call) gets `488 Not Acceptable Here` with `Warning: 305`, and an outgoing call whose answer has no allowed codec is acknowledged and then ended. The diagnostics report a codec mismatch and the log shows a warning. For an INVITE without SDP, the offer in our 200 OK follows the preset order and the codec is taken from the ACK.
 
 ---
 

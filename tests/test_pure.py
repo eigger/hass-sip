@@ -22,6 +22,7 @@ import sip_message as sm  # noqa: E402
 # rtp_session / sip_client use relative imports, so expose the directory as a
 # throwaway package to load them without Home Assistant.
 import asyncio  # noqa: E402
+import functools  # noqa: E402
 import importlib.util  # noqa: E402
 import types  # noqa: E402
 
@@ -826,9 +827,11 @@ def test_codecs_g711_only_never_chooses_g722():
         order = codecs.preset_order(preset)
         assert codecs.choose(_sdp({9, 8}, pcma=8, g722=9), order).name == "PCMA"
         assert codecs.choose(_sdp({9, 0}, pcmu=0, g722=9), order).name == "PCMU"
-        # Dynamic-PT G.722 is excluded too; only the fallback remains.
-        assert codecs.choose(_sdp({110}, g722=110), order) is codecs.DEFAULT
-        assert codecs.choose(_sdp({9}, g722=9), order) is codecs.DEFAULT
+        # G.722 alone (static or dynamic PT): no acceptable codec, not PCMU.
+        assert codecs.choose(_sdp({110}, g722=110), order) is None
+        assert codecs.choose(_sdp({9}, g722=9), order) is None
+        # telephone-event only is not an audio offer: legacy fallback.
+        assert codecs.choose(_sdp({101}), order) is codecs.fallback(order)
     # PCMA first, but the remote only has PCMU: fall through the order.
     order = codecs.preset_order("g711_only_pcma_first")
     assert codecs.choose(_sdp({0}, pcmu=0), order).name == "PCMU"
@@ -844,6 +847,9 @@ def test_codecs_keep_or_choose_respects_preset():
     assert codecs.keep_or_choose(codecs.PCMU, _sdp({9, 0, 8}, **_ALL_OFFER), order) is codecs.PCMU
     # Remote dropped the current codec: pick by our order, skipping G.722.
     assert codecs.keep_or_choose(codecs.PCMU, _sdp({9, 8}, pcma=8, g722=9), order).name == "PCMA"
+    # Remote now offers only G.722: reject (None), never fall back to PCMU.
+    assert codecs.keep_or_choose(codecs.PCMU, _sdp({9}, g722=9), order) is None
+    assert codecs.keep_or_choose(codecs.G722, _sdp({9}, g722=9), order) is None
     # Offerless refresh keeps the current codec.
     assert codecs.keep_or_choose(codecs.PCMU, sm.SdpInfo(), order) is codecs.PCMU
 
@@ -870,7 +876,7 @@ def test_codecs_sdp_offer_follows_preset(preset, pts, rtpmap):
 
 def test_codec_mismatch_and_offered_names_follow_preset():
     if sip_client is None:
-        return
+        pytest.skip("needs Python 3.11+")
     g722_only = _sdp({9}, g722=9)
     names = sip_client._offered_codec_names(g722_only)
     assert names == ["G722"]  # what the remote offered is reported as-is
@@ -922,7 +928,7 @@ def test_local_sdp_offer_and_answer():
 
 def test_client_sdp_and_diagnostics_follow_codec_preference():
     if sip_client is None:
-        return
+        pytest.skip("needs Python 3.11+")
 
     async def run(preference):
         cfg = sip_client.SipConfig(
@@ -950,6 +956,197 @@ def test_codec_preference_option_schema():
         schema({const.CONF_CODEC_PREFERENCE: "g722_only"})
     stored = config_flow._build_options_schema({const.CONF_CODEC_PREFERENCE: "g711_only_pcma_first"})
     assert stored({})[const.CONF_CODEC_PREFERENCE] == "g711_only_pcma_first"
+
+
+_G722_ONLY_BODY = (
+    "v=0\r\nc=IN IP4 198.51.100.10\r\nm=audio 4000 RTP/AVP 9 101\r\n"
+    "a=rtpmap:9 G722/8000\r\na=rtpmap:101 telephone-event/8000\r\n"
+)
+
+
+def _in_loop(fn):
+    """Run a sync test body inside an event loop (SipClient needs one)."""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        async def run():
+            return fn(*args, **kwargs)
+
+        return asyncio.run(run())
+
+    return wrapper
+
+
+def _pcma_only_client(state=None):
+    client = sip_client.SipClient(
+        sip_client.SipConfig(
+            server="pbx.example", codec_preference="g711_only_pcma_first"
+        )
+    )
+    client.registered = True
+    client.state = state or sip_client.SipState.REGISTERED
+    client._local_ip = "192.0.2.1"
+    client._local_port = 5060
+    return client
+
+
+@_in_loop
+def test_incoming_invite_without_allowed_codec_gets_488():
+    if sip_client is None:
+        pytest.skip("needs Python 3.11+")
+    events = []
+    client = _pcma_only_client()
+    client.cb.on_incoming_call = events.append
+    client.cb.on_state_change = events.append
+    invite = _invite_request(body=_G722_ONLY_BODY)
+    with patch.object(client, "_send_raw") as send:
+        client._handle_request(invite)
+    sent = [c.args[0] for c in send.call_args_list]
+    assert len(sent) == 1
+    assert sent[0].startswith("SIP/2.0 488 Not Acceptable Here")
+    assert 'Warning: 305 192.0.2.1 "Incompatible media format"' in sent[0]
+    assert "m=audio" not in sent[0]
+    assert events == []
+    assert client.state == sip_client.SipState.REGISTERED
+    assert client._incoming_invite is None
+    assert client._d_call_id == ""
+
+
+@_in_loop
+def test_incoming_invite_with_allowed_codec_is_answered_with_it():
+    if sip_client is None:
+        pytest.skip("needs Python 3.11+")
+    client = _pcma_only_client()
+    body = _sdp_body(
+        pts="9 0 8",
+        rtpmap="a=rtpmap:9 G722/8000\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\n",
+    )
+    with patch.object(client, "_send_raw"):
+        client._handle_request(_invite_request(body=body))
+    assert client.state == sip_client.SipState.INCOMING
+    assert client.codec.name == "PCMA"
+
+
+@_in_loop
+def test_reinvite_without_allowed_codec_gets_488_and_keeps_session():
+    if sip_client is None:
+        pytest.skip("needs Python 3.11+")
+    for method_body in ("INVITE", "UPDATE"):
+        client = _pcma_only_client()
+        with patch.object(client, "_send_raw"):
+            client._handle_request(_invite_request())
+        client.state = sip_client.SipState.IN_CALL
+        assert client.codec.name == "PCMA"
+        if method_body == "INVITE":
+            req = _invite_request(cseq=2, branch="z9hG4bKre", body=_G722_ONLY_BODY)
+        else:
+            req = sm.parse_sip_message(
+                "UPDATE sip:alice@example SIP/2.0\r\n"
+                "Via: SIP/2.0/UDP pbx.example;branch=z9hG4bKup\r\n"
+                "From: <sip:bob@example>;tag=remote\r\n"
+                "To: <sip:alice@example>\r\n"
+                "Call-ID: dlg@example\r\nCSeq: 3 UPDATE\r\n"
+                "Content-Type: application/sdp\r\n"
+                f"Content-Length: {len(_G722_ONLY_BODY)}\r\n\r\n{_G722_ONLY_BODY}"
+            )
+        with patch.object(client, "_send_raw") as send:
+            client._handle_request(req)
+        sent = [c.args[0] for c in send.call_args_list]
+        assert len(sent) == 1 and sent[0].startswith("SIP/2.0 488 ")
+        assert "Warning: 305" in sent[0]
+        assert client.state == sip_client.SipState.IN_CALL
+        assert client.codec.name == "PCMA"
+        assert client._remote_rtp_port == 4000
+
+
+@_in_loop
+def test_outbound_answer_without_allowed_codec_acks_then_byes():
+    if sip_client is None:
+        pytest.skip("needs Python 3.11+")
+    ended, connected = [], []
+    client = _pcma_only_client(sip_client.SipState.RINGING_OUT)
+    client.cb.on_call_ended = ended.append
+    client.cb.on_call_connected = lambda: connected.append(1)
+    client._outbound = True
+    client._d_call_id = "out@example"
+    client._d_local = "<sip:alice@example>;tag=local"
+    client._d_remote = "<sip:bob@example>"
+    client._d_remote_target = "sip:bob@example"
+    client._d_cseq = 1
+    client._invite_cseq = 1
+    resp = sm.parse_sip_message(
+        "SIP/2.0 200 OK\r\n"
+        "To: <sip:bob@example>;tag=remote\r\n"
+        "Contact: <sip:bob@target.example>\r\n"
+        "Call-ID: out@example\r\nCSeq: 1 INVITE\r\n"
+        "Content-Type: application/sdp\r\n"
+        f"Content-Length: {len(_G722_ONLY_BODY)}\r\n\r\n{_G722_ONLY_BODY}"
+    )
+    with (
+        patch.object(client, "_send_raw") as send,
+        patch.object(client, "_spawn") as spawn,
+    ):
+        client._handle_invite_response(resp)
+        for call in spawn.call_args_list:
+            call.args[0].close()
+    sent = [c.args[0] for c in send.call_args_list]
+    assert sent[0].startswith("ACK ")
+    assert sent[1].startswith("BYE ")
+    assert "CSeq: 2 BYE" in sent[1]
+    assert connected == []
+    assert ended == ["codec_mismatch"]
+    assert client.state == sip_client.SipState.REGISTERED
+
+
+@pytest.mark.parametrize(
+    "preset,pts",
+    [("auto", "9 0 8"), ("g711_only_pcma_first", "8 0")],
+)
+@_in_loop
+def test_offerless_invite_200_offers_ordered_codecs_and_ack_answers(preset, pts):
+    if sip_client is None:
+        pytest.skip("needs Python 3.11+")
+    client = _pcma_only_client()
+    client.config.codec_preference = preset
+    client._codec_order = codecs.preset_order(preset)
+    invite = _invite_request(body="")
+    with patch.object(client, "_send_raw"):
+        client._handle_request(invite)
+        resp200 = client._build_response(invite, 200, "OK", True)
+    assert f"RTP/AVP {pts} 101" in resp200
+    assert client._awaiting_answer is True
+    ack = sm.parse_sip_message(
+        "ACK sip:alice@example SIP/2.0\r\n"
+        "Via: SIP/2.0/UDP pbx.example;branch=z9hG4bKack\r\n"
+        "Call-ID: dlg@example\r\nCSeq: 1 ACK\r\n"
+        "Content-Type: application/sdp\r\n"
+        f"Content-Length: {len(_sdp_body())}\r\n\r\n{_sdp_body()}"
+    )
+    with patch.object(client, "_send_raw"):
+        client._handle_request(ack)
+    assert client._awaiting_answer is False
+    assert client.codec.name == "PCMA"
+    assert client._build_response(invite, 200, "OK", True).count("a=rtpmap:8 ") == 1
+    assert "RTP/AVP 8 101" in client._build_response(invite, 200, "OK", True)
+
+
+def test_options_flow_shows_and_saves_codec_preference():
+    flow = config_flow.SipOptionsFlow()
+    flow.config_entry = MagicMock(options={})
+
+    kind, kw = asyncio.run(flow.async_step_init(None))
+    assert kind == "form" and kw["step_id"] == "init"
+    assert kw["data_schema"]({})[const.CONF_CODEC_PREFERENCE] == "auto"
+
+    kind, kw = asyncio.run(
+        flow.async_step_init({const.CONF_CODEC_PREFERENCE: "g711_only_pcma_first"})
+    )
+    assert kind == "entry"
+    assert kw["data"] == {const.CONF_CODEC_PREFERENCE: "g711_only_pcma_first"}
+    assert isinstance(
+        config_flow.SipConfigFlow.async_get_options_flow(MagicMock()),
+        config_flow.SipOptionsFlow,
+    )
 
 
 def test_auth_param():

@@ -123,6 +123,19 @@ PRESETS: dict[str, tuple[Codec, ...]] = {
 DEFAULT_PRESET = "auto"
 
 
+def fallback(order: tuple[Codec, ...]) -> Codec:
+    """Codec to assume when the remote has not offered anything yet."""
+    return DEFAULT if order is SUPPORTED else order[0]
+
+
+def has_audio_offer(sdp: SdpInfo) -> bool:
+    """True when the SDP lists audio payloads beyond telephone-event / CN."""
+    if max(sdp.pcmu_pt, sdp.pcma_pt, sdp.g722_pt) >= 0:
+        return True
+    ignored = {sdp.telephone_event_pt, TELEPHONE_EVENT_PT, 13}
+    return any(pt not in ignored for pt in sdp.offered_pts)
+
+
 def preset_order(name: str | None) -> tuple[Codec, ...]:
     """Ordered codecs for a preset name; unknown or missing means ``auto``."""
     return PRESETS.get(name or DEFAULT_PRESET, SUPPORTED)
@@ -130,8 +143,12 @@ def preset_order(name: str | None) -> tuple[Codec, ...]:
 TELEPHONE_EVENT_PT = 101
 
 
-def choose(sdp: SdpInfo, order: tuple[Codec, ...] = SUPPORTED) -> Codec:
+def choose(sdp: SdpInfo, order: tuple[Codec, ...] = SUPPORTED) -> Codec | None:
     """Pick the most preferred codec in ``order`` that the remote also offered.
+
+    Returns ``None`` when the remote offered audio but nothing in ``order``
+    (answering with a codec it never listed would break RFC 3264). An SDP with
+    no audio payloads at all falls back to :func:`fallback`.
 
     Prefers a static payload type present in ``offered_pts``. If the remote only
     advertised a codec under a dynamic PT (``a=rtpmap:96 PCMU/8000``), fall back
@@ -149,12 +166,14 @@ def choose(sdp: SdpInfo, order: tuple[Codec, ...] = SUPPORTED) -> Codec:
         npt = named.get(codec.name, -1)
         if npt >= 0:
             return codec.with_payload_type(npt)
-    return DEFAULT
+    if has_audio_offer(sdp):
+        return None
+    return fallback(order)
 
 
 def keep_or_choose(
     current: Codec, sdp: SdpInfo, order: tuple[Codec, ...] = SUPPORTED
-) -> Codec:
+) -> Codec | None:
     """Keep ``current`` when the offer still lists it; otherwise :func:`choose`.
 
     A mid-dialog refresh that still advertises the negotiated codec must not
@@ -163,7 +182,8 @@ def keep_or_choose(
 
     Dynamic payload types (>= 96) are matched by codec name, not number:
     the same PT can be PCMU in one offer and G.722 in the next.
-    A codec outside ``order`` is never kept.
+    A codec outside ``order`` is never kept. ``None`` means the offer has no
+    codec we allow; the caller should reject it and leave the session alone.
     """
     if current.name not in {c.name for c in order}:
         return choose(sdp, order)

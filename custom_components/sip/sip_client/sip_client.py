@@ -319,6 +319,8 @@ class SipClient:
         self._remote_rtp_ip = ""
         self._remote_rtp_port = 0
         self._codec: codecs.Codec = codecs.DEFAULT
+        # Our 200 OK was the offer (offerless INVITE); the answer is in the ACK.
+        self._awaiting_answer = False
         self._chosen_pt = self._codec.payload_type
         self._remote_dtmf_pt = -1
         self._sdp_negotiated = False
@@ -1053,8 +1055,14 @@ class SipClient:
             if contact_uri:
                 self._d_remote_target = contact_uri
             self._dialog_routes = response_routes
-            self._apply_remote_sdp(sm.parse_sdp(m.body))
+            accepted = self._apply_remote_sdp(sm.parse_sdp(m.body))
             self._send_raw(self._build_ack(m))
+            if not accepted:
+                _LOGGER.warning("Ending call: the answer has no allowed codec")
+                self._d_cseq += 1
+                self._send_raw(self._build_in_dialog("BYE"))
+                self._end_call("codec_mismatch")
+                return
 
             async def _start_and_play():
                 await self._start_media()
@@ -1085,7 +1093,26 @@ class SipClient:
             auth += f', opaque="{opaque}"'
         return auth + "\r\n"
 
-    def _apply_remote_sdp(self, sdp: sm.SdpInfo) -> None:
+    def _apply_remote_sdp(self, sdp: sm.SdpInfo) -> bool:
+        """Adopt the remote SDP. False (nothing changed) when no codec fits."""
+        in_dialog = self._sdp_negotiated
+        # First SDP of a dialog picks the preferred codec. Later re-INVITE /
+        # UPDATE keep the current one when it is still offered.
+        if in_dialog:
+            new_codec = codecs.keep_or_choose(self._codec, sdp, self._codec_order)
+        else:
+            new_codec = codecs.choose(sdp, self._codec_order)
+        if new_codec is None:
+            # Keep what the remote offered so diagnostics show the mismatch.
+            self._remote_offered_pts = sorted(sdp.offered_pts)
+            self._remote_offered_names = _offered_codec_names(sdp)
+            _LOGGER.warning(
+                "Remote offered no allowed codec (offered %s, allowed %s); "
+                "check the codec preference option",
+                _offered_codec_names(sdp) or sorted(sdp.offered_pts),
+                [c.name for c in self._codec_order],
+            )
+            return False
         old_ip, old_port = self._remote_rtp_ip, self._remote_rtp_port
         # RFC 2543 hold uses c=0.0.0.0; keep the last real destination.
         if sdp.connection_ip and sdp.connection_ip not in _HOLD_IPS:
@@ -1094,13 +1121,6 @@ class SipClient:
             self._remote_rtp_port = sdp.audio_port
 
         old_codec = self._codec
-        in_dialog = self._sdp_negotiated
-        # First SDP of a dialog picks the preferred codec. Later re-INVITE /
-        # UPDATE keep the current one when it is still offered.
-        if in_dialog:
-            new_codec = codecs.keep_or_choose(self._codec, sdp, self._codec_order)
-        else:
-            new_codec = codecs.choose(sdp, self._codec_order)
         codec_changed = (
             new_codec.name != old_codec.name
             or new_codec.payload_type != old_codec.payload_type
@@ -1135,10 +1155,12 @@ class SipClient:
         self._set_hold(sdp.is_hold)
         self.rtp.set_expect_rx(self._local_direction != "sendonly")
         self._sync_media_endpoint(old_ip, old_port)
+        return True
 
     def _begin_dialog_media(self) -> None:
         """Clear per-call media state so the previous dialog cannot leak."""
-        self._codec = codecs.DEFAULT
+        self._codec = codecs.fallback(self._codec_order)
+        self._awaiting_answer = False
         self._chosen_pt = self._codec.payload_type
         self._remote_dtmf_pt = -1
         self._remote_offered_pts = []
@@ -1198,8 +1220,12 @@ class SipClient:
         to = req.header("To")
         if "tag=" not in to:
             to += f";tag={self._d_local_tag}"
-        # Answers carry only the negotiated codec (RFC 3264); offers use the full set.
-        sdp = self._local_sdp(only=self._codec) if with_sdp else ""
+        # Answers carry only the negotiated codec (RFC 3264); offers use the
+        # full set, including a 200 to an offerless INVITE.
+        sdp = ""
+        if with_sdp:
+            only = None if self._awaiting_answer else self._codec
+            sdp = self._local_sdp(only=only)
         msg = (
             f"SIP/2.0 {code} {reason}\r\n"
             f"Via: {req.header('Via')}\r\n"
@@ -1273,9 +1299,19 @@ class SipClient:
         if contact:
             self._d_remote_target = contact
         if m.body.strip():
-            self._apply_remote_sdp(sm.parse_sdp(m.body))
+            if not self._apply_remote_sdp(sm.parse_sdp(m.body)):
+                self._reject_media(m)
+                return
+        else:
+            self._awaiting_answer = True
         _LOGGER.info("Accepted re-INVITE (cseq=%s)", self._remote_invite_cseq)
         self._send_raw(self._build_response(m, 200, "OK", True))
+
+    def _reject_media(self, req: sm.SipMessage) -> None:
+        """488 a request whose SDP has no codec we allow; session stays as is."""
+        resp = self._build_response(req, 488, "Not Acceptable Here", False)
+        warning = f'Warning: 305 {self._local_ip} "Incompatible media format"\r\n'
+        self._send_raw(resp.replace("Content-Length:", warning + "Content-Length:", 1))
 
     def _handle_update(self, m: sm.SipMessage) -> None:
         """Answer UPDATE; include an SDP answer when the request offered one."""
@@ -1290,7 +1326,9 @@ class SipClient:
             )
             return
         if m.body.strip():
-            self._apply_remote_sdp(sm.parse_sdp(m.body))
+            if not self._apply_remote_sdp(sm.parse_sdp(m.body)):
+                self._reject_media(m)
+                return
             contact = _angle_uri(m.header("Contact"))
             if contact:
                 self._d_remote_target = contact
@@ -1348,6 +1386,13 @@ class SipClient:
                     self._emit("on_call_ended", "local")
                 self._send_raw(self._build_response(m, 486, "Busy Here", False))
                 return
+            offer = sm.parse_sdp(m.body)
+            if codecs.choose(offer, self._codec_order) is None:
+                _LOGGER.warning(
+                    "Rejecting call from %s: no allowed codec in its offer", caller
+                )
+                self._reject_media(m)
+                return
             self._outbound = False
             self._incoming_invite = m
             self._d_call_id = m.header("Call-ID")
@@ -1365,7 +1410,8 @@ class SipClient:
             self._remote_invite_cseq = self._d_cseq
             self._remote_invite_branch = _via_branch(m.header("Via"))
             self._begin_dialog_media()
-            self._apply_remote_sdp(sm.parse_sdp(m.body))
+            self._apply_remote_sdp(offer)
+            self._awaiting_answer = not m.body.strip()
 
             # Check for standard Intercom/Doorbell auto-answer headers
             call_info = m.header("Call-Info")
@@ -1415,6 +1461,7 @@ class SipClient:
             # arrives in the ACK body (RFC 3261 §13.2.1 / §14.1).
             if m.body.strip():
                 self._apply_remote_sdp(sm.parse_sdp(m.body))
+            self._awaiting_answer = False
             if self.state == SipState.ANSWERING:
                 self._set_state(SipState.IN_CALL)
                 _LOGGER.info("Call connected (inbound)")

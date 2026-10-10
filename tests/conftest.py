@@ -39,6 +39,31 @@ sys.modules["homeassistant.core"] = mock_core
 
 # Mock homeassistant.config_entries
 mock_config_entries = MagicMock()
+
+
+class _OptionsFlowWithReload:
+    """Minimal stand-in so SipOptionsFlow is a real, testable class."""
+
+    config_entry = None
+
+    def async_show_form(self, **kwargs):
+        return ("form", kwargs)
+
+    def async_create_entry(self, **kwargs):
+        return ("entry", kwargs)
+
+
+mock_config_entries.OptionsFlowWithReload = _OptionsFlowWithReload
+
+
+class _ConfigFlow:
+    def __init_subclass__(cls, domain=None, **kwargs):
+        super().__init_subclass__(**kwargs)
+
+
+mock_config_entries.ConfigFlow = _ConfigFlow
+# `from homeassistant import config_entries` reads the attribute, not sys.modules.
+sys.modules["homeassistant"].config_entries = mock_config_entries
 sys.modules["homeassistant.config_entries"] = mock_config_entries
 
 # Mock homeassistant.helpers.entity
