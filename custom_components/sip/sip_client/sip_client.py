@@ -211,7 +211,12 @@ def _is_lan_address(value: str) -> bool:
         ip = ipaddress.ip_address(value)
     except ValueError:
         return False
-    return ip.is_private or ip.is_link_local
+    # 100.64.0.0/10 (CGNAT, Tailscale) is not "private" for ipaddress.
+    return (
+        ip.is_private
+        or ip.is_link_local
+        or (ip.version == 4 and ip in ipaddress.ip_network("100.64.0.0/10"))
+    )
 
 
 def _answer_direction(sdp: sm.SdpInfo) -> str:
@@ -719,7 +724,10 @@ class SipClient:
         A public address is normal behind a home router and only logged.
         """
         received = _via_received(m.header("Via"))
-        if not received or received == self._local_ip:
+        if not received:
+            return
+        if received == self._local_ip:
+            self._observed_ip = ""
             return
         self._observed_ip = received
         if received == self._warned_observed_ip:

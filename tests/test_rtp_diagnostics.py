@@ -81,6 +81,32 @@ def test_public_received_address_is_only_info(caplog):
     asyncio.run(run())
 
 
+def test_observed_address_cleared_when_it_matches_again():
+    if _skip():
+        return
+
+    async def run():
+        client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
+        client._schedule_register = lambda *_: None
+        client._reg_cseq = 1
+        client._local_ip = "192.168.1.10"
+        client._handle_register_response(_reg_response("10.0.0.7"))
+        assert client._observed_ip == "10.0.0.7"
+        client._handle_register_response(_reg_response("192.168.1.10"))
+        assert client._observed_ip == ""
+
+    asyncio.run(run())
+
+
+def test_cgnat_and_vpn_range_counts_as_lan():
+    if _skip():
+        return
+    assert sip_client._is_lan_address("100.64.1.2")
+    assert sip_client._is_lan_address("192.168.1.2")
+    assert not sip_client._is_lan_address("8.8.8.8")
+    assert not sip_client._is_lan_address("[2001:db8::1]")
+
+
 def test_matching_or_missing_received_does_not_warn(caplog):
     if _skip():
         return
@@ -160,9 +186,9 @@ def test_no_rtp_warning_when_audio_arrived_short_or_held(caplog):
             _in_call_client(rx=0, tx=47999),  # just under 3 s of G.711
             _in_call_client(rx=0, tx=80000, rx_packets=5),  # only CN/undecodable
             _in_call_client(rx=0, tx=80000, expect_rx=False),  # paging speaker
-            _in_call_client(rx=0, tx=40000, on_hold=True),  # remote on hold
+            _in_call_client(rx=0, tx=80000, on_hold=True),  # remote on hold
             _in_call_client(
-                rx=0, tx=40000, state=sip_client.SipState.INVITING
+                rx=0, tx=80000, state=sip_client.SipState.INVITING
             ),  # never connected
         ]
         with caplog.at_level(logging.WARNING):
