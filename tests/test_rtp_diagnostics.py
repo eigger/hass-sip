@@ -223,3 +223,104 @@ def test_first_rtp_packet_source_is_logged_once(caplog):
         assert len(first) == 1 and "differs from SDP" in first[0]
 
     asyncio.run(run())
+
+
+def test_via_rport_parsing():
+    if _skip():
+        return
+    assert sip_client._via_rport("SIP/2.0/UDP a:1;rport=5062;received=10.0.0.5") == 5062
+    assert sip_client._via_rport("SIP/2.0/UDP a:1;rport") == 0
+    assert sip_client._via_rport("SIP/2.0/UDP a:1;rport=0") == 0
+    assert sip_client._via_rport("SIP/2.0/UDP a:1;rport=70000") == 0
+    assert sip_client._via_rport(
+        "SIP/2.0/UDP a:1;rport=5062, SIP/2.0/UDP b:1;rport=9"
+    ) == 5062
+
+
+def _nat_client(use_observed: bool, received: str | None, rport: int = 40000):
+    client = sip_client.SipClient(
+        sip_client.SipConfig(
+            server="pbx.example", username="100", use_observed_address=use_observed
+        )
+    )
+    client._schedule_register = lambda *_: None
+    client._do_register = lambda: None
+    client._reg_cseq = 1
+    client._local_ip = "192.168.2.208"
+    client._local_port = 5060
+    if received:
+        via = f"SIP/2.0/UDP 192.168.2.208:5060;rport={rport};received={received}"
+        client._handle_register_response(
+            sm.parse_sip_message(
+                f"SIP/2.0 200 OK\r\nVia: {via}\r\nCSeq: 1 REGISTER\r\n\r\n"
+            )
+        )
+    return client
+
+
+def test_advertised_address_off_uses_local():
+    if _skip():
+        return
+
+    async def run():
+        client = _nat_client(False, "192.168.3.100")
+        assert client._contact_uri() == "<sip:100@192.168.2.208:5060>"
+        sdp = client._local_sdp()
+        assert "o=- " in sdp and "IN IP4 192.168.2.208\r\n" in sdp
+        assert "192.168.3.100" not in sdp
+
+    asyncio.run(run())
+
+
+def test_advertised_address_on_uses_observed():
+    if _skip():
+        return
+
+    async def run():
+        client = _nat_client(True, "192.168.3.100")
+        assert client._contact_uri() == "<sip:100@192.168.3.100:40000>"
+        sdp = client._local_sdp()
+        assert "o=- " in sdp and "IN IP4 192.168.3.100\r\n" in sdp
+        assert "c=IN IP4 192.168.3.100\r\n" in sdp
+        assert "192.168.2.208" not in sdp
+        assert f"m=audio {client.config.local_rtp_port} " in sdp
+        assert "Contact: <sip:100@192.168.3.100:40000>" in client._build_register()
+
+    asyncio.run(run())
+
+
+def test_advertised_address_on_falls_back_to_local():
+    if _skip():
+        return
+
+    async def run():
+        client = _nat_client(True, None)
+        assert client._contact_uri() == "<sip:100@192.168.2.208:5060>"
+        assert "c=IN IP4 192.168.2.208\r\n" in client._local_sdp()
+
+    asyncio.run(run())
+
+
+def test_observed_address_triggers_one_reregister():
+    if _skip():
+        return
+
+    async def run():
+        client = _nat_client(True, None)
+        calls = []
+
+        def fake_register():
+            calls.append(1)
+            client._build_register()
+
+        client._do_register = fake_register
+        client._reg_contact_sent = client._contact_uri()
+        via = "SIP/2.0/UDP 192.168.2.208:5060;rport=40000;received=192.168.3.100"
+        resp = sm.parse_sip_message(
+            f"SIP/2.0 200 OK\r\nVia: {via}\r\nCSeq: 1 REGISTER\r\n\r\n"
+        )
+        client._handle_register_response(resp)
+        client._handle_register_response(resp)
+        assert len(calls) == 1
+
+    asyncio.run(run())

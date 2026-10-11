@@ -21,6 +21,7 @@ CONF_MEDIA_TIMEOUT = "media_timeout"
 CONF_MAX_CALL_DURATION = "max_call_duration"
 CONF_ASSIST_USER = "assist_user"
 CONF_CODEC_PREFERENCE = "codec_preference"
+CONF_USE_OBSERVED_ADDRESS = "use_observed_address"
 
 # Defaults
 DEFAULT_PORT = 5060
@@ -29,6 +30,7 @@ DEFAULT_LOCAL_RTP_PORT = 7078
 DEFAULT_MEDIA_TIMEOUT = 30
 DEFAULT_MAX_CALL_DURATION = 3600
 DEFAULT_CODEC_PREFERENCE = "auto"
+DEFAULT_USE_OBSERVED_ADDRESS = False
 # Keys of sip_client.codecs.PRESETS (kept in sync by a test).
 CODEC_PREFERENCE_OPTIONS = (
     "auto",

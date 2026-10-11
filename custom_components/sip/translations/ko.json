@@ -53,10 +53,12 @@
       "init": {
         "title": "옵션",
         "data": {
-          "codec_preference": "코덱 우선순위"
+          "codec_preference": "코덱 우선순위",
+          "use_observed_address": "서버에서 관측된 주소 사용 (NAT)"
         },
         "data_description": {
-          "codec_preference": "제공할 오디오 코덱과 순서를 선택합니다. 통화에서 한쪽 음성만 들리는 경우(예: G.722로 협상되는 FRITZ!Box) G.711 전용 프리셋을 선택하세요. 저장하면 계정이 다시 로드됩니다."
+          "codec_preference": "제공할 오디오 코덱과 순서를 선택합니다. 통화에서 한쪽 음성만 들리는 경우(예: G.722로 협상되는 FRITZ!Box) G.711 전용 프리셋을 선택하세요. 저장하면 계정이 다시 로드됩니다.",
+          "use_observed_address": "Home Assistant가 SIP 서버와의 사이에 NAT/SNAT(예: 출발지 주소를 변환하는 방화벽) 뒤에 있고 통화에 소리가 없을 때 사용하세요. 로컬 인터페이스 주소 대신 서버가 보는 주소(Via received/rport)를 Contact와 SDP에 알립니다."
         }
       }
     }

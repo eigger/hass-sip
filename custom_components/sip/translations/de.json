@@ -53,10 +53,12 @@
       "init": {
         "title": "Optionen",
         "data": {
-          "codec_preference": "Codec-Präferenz"
+          "codec_preference": "Codec-Präferenz",
+          "use_observed_address": "Vom Server beobachtete Adresse verwenden (NAT)"
         },
         "data_description": {
-          "codec_preference": "Legt fest, welche Audio-Codecs in welcher Reihenfolge angeboten werden. Bei einseitigem Audio (z. B. an einer FRITZ!Box, die G.722 aushandelt) wähle eine reine G.711-Voreinstellung. Beim Speichern wird das Konto neu geladen."
+          "codec_preference": "Legt fest, welche Audio-Codecs in welcher Reihenfolge angeboten werden. Bei einseitigem Audio (z. B. an einer FRITZ!Box, die G.722 aushandelt) wähle eine reine G.711-Voreinstellung. Beim Speichern wird das Konto neu geladen.",
+          "use_observed_address": "Aktivieren, wenn Home Assistant zum SIP-Server hinter NAT/SNAT liegt (z. B. eine Firewall, die die Absenderadresse umschreibt) und Anrufe kein Audio haben. Statt der lokalen Schnittstellenadresse wird die vom Server gesehene Adresse (Via received/rport) in Contact und SDP angegeben."
         }
       }
     }

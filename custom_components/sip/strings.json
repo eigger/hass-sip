@@ -53,10 +53,12 @@
       "init": {
         "title": "Options",
         "data": {
-          "codec_preference": "Codec preference"
+          "codec_preference": "Codec preference",
+          "use_observed_address": "Use server-observed address (NAT)"
         },
         "data_description": {
-          "codec_preference": "Choose which audio codecs are offered and in what order. If calls have one-way audio (for example on a FRITZ!Box negotiating G.722), pick a G.711-only preset. Saving reloads the account."
+          "codec_preference": "Choose which audio codecs are offered and in what order. If calls have one-way audio (for example on a FRITZ!Box negotiating G.722), pick a G.711-only preset. Saving reloads the account.",
+          "use_observed_address": "Enable when Home Assistant is behind NAT/SNAT toward the SIP server (for example a firewall that rewrites the source address) and calls have no audio. The address the server sees (Via received/rport) is advertised in Contact and SDP instead of the local interface address."
         }
       }
     }

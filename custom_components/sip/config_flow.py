@@ -38,6 +38,8 @@ from .const import (
     CONF_MEDIA_TIMEOUT,
     CONF_MAX_CALL_DURATION,
     CONF_CODEC_PREFERENCE,
+    CONF_USE_OBSERVED_ADDRESS,
+    DEFAULT_USE_OBSERVED_ADDRESS,
     CODEC_PREFERENCE_OPTIONS,
     DEFAULT_CODEC_PREFERENCE,
     DEFAULT_MEDIA_TIMEOUT,
@@ -133,6 +135,12 @@ def _build_options_schema(defaults: Mapping[str, Any]) -> vol.Schema:
                     translation_key=CONF_CODEC_PREFERENCE,
                 )
             ),
+            vol.Optional(
+                CONF_USE_OBSERVED_ADDRESS,
+                default=defaults.get(
+                    CONF_USE_OBSERVED_ADDRESS, DEFAULT_USE_OBSERVED_ADDRESS
+                ),
+            ): cv.boolean,
         }
     )
 

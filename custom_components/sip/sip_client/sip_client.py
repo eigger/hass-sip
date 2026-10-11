@@ -61,6 +61,7 @@ class SipConfig:
     media_timeout: int = 30
     max_call_duration: int = 3600
     codec_preference: str = codecs.DEFAULT_PRESET
+    use_observed_address: bool = False
 
 
 @dataclass
@@ -201,6 +202,14 @@ def _via_received(via: str) -> str:
     return match.group(1) if match else ""
 
 
+def _via_rport(via: str) -> int:
+    """Source port the peer saw for the top Via (``rport=``), or 0."""
+    first = via.split(",", 1)[0]
+    match = re.search(r";rport=(\d+)", first, re.IGNORECASE)
+    port = int(match.group(1)) if match else 0
+    return port if 0 < port <= 65535 else 0
+
+
 # Seconds of our own RTP (PCM s16le counted at the codec rate) sent before a
 # silent far end is worth a warning.
 _NO_RTP_WARN_SECONDS = 3
@@ -296,6 +305,8 @@ class SipClient:
         self._local_ip = ""
         self._warned_observed_ip = ""
         self._observed_ip = ""
+        self._observed_port = 0
+        self._reg_contact_sent = ""
         self._local_port = 0
         self._closing = False
 
@@ -623,8 +634,25 @@ class SipClient:
                 self._arm_max_duration()
 
     # -- registration ---------------------------------------------------
+    @property
+    def _advertised_ip(self) -> str:
+        """Address put in Contact and SDP: the server-observed one if enabled."""
+        if self.config.use_observed_address and self._observed_ip:
+            return self._observed_ip
+        return self._local_ip
+
+    @property
+    def _advertised_contact_port(self) -> int:
+        """SIP port put in Contact (the NAT-mapped rport if enabled and known)."""
+        if self.config.use_observed_address and self._observed_port:
+            return self._observed_port
+        return self._local_port
+
     def _contact_uri(self) -> str:
-        return f"<sip:{self.config.username}@{self._local_ip}:{self._local_port}>"
+        return (
+            f"<sip:{self.config.username}@{self._advertised_ip}"
+            f":{self._advertised_contact_port}>"
+        )
 
     @staticmethod
     def _parse_min_expires(m: sm.SipMessage) -> int | None:
@@ -643,6 +671,7 @@ class SipClient:
         aor = f"sip:{cfg.username}@{cfg.domain}"
         reg_uri = f"sip:{cfg.domain}"
         disp = cfg.caller_id or cfg.username
+        self._reg_contact_sent = self._contact_uri()
         return (
             f"REGISTER {reg_uri} SIP/2.0\r\n"
             f"Via: SIP/2.0/UDP {self._local_ip}:{self._local_port};branch={self._reg_branch};rport\r\n"
@@ -651,7 +680,7 @@ class SipClient:
             f"To: <{aor}>\r\n"
             f"Call-ID: {self._reg_call_id}\r\n"
             f"CSeq: {self._reg_cseq} REGISTER\r\n"
-            f"Contact: {self._contact_uri()}\r\n"
+            f"Contact: {self._reg_contact_sent}\r\n"
             f"Expires: {cfg.register_expiration}\r\n"
             f"User-Agent: {USER_AGENT}\r\n"
             "Content-Length: 0\r\n\r\n"
@@ -726,6 +755,9 @@ class SipClient:
         received = _via_received(m.header("Via"))
         if not received:
             return
+        # rport on its own is only the NAT-mapped source port of our socket.
+        rport = _via_rport(m.header("Via"))
+        self._observed_port = rport if rport != self._local_port else 0
         if received == self._local_ip:
             self._observed_ip = ""
             return
@@ -733,6 +765,14 @@ class SipClient:
         if received == self._warned_observed_ip:
             return
         self._warned_observed_ip = received
+        if self.config.use_observed_address:
+            _LOGGER.info(
+                "The server sees this client as %s; advertising that address "
+                "in Contact and SDP instead of %s",
+                received,
+                self._local_ip,
+            )
+            return
         level = (
             logging.WARNING
             if _is_lan_address(received) and _is_lan_address(self._local_ip)
@@ -809,6 +849,17 @@ class SipClient:
             if not was:
                 _LOGGER.info("Registered with %s", self.config.server)
                 self._emit("on_registered")
+            if (
+                self.config.use_observed_address
+                and self._contact_uri() != self._reg_contact_sent
+            ):
+                # The observed address became known (or changed) after this
+                # REGISTER went out; refresh so the binding carries it. The
+                # next REGISTER sends the new Contact, so this cannot loop.
+                _LOGGER.info(
+                    "Re-registering with observed Contact %s", self._contact_uri()
+                )
+                self._do_register()
             return
         _LOGGER.warning("REGISTER failed: %s %s", m.status_code, m.reason)
         self._retry_after_register_failure(
@@ -962,9 +1013,9 @@ class SipClient:
         )
         return (
             "v=0\r\n"
-            f"o=- {sid} {sid} IN IP4 {self._local_ip}\r\n"
+            f"o=- {sid} {sid} IN IP4 {self._advertised_ip}\r\n"
             "s=homeassistant\r\n"
-            f"c=IN IP4 {self._local_ip}\r\n"
+            f"c=IN IP4 {self._advertised_ip}\r\n"
             "t=0 0\r\n"
             f"{media_line}"
             f"{codecs.sdp_rtpmaps(only=only, order=self._codec_order)}"
@@ -1821,7 +1872,7 @@ class SipClient:
                     if self._observed_ip
                     else ""
                 ),
-                self._local_ip,
+                self._advertised_ip,
             )
         ended_session = self._media_session
         self._media_session += 1
