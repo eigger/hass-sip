@@ -16,7 +16,11 @@
           "register_expiration": "Registrierungs-Ablaufzeit (Sekunden)",
           "local_rtp_port": "Lokaler RTP-Port (Optional)",
           "media_timeout": "Medien-Timeout (Sekunden, 0=deaktiviert)",
-          "max_call_duration": "Maximale Gesprächsdauer (Sekunden, 0=unbegrenzt)"
+          "max_call_duration": "Maximale Gesprächsdauer (Sekunden, 0=unbegrenzt)",
+          "use_observed_address": "Vom Server beobachtete Adresse verwenden (NAT)"
+        },
+        "data_description": {
+          "use_observed_address": "Aktivieren, wenn Home Assistant zum SIP-Server hinter NAT/SNAT liegt (z. B. eine Firewall, die die Absenderadresse umschreibt) und Anrufe kein Audio haben. Statt der lokalen Schnittstellenadresse wird die vom Server gesehene Adresse (Via received/rport) in Contact und SDP angegeben."
         }
       },
       "reconfigure": {
@@ -34,7 +38,11 @@
           "register_expiration": "Registrierungs-Ablaufzeit (Sekunden)",
           "local_rtp_port": "Lokaler RTP-Port (Optional)",
           "media_timeout": "Medien-Timeout (Sekunden, 0=deaktiviert)",
-          "max_call_duration": "Maximale Gesprächsdauer (Sekunden, 0=unbegrenzt)"
+          "max_call_duration": "Maximale Gesprächsdauer (Sekunden, 0=unbegrenzt)",
+          "use_observed_address": "Vom Server beobachtete Adresse verwenden (NAT)"
+        },
+        "data_description": {
+          "use_observed_address": "Aktivieren, wenn Home Assistant zum SIP-Server hinter NAT/SNAT liegt (z. B. eine Firewall, die die Absenderadresse umschreibt) und Anrufe kein Audio haben. Statt der lokalen Schnittstellenadresse wird die vom Server gesehene Adresse (Via received/rport) in Contact und SDP angegeben."
         }
       }
     },

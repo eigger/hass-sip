@@ -38,6 +38,8 @@ from .const import (
     CONF_MEDIA_TIMEOUT,
     CONF_MAX_CALL_DURATION,
     CONF_CODEC_PREFERENCE,
+    CONF_USE_OBSERVED_ADDRESS,
+    DEFAULT_USE_OBSERVED_ADDRESS,
     CODEC_PREFERENCE_OPTIONS,
     DEFAULT_CODEC_PREFERENCE,
     DEFAULT_MEDIA_TIMEOUT,
@@ -115,6 +117,12 @@ def _build_schema(
                 CONF_MAX_CALL_DURATION,
                 default=_default(CONF_MAX_CALL_DURATION, DEFAULT_MAX_CALL_DURATION),
             ): vol.All(vol.Coerce(int), vol.Range(min=0)),
+            vol.Optional(
+                CONF_USE_OBSERVED_ADDRESS,
+                default=_default(
+                    CONF_USE_OBSERVED_ADDRESS, DEFAULT_USE_OBSERVED_ADDRESS
+                ),
+            ): bool,
         }
     )
 

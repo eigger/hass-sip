@@ -46,6 +46,8 @@ from .const import (
     CONF_OUTBOUND_PROXY,
     CONF_AUTH_USERNAME,
     CONF_MEDIA_TIMEOUT,
+    CONF_USE_OBSERVED_ADDRESS,
+    DEFAULT_USE_OBSERVED_ADDRESS,
     CONF_MAX_CALL_DURATION,
     CONF_CODEC_PREFERENCE,
     DEFAULT_CODEC_PREFERENCE,
@@ -275,6 +277,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         max_call_duration=config.get(CONF_MAX_CALL_DURATION, DEFAULT_MAX_CALL_DURATION),
         codec_preference=entry.options.get(
             CONF_CODEC_PREFERENCE, DEFAULT_CODEC_PREFERENCE
+        ),
+        use_observed_address=config.get(
+            CONF_USE_OBSERVED_ADDRESS, DEFAULT_USE_OBSERVED_ADDRESS
         ),
     )
 

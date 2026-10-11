@@ -7507,3 +7507,13 @@ if __name__ == "__main__":
             print(f"FAIL {fn.__name__}: {e}")
     print(f"\n{len(fns) - failed}/{len(fns)} passed")
     sys.exit(1 if failed else 0)
+
+
+def test_use_observed_address_in_setup_and_reconfigure_schemas():
+    key = const.CONF_USE_OBSERVED_ADDRESS
+    new = config_flow._build_schema(7078)
+    assert {str(k): k for k in new.schema}[key].default() is False
+    on = config_flow._build_schema(7078, defaults={key: True})
+    assert {str(k): k for k in on.schema}[key].default() is True
+    # Not an option: the options form only carries the codec preference.
+    assert key not in {str(k) for k in config_flow._build_options_schema({}).schema}

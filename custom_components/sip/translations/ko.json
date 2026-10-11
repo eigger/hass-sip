@@ -16,7 +16,11 @@
           "register_expiration": "등록 유효 기간 (초 단위)",
           "local_rtp_port": "로컬 RTP 포트 (선택사항)",
           "media_timeout": "미디어 타임아웃 (초, 0=사용 안 함)",
-          "max_call_duration": "최대 통화 시간 (초, 0=무제한)"
+          "max_call_duration": "최대 통화 시간 (초, 0=무제한)",
+          "use_observed_address": "서버에서 관측된 주소 사용 (NAT)"
+        },
+        "data_description": {
+          "use_observed_address": "Home Assistant가 SIP 서버와의 사이에 NAT/SNAT(예: 출발지 주소를 변환하는 방화벽) 뒤에 있고 통화에 소리가 없을 때 사용하세요. 로컬 인터페이스 주소 대신 서버가 보는 주소(Via received/rport)를 Contact와 SDP에 알립니다."
         }
       },
       "reconfigure": {
@@ -34,7 +38,11 @@
           "register_expiration": "등록 유효 기간 (초 단위)",
           "local_rtp_port": "로컬 RTP 포트 (선택사항)",
           "media_timeout": "미디어 타임아웃 (초, 0=사용 안 함)",
-          "max_call_duration": "최대 통화 시간 (초, 0=무제한)"
+          "max_call_duration": "최대 통화 시간 (초, 0=무제한)",
+          "use_observed_address": "서버에서 관측된 주소 사용 (NAT)"
+        },
+        "data_description": {
+          "use_observed_address": "Home Assistant가 SIP 서버와의 사이에 NAT/SNAT(예: 출발지 주소를 변환하는 방화벽) 뒤에 있고 통화에 소리가 없을 때 사용하세요. 로컬 인터페이스 주소 대신 서버가 보는 주소(Via received/rport)를 Contact와 SDP에 알립니다."
         }
       }
     },
