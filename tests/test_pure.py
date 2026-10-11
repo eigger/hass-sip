@@ -1239,7 +1239,7 @@ def test_ack_answer_without_allowed_codec_sends_bye():
 
 def test_options_flow_shows_and_saves_codec_preference():
     flow = config_flow.SipOptionsFlow()
-    flow.config_entry = MagicMock(data={}, options={})
+    flow.config_entry = MagicMock(options={})
 
     kind, kw = asyncio.run(flow.async_step_init(None))
     assert kind == "form" and kw["step_id"] == "init"
@@ -7509,47 +7509,11 @@ if __name__ == "__main__":
     sys.exit(1 if failed else 0)
 
 
-def test_use_observed_address_in_setup_reconfigure_and_options_schemas():
+def test_use_observed_address_in_setup_and_reconfigure_schemas():
     key = const.CONF_USE_OBSERVED_ADDRESS
     new = config_flow._build_schema(7078)
-    keys = {str(k): k for k in new.schema}
-    assert keys[key].default() is False
+    assert {str(k): k for k in new.schema}[key].default() is False
     on = config_flow._build_schema(7078, defaults={key: True})
     assert {str(k): k for k in on.schema}[key].default() is True
-    assert config_flow._build_options_schema({})({})[key] is False
-    assert config_flow._build_options_schema({key: True})({})[key] is True
-
-
-def test_options_flow_default_falls_back_to_entry_data():
-    key = const.CONF_USE_OBSERVED_ADDRESS
-    flow = config_flow.SipOptionsFlow()
-    flow.config_entry = MagicMock(data={key: True}, options={})
-    _, kw = asyncio.run(flow.async_step_init(None))
-    assert kw["data_schema"]({})[key] is True
-    flow.config_entry = MagicMock(data={key: True}, options={key: False})
-    _, kw = asyncio.run(flow.async_step_init(None))
-    assert kw["data_schema"]({})[key] is False
-
-
-def test_reconfigure_syncs_observed_address_into_options():
-    from unittest.mock import AsyncMock, patch
-
-    key = const.CONF_USE_OBSERVED_ADDRESS
-    flow = config_flow.SipConfigFlow()
-    flow.hass = MagicMock()
-    entry = MagicMock(
-        data={"username": "1001", "server": "pbx", "password": "pw", key: False},
-        options={key: False, "codec_preference": "auto"},
-    )
-    flow._get_reconfigure_entry = lambda: entry
-    flow.async_set_unique_id = AsyncMock()
-    flow._abort_if_unique_id_mismatch = MagicMock()
-    flow.async_update_reload_and_abort = MagicMock(return_value="done")
-    user_input = {"username": "1001", "server": "pbx", "password": "pw", key: True}
-    with patch.object(
-        config_flow, "async_validate_sip_registration", AsyncMock(return_value=(True, ""))
-    ):
-        assert asyncio.run(flow.async_step_reconfigure(user_input)) == "done"
-    kwargs = flow.async_update_reload_and_abort.call_args.kwargs
-    assert kwargs["data"][key] is True
-    assert kwargs["options"] == {key: True, "codec_preference": "auto"}
+    # Not an option: the options form only carries the codec preference.
+    assert key not in {str(k) for k in config_flow._build_options_schema({}).schema}

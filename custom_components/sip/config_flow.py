@@ -141,12 +141,6 @@ def _build_options_schema(defaults: Mapping[str, Any]) -> vol.Schema:
                     translation_key=CONF_CODEC_PREFERENCE,
                 )
             ),
-            vol.Optional(
-                CONF_USE_OBSERVED_ADDRESS,
-                default=defaults.get(
-                    CONF_USE_OBSERVED_ADDRESS, DEFAULT_USE_OBSERVED_ADDRESS
-                ),
-            ): bool,
         }
     )
 
@@ -343,16 +337,8 @@ class SipConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     user_input[CONF_USERNAME],
                     user_input[CONF_SERVER],
                 )
-                # Options override data at runtime, so keep the latest choice.
                 return self.async_update_reload_and_abort(
-                    reconfigure_entry,
-                    data=candidate,
-                    options={
-                        **reconfigure_entry.options,
-                        CONF_USE_OBSERVED_ADDRESS: candidate.get(
-                            CONF_USE_OBSERVED_ADDRESS, DEFAULT_USE_OBSERVED_ADDRESS
-                        ),
-                    },
+                    reconfigure_entry, data=candidate
                 )
 
         return self.async_show_form(
@@ -361,8 +347,7 @@ class SipConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 reconfigure_entry.data.get(
                     CONF_LOCAL_RTP_PORT, DEFAULT_LOCAL_RTP_PORT
                 ),
-                defaults=user_input
-                or {**reconfigure_entry.data, **reconfigure_entry.options},
+                defaults=user_input or reconfigure_entry.data,
                 omit_password_default=True,
             ),
             errors=errors,
@@ -379,8 +364,5 @@ class SipOptionsFlow(config_entries.OptionsFlowWithReload):
             return self.async_create_entry(data=user_input)
         return self.async_show_form(
             step_id="init",
-            # Options override the setup/reconfigure value; show the effective one.
-            data_schema=_build_options_schema(
-                {**self.config_entry.data, **self.config_entry.options}
-            ),
+            data_schema=_build_options_schema(self.config_entry.options),
         )
