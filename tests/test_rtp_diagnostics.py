@@ -314,6 +314,7 @@ def test_observed_address_triggers_one_reregister():
             client._build_register()
 
         client._do_register = fake_register
+        client.state = sip_client.SipState.REGISTERED
         client._reg_contact_sent = client._contact_uri()
         via = "SIP/2.0/UDP 192.168.2.208:5060;rport=40000;received=192.168.3.100"
         resp = sm.parse_sip_message(
@@ -322,5 +323,57 @@ def test_observed_address_triggers_one_reregister():
         client._handle_register_response(resp)
         client._handle_register_response(resp)
         assert len(calls) == 1
+
+    asyncio.run(run())
+
+
+def test_observed_reregister_deferred_during_call():
+    if _skip():
+        return
+
+    async def run():
+        client = _nat_client(True, None)
+        calls = []
+        client._do_register = lambda: calls.append(1)
+        client._reg_contact_sent = client._contact_uri()
+        client.state = sip_client.SipState.INCOMING
+        via = "SIP/2.0/UDP 192.168.2.208:5060;rport=40000;received=192.168.3.100"
+        client._handle_register_response(
+            sm.parse_sip_message(
+                f"SIP/2.0 200 OK\r\nVia: {via}\r\nCSeq: 1 REGISTER\r\n\r\n"
+            )
+        )
+        assert calls == []
+        assert client.state == sip_client.SipState.INCOMING
+        # The next refresh builds its Contact from the updated address.
+        assert "Contact: <sip:100@192.168.3.100:40000>" in client._build_register()
+
+    asyncio.run(run())
+
+
+def test_observed_address_cleared_when_not_reported_or_socket_reopened():
+    if _skip():
+        return
+
+    async def run():
+        client = _nat_client(True, "192.168.3.100")
+        assert client._contact_uri() == "<sip:100@192.168.3.100:40000>"
+        # Network change: the server now sees the sent-by address (no received).
+        client._handle_register_response(
+            sm.parse_sip_message(
+                "SIP/2.0 200 OK\r\nVia: SIP/2.0/UDP 192.168.2.208:5060\r\n"
+                "CSeq: 1 REGISTER\r\n\r\n"
+            )
+        )
+        assert client._observed_ip == "" and client._observed_port == 0
+        assert client._contact_uri() == "<sip:100@192.168.2.208:5060>"
+        # A new socket forgets everything previously observed.
+        client._observed_ip = "192.168.3.100"
+        client._observed_port = 40000
+        client._warned_observed_ip = "192.168.3.100"
+        client.config.server = "invalid.invalid"
+        await client._open_socket()
+        assert client._observed_ip == "" and client._observed_port == 0
+        assert client._warned_observed_ip == ""
 
     asyncio.run(run())

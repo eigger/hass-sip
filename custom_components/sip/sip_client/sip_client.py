@@ -561,6 +561,10 @@ class SipClient:
             self._schedule_register(10)
 
     async def _open_socket(self) -> bool:
+        # A new socket may sit on another network; relearn the observed address.
+        self._observed_ip = ""
+        self._observed_port = 0
+        self._warned_observed_ip = ""
         target_server = self.config.outbound_proxy if self.config.outbound_proxy else self.config.server
         # Resolve via the loop so a slow DNS lookup never blocks the event loop.
         try:
@@ -753,12 +757,11 @@ class SipClient:
         A public address is normal behind a home router and only logged.
         """
         received = _via_received(m.header("Via"))
-        if not received:
-            return
         # rport on its own is only the NAT-mapped source port of our socket.
         rport = _via_rport(m.header("Via"))
         self._observed_port = rport if rport != self._local_port else 0
-        if received == self._local_ip:
+        # No received= means the server saw the sent-by address.
+        if not received or received == self._local_ip:
             self._observed_ip = ""
             return
         self._observed_ip = received
@@ -852,10 +855,12 @@ class SipClient:
             if (
                 self.config.use_observed_address
                 and self._contact_uri() != self._reg_contact_sent
+                and self.state in (SipState.REGISTERED, SipState.REGISTERING)
             ):
                 # The observed address became known (or changed) after this
                 # REGISTER went out; refresh so the binding carries it. The
                 # next REGISTER sends the new Contact, so this cannot loop.
+                # During a call the regular refresh picks the change up.
                 _LOGGER.info(
                     "Re-registering with observed Contact %s", self._contact_uri()
                 )

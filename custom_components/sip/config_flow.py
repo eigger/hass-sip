@@ -343,8 +343,16 @@ class SipConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     user_input[CONF_USERNAME],
                     user_input[CONF_SERVER],
                 )
+                # Options override data at runtime, so keep the latest choice.
                 return self.async_update_reload_and_abort(
-                    reconfigure_entry, data=candidate
+                    reconfigure_entry,
+                    data=candidate,
+                    options={
+                        **reconfigure_entry.options,
+                        CONF_USE_OBSERVED_ADDRESS: candidate.get(
+                            CONF_USE_OBSERVED_ADDRESS, DEFAULT_USE_OBSERVED_ADDRESS
+                        ),
+                    },
                 )
 
         return self.async_show_form(
