@@ -16,7 +16,8 @@
           "register_expiration": "등록 유효 기간 (초 단위)",
           "local_rtp_port": "로컬 RTP 포트 (선택사항)",
           "media_timeout": "미디어 타임아웃 (초, 0=사용 안 함)",
-          "max_call_duration": "최대 통화 시간 (초, 0=무제한)"
+          "max_call_duration": "최대 통화 시간 (초, 0=무제한)",
+          "use_observed_address": "서버에서 관측된 주소 사용 (NAT)"
         }
       },
       "reconfigure": {
@@ -34,7 +35,8 @@
           "register_expiration": "등록 유효 기간 (초 단위)",
           "local_rtp_port": "로컬 RTP 포트 (선택사항)",
           "media_timeout": "미디어 타임아웃 (초, 0=사용 안 함)",
-          "max_call_duration": "최대 통화 시간 (초, 0=무제한)"
+          "max_call_duration": "최대 통화 시간 (초, 0=무제한)",
+          "use_observed_address": "서버에서 관측된 주소 사용 (NAT)"
         }
       }
     },

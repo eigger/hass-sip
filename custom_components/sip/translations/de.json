@@ -16,7 +16,8 @@
           "register_expiration": "Registrierungs-Ablaufzeit (Sekunden)",
           "local_rtp_port": "Lokaler RTP-Port (Optional)",
           "media_timeout": "Medien-Timeout (Sekunden, 0=deaktiviert)",
-          "max_call_duration": "Maximale Gesprächsdauer (Sekunden, 0=unbegrenzt)"
+          "max_call_duration": "Maximale Gesprächsdauer (Sekunden, 0=unbegrenzt)",
+          "use_observed_address": "Vom Server beobachtete Adresse verwenden (NAT)"
         }
       },
       "reconfigure": {
@@ -34,7 +35,8 @@
           "register_expiration": "Registrierungs-Ablaufzeit (Sekunden)",
           "local_rtp_port": "Lokaler RTP-Port (Optional)",
           "media_timeout": "Medien-Timeout (Sekunden, 0=deaktiviert)",
-          "max_call_duration": "Maximale Gesprächsdauer (Sekunden, 0=unbegrenzt)"
+          "max_call_duration": "Maximale Gesprächsdauer (Sekunden, 0=unbegrenzt)",
+          "use_observed_address": "Vom Server beobachtete Adresse verwenden (NAT)"
         }
       }
     },

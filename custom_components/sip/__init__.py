@@ -279,7 +279,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             CONF_CODEC_PREFERENCE, DEFAULT_CODEC_PREFERENCE
         ),
         use_observed_address=entry.options.get(
-            CONF_USE_OBSERVED_ADDRESS, DEFAULT_USE_OBSERVED_ADDRESS
+            CONF_USE_OBSERVED_ADDRESS,
+            config.get(CONF_USE_OBSERVED_ADDRESS, DEFAULT_USE_OBSERVED_ADDRESS),
         ),
     )
 

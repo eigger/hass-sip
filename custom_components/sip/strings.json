@@ -16,7 +16,8 @@
           "register_expiration": "Register Expiration (seconds)",
           "local_rtp_port": "Local RTP Port (Optional)",
           "media_timeout": "Media timeout (seconds, 0=disabled)",
-          "max_call_duration": "Max call duration (seconds, 0=unlimited)"
+          "max_call_duration": "Max call duration (seconds, 0=unlimited)",
+          "use_observed_address": "Use server-observed address (NAT)"
         }
       },
       "reconfigure": {
@@ -34,7 +35,8 @@
           "register_expiration": "Register Expiration (seconds)",
           "local_rtp_port": "Local RTP Port (Optional)",
           "media_timeout": "Media timeout (seconds, 0=disabled)",
-          "max_call_duration": "Max call duration (seconds, 0=unlimited)"
+          "max_call_duration": "Max call duration (seconds, 0=unlimited)",
+          "use_observed_address": "Use server-observed address (NAT)"
         }
       }
     },

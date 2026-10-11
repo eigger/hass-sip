@@ -117,6 +117,12 @@ def _build_schema(
                 CONF_MAX_CALL_DURATION,
                 default=_default(CONF_MAX_CALL_DURATION, DEFAULT_MAX_CALL_DURATION),
             ): vol.All(vol.Coerce(int), vol.Range(min=0)),
+            vol.Optional(
+                CONF_USE_OBSERVED_ADDRESS,
+                default=_default(
+                    CONF_USE_OBSERVED_ADDRESS, DEFAULT_USE_OBSERVED_ADDRESS
+                ),
+            ): bool,
         }
     )
 
@@ -140,7 +146,7 @@ def _build_options_schema(defaults: Mapping[str, Any]) -> vol.Schema:
                 default=defaults.get(
                     CONF_USE_OBSERVED_ADDRESS, DEFAULT_USE_OBSERVED_ADDRESS
                 ),
-            ): cv.boolean,
+            ): bool,
         }
     )
 
@@ -347,7 +353,8 @@ class SipConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 reconfigure_entry.data.get(
                     CONF_LOCAL_RTP_PORT, DEFAULT_LOCAL_RTP_PORT
                 ),
-                defaults=user_input or reconfigure_entry.data,
+                defaults=user_input
+                or {**reconfigure_entry.data, **reconfigure_entry.options},
                 omit_password_default=True,
             ),
             errors=errors,
@@ -364,5 +371,8 @@ class SipOptionsFlow(config_entries.OptionsFlowWithReload):
             return self.async_create_entry(data=user_input)
         return self.async_show_form(
             step_id="init",
-            data_schema=_build_options_schema(self.config_entry.options),
+            # Options override the setup/reconfigure value; show the effective one.
+            data_schema=_build_options_schema(
+                {**self.config_entry.data, **self.config_entry.options}
+            ),
         )
