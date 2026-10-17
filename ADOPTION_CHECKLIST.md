@@ -32,7 +32,7 @@ hass-sip 의 적용 기록입니다. 실행하지 않은 검사는 PASS 로 표�
 | GOV-04 | 중앙 표에 작업 시작·단계 변경·종료 상태, 담당·적용 내용·검증/리뷰 근거·남은 작업 갱신, 타 리포 기록 보존 | TODO | 중앙 리포 범위 밖. 반영할 내용: hass-sip 부분 채택, 위 SHA, 남은 일=실제 HA 테스트 이관 |
 | GOV-05 | 구현과 독립 리뷰·검증을 별도 서브 에이전트에게 위임, 지적 수정·재검증 및 결과 취합 | EXCEPTION | 구현은 메인 에이전트가 수행, 독립 리뷰만 Opus 서브 에이전트(리뷰 결과 하단). 구현 서브 에이전트 위임 규칙 미충족 |
 | HA-01, HA-13 | `custom_components/<domain>/`와 domain 일치, 필요한 모듈·공개 API·생명주기는 Core 대응 구조 | TODO | 이번 범위에서 미검토 |
-| HA-02 | manifest 필드·정렬·동작 선언 확인, 공식 품질 등급 자가 표기 없음 | TODO | hassfest 는 CI 에서만 실행. 미실행 |
+| HA-02 | manifest 필드·정렬·동작 선언 확인, 공식 품질 등급 자가 표기 없음 | PASS | Hassfest CI 통과: https://github.com/eigger/hass-sip/actions/runs/39078322553 (PR #105) |
 | HA-03 (권장) | 공통 상수·설정·갱신·플랫폼 역할 및 프로토콜 경계에 맞게 모듈 구성 | TODO | 이번 범위에서 미검토 |
 | HA-04, HA-08 | UI 설정·중복·안정적 식별 및 기능별 options/reauth/reconfigure, entity 의미·registry 영향 확인 | TODO | 이번 범위에서 미검토 |
 | HA-01, HA-04, HA-08, REL-01, REL-03 | domain·unique ID·entry schema·상태/통계 계약 변경 시 migration 테스트와 사용자 조치 안내 | TODO | 미확인 — 변경 유무부터 확인 |
@@ -60,18 +60,18 @@ hass-sip 의 적용 기록입니다. 실행하지 않은 검사는 PASS 로 표�
 
 | 검증 축 / 상태 | 통합 커밋 | Python / HA / 플러그인 실제 버전 | 대상 패키지 실제 버전·extras·marker | 명령·테스트 결과·pip check / CI run·job | skip·제외·미검증 범위 |
 |---|---|---|---|---|---|
-| 현재 환경 / PASS(설치·mock 테스트만) | 93696e5+변경 | Python 3.14.5 / HA 2026.10.2 / 플러그인 없음 | 해당 없음 | `pytest tests -q` 401 passed, `uv pip check` 통과 / CI 미실행 | HA 가 mock 이라 실제 HA 동작 미검증 |
-| 정확한 최소 HA / PASS(설치·mock 테스트만) | 동일 | Python 3.14.5 / HA 2026.10.0 / 플러그인 없음 | 해당 없음 | 동일 명령 401 passed, `pip check` 통과 | 위와 동일 |
+| 현재 환경 / PASS(설치·mock 테스트만, CI 확인) | 93696e5+변경 | Python 3.14.5 / HA 2026.10.2 / 플러그인 없음 | 해당 없음 | `pytest tests -q` 401 passed, `uv pip check` 통과 / CI: https://github.com/eigger/hass-sip/actions/runs/39078322542 current job 통과 | HA 가 mock 이라 실제 HA 동작 미검증 |
+| 정확한 최소 HA / PASS(설치·mock 테스트만) | 동일 | Python 3.14.5 / HA 2026.10.0 / 플러그인 없음 | 해당 없음 | 동일 명령 401 passed, `pip check` 통과 / CI: https://github.com/eigger/hass-sip/actions/runs/39078322542 minimum-ha job 통과 | 위와 동일 |
 | 정확한 최소 라이브러리 / N/A | - | - | manifest requirements 없음 | - | - |
 
 ## HACS·CI·의존성 업데이트
 
 | 규칙 ID | 확인 항목 | 상태 | 근거 / 남은 작업 |
 |---|---|---|---|
-| HACS-01, HACS-02 | 루트 README/LICENSE/hacs.json, 검증한 최소 HA, 실제 배포 구조와 필요한 옵션 일치 | TODO | 루트 파일 존재 확인, HACS 실제 검증은 CI 에서 미실행 |
-| HACS-03, HACS-05 | Default 여부는 목록 근거로 확인, [로컬 brand/icon.png 또는 원격 brands 근거](https://github.com/eigger/hass-repo-standards/blob/main/docs/hacs.md)와 HACS/Hassfest 실제 실행, ignore는 이유·해제 조건 기록 | TODO | 이번 범위에서 미검토 |
+| HACS-01, HACS-02 | 루트 README/LICENSE/hacs.json, 검증한 최소 HA, 실제 배포 구조와 필요한 옵션 일치 | PASS | HACS 검증 CI 통과: https://github.com/eigger/hass-sip/actions/runs/39078322553. hacs.json 최소 2026.10.0 유지 |
+| HACS-03, HACS-05 | Default 여부는 목록 근거로 확인, [로컬 brand/icon.png 또는 원격 brands 근거](https://github.com/eigger/hass-repo-standards/blob/main/docs/hacs.md)와 HACS/Hassfest 실제 실행, ignore는 이유·해제 조건 기록 | PASS | HACS/Hassfest 실행 통과: https://github.com/eigger/hass-sip/actions/runs/39078322553. 로컬 brand 존재(custom_components/sip/brand), ignore 없음 |
 | HACS-06 (권장) | description·topics·issue 경로·brands 및 사용하는 HACS 필드 지원 확인 | TODO | 이번 범위에서 미검토 |
-| CI-01, CI-02 | Validate/Python Tests 공통화, 확장 job 유지, PR·실제 기본 브랜치 push·dispatch 및 필요한 schedule | PASS | 정적 확인: Tests/Validate 공통 caller, PR·main push·dispatch·schedule. 실제 Actions 실행 미확인 |
+| CI-01, CI-02 | Validate/Python Tests 공통화, 확장 job 유지, PR·실제 기본 브랜치 push·dispatch 및 필요한 schedule | PASS | PR #105 에서 실행 확인: https://github.com/eigger/hass-sip/actions/runs/39078322542, https://github.com/eigger/hass-sip/actions/runs/39078322553 (push/schedule 트리거는 병합 후 확인) |
 | CI-03, CI-05, CI-08 | 최소 권한·checkout 자격증명 비보존·timeout·concurrency, full SHA·갱신 관리, 비신뢰 입력·secrets 경계 | PASS | 정적 확인: contents: read, full SHA, concurrency |
 | CI-04, CI-07, CI-12 | 실패를 숨기지 않는 실제 `ha` 필수 테스트, 버전별 환경·cache·Ruff 설정과 required checks 이름 확인 | EXCEPTION | Ruff 고정(ruff==0.17.1)·check/format 로컬 통과는 PASS. 실제 ha profile 필수 테스트는 미충족(unit profile) |
 | DEP-03, DEP-04, CI-09 | updater의 선택 package·연산자/extras/marker 보존, 안정 버전·major 정책, 실제 기본 브랜치·단일 bot branch·PR만 제안 | N/A | manifest requirements 없음 — dependency-update workflow 미도입 |
