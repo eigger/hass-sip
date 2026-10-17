@@ -1,4 +1,5 @@
 """pytest configuration — mock Home Assistant modules to allow testing without HA installed."""
+
 import sys
 import types
 from unittest.mock import MagicMock
@@ -6,6 +7,7 @@ from unittest.mock import MagicMock
 
 class MockBase:
     """Mock base class to support generic subclassing."""
+
     def __init__(self, *args, **kwargs):
         pass
 
@@ -98,11 +100,17 @@ for mod in [
 ]:
     sys.modules[mod] = MagicMock()
 
+
 # homeassistant.exceptions / auth constants: real exception classes so
 # integration code can raise/catch them and tests can assert on them.
 class HomeAssistantError(Exception):
-    def __init__(self, *args, translation_domain=None, translation_key=None,
-                 translation_placeholders=None):
+    def __init__(
+        self,
+        *args,
+        translation_domain=None,
+        translation_key=None,
+        translation_placeholders=None,
+    ):
         super().__init__(*args)
         self.translation_domain = translation_domain
         self.translation_key = translation_key
@@ -114,8 +122,15 @@ class ServiceValidationError(HomeAssistantError):
 
 
 class Unauthorized(HomeAssistantError):
-    def __init__(self, context=None, user_id=None, entity_id=None,
-                 config_entry_id=None, perm_category=None, permission=None):
+    def __init__(
+        self,
+        context=None,
+        user_id=None,
+        entity_id=None,
+        config_entry_id=None,
+        perm_category=None,
+        permission=None,
+    ):
         super().__init__(self.__class__.__name__)
         self.context = context
         self.user_id = user_id

@@ -4,6 +4,7 @@ Timers are fired explicitly so the suite stays well under a second of
 wall-clock wait. The harness also covers an in-dialog re-INVITE so P0-1
 can reuse the real socket path.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -13,9 +14,11 @@ from mock_pbx import MockPbx
 from test_pure import _load_component_module, sip_client, sm
 
 if sip_client is None:  # enum.StrEnum needs Python 3.11+
+
     def _skip():
         return True
 else:
+
     def _skip():
         return False
 
@@ -483,7 +486,11 @@ def test_register_401_challenge_does_not_count_as_failure():
         client._handle_register_response(
             _reg_response(401, "Unauthorized", client._reg_cseq)
         )
-        return after_challenge + (list(failed), list(delays), client.register_auth_failures)
+        return after_challenge + (
+            list(failed),
+            list(delays),
+            client.register_auth_failures,
+        )
 
     (
         failed1,

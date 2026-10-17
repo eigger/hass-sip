@@ -1,4 +1,5 @@
 """Event platform for SIP Client integration."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -23,6 +24,7 @@ from .const import (
     EVENT_SIP_REGISTERED,
     LOGGER,
 )
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -72,7 +74,9 @@ class SipTelephonyEventEntity(EventEntity):
         )
 
     @callback
-    def _handle_sip_event(self, event_type: str, extra_data: dict[str, Any] | None) -> None:
+    def _handle_sip_event(
+        self, event_type: str, extra_data: dict[str, Any] | None
+    ) -> None:
         """Handle incoming SIP dispatcher events and update entity state."""
         LOGGER.debug("SipEventEntity received event %s: %s", event_type, extra_data)
 

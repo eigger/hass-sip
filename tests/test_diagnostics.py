@@ -1,4 +1,5 @@
 """Config-entry diagnostics: redaction and registration / codec / one-way audio (P1-2)."""
+
 from __future__ import annotations
 
 import asyncio
@@ -88,9 +89,7 @@ def test_diagnostics_snapshot_registration_failure():
         )
         client._reg_cseq = 1
         client._handle_register_response(
-            sm.parse_sip_message(
-                "SIP/2.0 403 Forbidden\r\nCSeq: 1 REGISTER\r\n\r\n"
-            )
+            sm.parse_sip_message("SIP/2.0 403 Forbidden\r\nCSeq: 1 REGISTER\r\n\r\n")
         )
         return client.diagnostics_snapshot(), failed
 
@@ -209,8 +208,10 @@ def test_rtp_byte_counters_count_pcm_not_dtmf():
         session._transport = MagicMock()
         session._send_audio_packet(b"\x00" * 320)
         session._receive_impl(_pcmu(), ("203.0.113.8", 20000))
-        te = bytes([0x80, 101]) + struct.pack("!HII", 2, 100, 0x1234) + bytes(
-            [1, 0x0A, 0x00, 0xA0]
+        te = (
+            bytes([0x80, 101])
+            + struct.pack("!HII", 2, 100, 0x1234)
+            + bytes([1, 0x0A, 0x00, 0xA0])
         )
         session.dtmf_pt = 101
         session._receive_impl(te, ("203.0.113.8", 20000))

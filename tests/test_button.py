@@ -1,4 +1,5 @@
 """SIP call buttons only advertise actions that can affect a call."""
+
 from __future__ import annotations
 
 import asyncio

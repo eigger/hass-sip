@@ -1,4 +1,5 @@
 """Assist pipeline Context subject (P4-2)."""
+
 from __future__ import annotations
 
 import asyncio

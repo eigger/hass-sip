@@ -1,4 +1,5 @@
 """Assist allow-list and PIN gate (P4-1)."""
+
 from __future__ import annotations
 
 import asyncio
@@ -414,9 +415,7 @@ def test_admin_is_not_locked_out_when_phone_line_entity_missing():
         )
         integration.er.async_entries_for_config_entry.return_value = []
         await handler(
-            _service_call(
-                {"entity_id": ["media_player.phone_line"]}, user_id="admin"
-            )
+            _service_call({"entity_id": ["media_player.phone_line"]}, user_id="admin")
         )
         return trigger
 

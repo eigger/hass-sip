@@ -1,0 +1,7 @@
+# Unit-profile environment for the current mocked-HA test suite (tests/).
+# Real-HA tests (pytest-homeassistant-custom-component, tests/components/sip/)
+# are tracked as an open TODO in ADOPTION_CHECKLIST.md.
+# Pinning homeassistant here does not declare or raise the minimum supported
+# HA (hacs.json).
+homeassistant==2026.10.2
+pytest==9.1.1

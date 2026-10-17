@@ -1,4 +1,5 @@
 """Helper utilities for the SIP Client integration."""
+
 from __future__ import annotations
 
 from homeassistant.components.ffmpeg import get_ffmpeg_manager

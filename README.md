@@ -1,9 +1,16 @@
 # SIP Client Home Assistant Integration (hass-sip)
 
-[![GitHub Release](https://img.shields.io/github/v/release/eigger/hass-sip?style=flat-square)](https://github.com/eigger/hass-sip/releases)
+**English** | [한국어](README.ko.md)
+
+<!-- hass-standards:badges:start -->
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5?style=flat-square)](#installation)
+[![Release](https://img.shields.io/github/v/release/eigger/hass-sip?style=flat-square)](https://github.com/eigger/hass-sip/releases)
+[![Home Assistant minimum](https://img.shields.io/badge/HA-%E2%89%A5%202026.10.0-41BDF5?style=flat-square)](hacs.json)
+[![Tests](https://img.shields.io/github/actions/workflow/status/eigger/hass-sip/tests.yml?branch=main&style=flat-square&label=Tests)](https://github.com/eigger/hass-sip/actions/workflows/tests.yml)
+[![Validate](https://img.shields.io/github/actions/workflow/status/eigger/hass-sip/validate.yml?branch=main&style=flat-square&label=Validate)](https://github.com/eigger/hass-sip/actions/workflows/validate.yml)
 [![License](https://img.shields.io/github/license/eigger/hass-sip?style=flat-square)](LICENSE)
-[![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-![integration usage](https://img.shields.io/badge/dynamic/json?color=41BDF5&logo=home-assistant&label=usage&suffix=%20installs&cacheSeconds=15600&query=%24.sip.total&url=https%3A%2F%2Fanalytics.home-assistant.io%2Fcustom_integrations.json)
+[![Analytics reporting installs](https://img.shields.io/badge/dynamic/json?style=flat-square&color=41BDF5&label=Usage&query=%24.sip.total&url=https%3A%2F%2Fanalytics.home-assistant.io%2Fcustom_integrations.json)](https://analytics.home-assistant.io/)
+<!-- hass-standards:badges:end -->
 
 hass-sip **registers as a SIP extension** on your PBX. It exposes the line as a media player, sends and receives DTMF, runs IVR menus, records calls, and can bridge a call to Home Assistant Voice Assist.
 
@@ -89,6 +96,10 @@ data:
 
 More options: [Announce a TTS message](docs/examples.md#example-announce-a-tts-message-then-hang-up). Outbound-focused notes: [HA calls you](docs/examples.md#home-assistant-calls-you-with-tts).
 
+## Requirements
+
+Home Assistant 2026.10.0 or newer (`hacs.json`) and a SIP PBX on the same LAN or VPN. This is a HACS custom integration, not part of Home Assistant Core.
+
 ## Installation
 
 1. **HACS**: Add this repository (`eigger/hass-sip`) to HACS as a custom repository, or
@@ -126,6 +137,8 @@ It registers an ESP32 as a SIP extension on your PBX with support for ESPHome st
 
 Run hass-sip on the same LAN (or VPN) as the PBX. Do not port-forward UDP 5060 or RTP (`local_rtp_port`, default 7078). For Assist that can unlock a door, use allow-list + DTMF PIN + a dedicated pipeline — **[Security](docs/security.md)**.
 
-## Feedback
+## Support and license
 
 🐞 [Issue](https://github.com/eigger/hass-sip/issues) · 💡 [Discussion](https://github.com/eigger/hass-sip/discussions)
+
+Released under the [LICENSE](LICENSE) in this repository. Shared development rules: [STANDARDS.md](STANDARDS.md).

@@ -4,6 +4,7 @@ Download from Settings → Devices & Services → SIP Client → ⋮ → Downloa
 diagnostics. The payload is meant to distinguish registration failure, codec
 mismatch, and one-way audio without exposing passwords.
 """
+
 from __future__ import annotations
 
 from typing import Any

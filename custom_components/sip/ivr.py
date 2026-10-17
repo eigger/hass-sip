@@ -25,6 +25,7 @@ Menu schema (canonical, flat — matches the service TTS parameters):
 A target ("choices" value, on_invalid, on_timeout) is either a nested menu dict
 or a bare post_action string.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -110,7 +111,8 @@ class IvrSession:
         hass: HomeAssistant,
         menu_config: dict[str, Any],
         play_message_fn: Callable[
-            [str, str | None, str | None, dict[str, Any] | None], Coroutine[Any, Any, None]
+            [str, str | None, str | None, dict[str, Any] | None],
+            Coroutine[Any, Any, None],
         ],
         play_audio_file_fn: Callable[[str], Coroutine[Any, Any, None]],
         hangup_fn: Callable[[], None],
@@ -275,7 +277,9 @@ class IvrSession:
         if on_timeout is not None:
             await self._execute_choice(on_timeout)
         else:
-            await self._execute_post_action(self.current_menu.get("post_action", "hangup"))
+            await self._execute_post_action(
+                self.current_menu.get("post_action", "hangup")
+            )
 
     # -- choices / actions ---------------------------------------------
     async def _execute_choice(self, choice: dict[str, Any] | str) -> None:
@@ -342,7 +346,9 @@ class IvrSession:
                 )
             self._start_dtmf_collection()
 
-    def _find_menu_by_id(self, menu: dict[str, Any], menu_id: str) -> dict[str, Any] | None:
+    def _find_menu_by_id(
+        self, menu: dict[str, Any], menu_id: str
+    ) -> dict[str, Any] | None:
         """Search recursively (choices, on_invalid, on_timeout) for a menu id."""
         if menu.get("id") == menu_id:
             return menu

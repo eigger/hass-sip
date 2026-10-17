@@ -16,6 +16,7 @@ are anti-aliased.
 Requires Pillow (``pip install pillow``). Fonts: Arial → DejaVu → Liberation →
 Pillow default.
 """
+
 from __future__ import annotations
 
 import math
@@ -222,7 +223,9 @@ def draw_logo(height: int) -> Image.Image:
     width = height * 4
     ws = width * SS
     img = Image.new("RGBA", (ws, hs), (0, 0, 0, 0))
-    mark = draw_mark(int(height * 0.78)).resize((int(hs * 0.78), int(hs * 0.78)), Image.LANCZOS)
+    mark = draw_mark(int(height * 0.78)).resize(
+        (int(hs * 0.78), int(hs * 0.78)), Image.LANCZOS
+    )
     mx = int(hs * 0.11)
     my = (hs - mark.height) // 2
     img.alpha_composite(mark, (mx, my))
@@ -231,7 +234,12 @@ def draw_logo(height: int) -> Image.Image:
     f1 = font(int(hs * 0.42), True)
     f2 = font(int(hs * 0.165))
     d.text((tx, int(hs * 0.19)), "SIP Client", font=f1, fill=WORDMARK)
-    d.text((tx + int(hs * 0.012), int(hs * 0.64)), "SIP extension for Home Assistant", font=f2, fill=TAGLINE)
+    d.text(
+        (tx + int(hs * 0.012), int(hs * 0.64)),
+        "SIP extension for Home Assistant",
+        font=f2,
+        fill=TAGLINE,
+    )
     return img.resize((width, height), Image.LANCZOS)
 
 

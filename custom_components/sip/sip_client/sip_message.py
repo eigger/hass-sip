@@ -2,6 +2,7 @@
 
 Pure-Python port of sip_message.cpp.
 """
+
 from __future__ import annotations
 
 import os
@@ -104,7 +105,7 @@ def parse_sip_message(raw: str) -> SipMessage:
         head = raw
     else:
         head = raw[:header_end]
-        msg.body = raw[header_end + 4:]
+        msg.body = raw[header_end + 4 :]
 
     first = True
     last_name = None
@@ -139,7 +140,7 @@ def parse_sip_message(raw: str) -> SipMessage:
             continue
         name = line[:colon].strip().lower()
         name = _COMPACT_HEADERS.get(name, name)
-        value = line[colon + 1:].strip()
+        value = line[colon + 1 :].strip()
         last_name = name
         # List-valued routing headers can be represented as repeated rows or one
         # comma-separated row. Preserve their wire order in a combined value.

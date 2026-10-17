@@ -4,6 +4,7 @@ PCM is signed 16-bit linear, 8 kHz, mono. Each encoded sample is one byte.
 Ported faithfully from the ESPHome ``sip_client`` component so both ends behave
 identically.
 """
+
 from __future__ import annotations
 
 import struct
@@ -65,13 +66,17 @@ def alaw_to_linear(alaw: int) -> int:
     sample = (mantissa << 4) + 8
     if exponent != 0:
         sample += 0x100
-        sample <<= (exponent - 1)
+        sample <<= exponent - 1
     return sample if sign else -sample
 
 
 # Precomputed lookup tables (encode is the hot path on the send side).
-_ULAW_ENCODE = bytes(linear_to_ulaw(s if s < 32768 else s - 65536) for s in range(65536))
-_ALAW_ENCODE = bytes(linear_to_alaw(s if s < 32768 else s - 65536) for s in range(65536))
+_ULAW_ENCODE = bytes(
+    linear_to_ulaw(s if s < 32768 else s - 65536) for s in range(65536)
+)
+_ALAW_ENCODE = bytes(
+    linear_to_alaw(s if s < 32768 else s - 65536) for s in range(65536)
+)
 _ULAW_DECODE = [ulaw_to_linear(b) for b in range(256)]
 _ALAW_DECODE = [alaw_to_linear(b) for b in range(256)]
 

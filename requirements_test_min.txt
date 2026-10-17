@@ -1,0 +1,3 @@
+# Exact minimum supported HA (hacs.json "homeassistant"); kept fixed, not bumped by Dependabot.
+homeassistant==2026.10.0
+pytest==9.1.1

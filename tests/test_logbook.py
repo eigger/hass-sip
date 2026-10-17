@@ -1,4 +1,5 @@
 """Logbook descriptions for SIP bus events."""
+
 from __future__ import annotations
 
 import sys
@@ -45,5 +46,7 @@ def test_playback_done_describes_success_and_failure():
     ok = describe(_event({"sip_account": "100"}))
     assert ok == {"name": "SIP (100)", "message": "playback finished"}
 
-    failed = describe(_event({"sip_account": "100", "error": "ffmpeg exited with status 1"}))
+    failed = describe(
+        _event({"sip_account": "100", "error": "ffmpeg exited with status 1"})
+    )
     assert failed["message"] == "playback failed: ffmpeg exited with status 1"

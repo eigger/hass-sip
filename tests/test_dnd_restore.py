@@ -1,4 +1,5 @@
 """DND switch restores on/off across Home Assistant restarts (P2-5)."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock

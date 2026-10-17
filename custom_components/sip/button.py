@@ -1,4 +1,5 @@
 """Button platform for SIP Client integration."""
+
 from __future__ import annotations
 
 import logging
@@ -25,10 +26,12 @@ async def async_setup_entry(
 ) -> None:
     """Set up SIP Client buttons from a config entry."""
     entry_data = entry.runtime_data
-    async_add_entities([
-        SipAnswerButton(entry, entry_data),
-        SipHangupButton(entry, entry_data),
-    ])
+    async_add_entities(
+        [
+            SipAnswerButton(entry, entry_data),
+            SipHangupButton(entry, entry_data),
+        ]
+    )
 
 
 class SipCallButton(ButtonEntity):

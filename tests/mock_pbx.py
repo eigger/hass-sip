@@ -3,6 +3,7 @@
 No Home Assistant. Used by registration-recovery tests and reusable for
 in-dialog INVITE / re-INVITE flows (P0-1) over the real socket path.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -186,7 +187,9 @@ class MockPbx:
             if self.force_code == 423:
                 extra = f"Min-Expires: {self.min_expires or 600}\r\n"
             self.send_raw(
-                self._response(msg, self.force_code, self._reason(self.force_code), extra),
+                self._response(
+                    msg, self.force_code, self._reason(self.force_code), extra
+                ),
                 addr,
             )
             return
@@ -212,7 +215,11 @@ class MockPbx:
 
     def _challenge(self, msg: sm.SipMessage) -> str:
         if self.challenge == "proxy":
-            code, reason, hdr = 407, "Proxy Authentication Required", "Proxy-Authenticate"
+            code, reason, hdr = (
+                407,
+                "Proxy Authentication Required",
+                "Proxy-Authenticate",
+            )
         else:
             code, reason, hdr = 401, "Unauthorized", "WWW-Authenticate"
         extra = (

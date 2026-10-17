@@ -3,6 +3,7 @@
 Kept free of Home Assistant imports so SIP core tests can load it.
 The integration layer calls ``issue_registry`` with these ids.
 """
+
 from __future__ import annotations
 
 ISSUE_REGISTER_AUTH = "register_auth_failed"

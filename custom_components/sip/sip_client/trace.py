@@ -10,6 +10,7 @@ Off by default. Callers must go through :func:`log_sip` / :func:`log_rtp`
 (or check :func:`enabled`) before building log strings so masking and
 format work are skipped when the logger is not at DEBUG.
 """
+
 from __future__ import annotations
 
 import logging

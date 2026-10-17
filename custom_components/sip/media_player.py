@@ -1,4 +1,5 @@
 """Media Player platform for SIP Client integration."""
+
 from __future__ import annotations
 
 import time

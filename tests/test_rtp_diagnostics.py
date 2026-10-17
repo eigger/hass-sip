@@ -1,4 +1,5 @@
 """Diagnostics for calls that end up with no audio (one-way / no RTP)."""
+
 from __future__ import annotations
 
 import asyncio
@@ -7,9 +8,11 @@ import logging
 from test_pure import sip_client, sm
 
 if sip_client is None:  # enum.StrEnum needs Python 3.11+
+
     def _skip():
         return True
 else:
+
     def _skip():
         return False
 
@@ -38,9 +41,12 @@ def test_via_received_parsing():
         "10.0.0.5"
     )
     assert sip_client._via_received("SIP/2.0/UDP a:1;rport=1") == ""
-    assert sip_client._via_received(
-        "SIP/2.0/UDP a:1;received=10.0.0.5, SIP/2.0/UDP b:1;received=10.0.0.9"
-    ) == "10.0.0.5"
+    assert (
+        sip_client._via_received(
+            "SIP/2.0/UDP a:1;received=10.0.0.5, SIP/2.0/UDP b:1;received=10.0.0.9"
+        )
+        == "10.0.0.5"
+    )
 
 
 def test_nat_mismatch_warns_once(caplog):
@@ -74,7 +80,8 @@ def test_public_received_address_is_only_info(caplog):
             client._handle_register_response(_reg_response("8.8.8.8"))
         assert _warnings(caplog, "sees this client") == []
         assert any(
-            r.levelno == logging.INFO and "sees this client as 8.8.8.8" in r.getMessage()
+            r.levelno == logging.INFO
+            and "sees this client as 8.8.8.8" in r.getMessage()
             for r in caplog.records
         )
 
@@ -211,7 +218,11 @@ def test_first_rtp_packet_source_is_logged_once(caplog):
         with caplog.at_level(logging.INFO):
             rtp._receive(packet, ("192.0.2.1", 7084))
             rtp._receive(packet, ("192.0.2.1", 7084))
-        first = [r.getMessage() for r in caplog.records if "First RTP packet" in r.getMessage()]
+        first = [
+            r.getMessage()
+            for r in caplog.records
+            if "First RTP packet" in r.getMessage()
+        ]
         assert len(first) == 1 and "differs" not in first[0]
         assert rtp.rx_packets == 2
 
@@ -219,7 +230,11 @@ def test_first_rtp_packet_source_is_logged_once(caplog):
         rtp.reset_byte_counters()
         with caplog.at_level(logging.INFO):
             rtp._receive(packet, ("203.0.113.9", 4000))
-        first = [r.getMessage() for r in caplog.records if "First RTP packet" in r.getMessage()]
+        first = [
+            r.getMessage()
+            for r in caplog.records
+            if "First RTP packet" in r.getMessage()
+        ]
         assert len(first) == 1 and "differs from SDP" in first[0]
 
     asyncio.run(run())
@@ -232,9 +247,10 @@ def test_via_rport_parsing():
     assert sip_client._via_rport("SIP/2.0/UDP a:1;rport") == 0
     assert sip_client._via_rport("SIP/2.0/UDP a:1;rport=0") == 0
     assert sip_client._via_rport("SIP/2.0/UDP a:1;rport=70000") == 0
-    assert sip_client._via_rport(
-        "SIP/2.0/UDP a:1;rport=5062, SIP/2.0/UDP b:1;rport=9"
-    ) == 5062
+    assert (
+        sip_client._via_rport("SIP/2.0/UDP a:1;rport=5062, SIP/2.0/UDP b:1;rport=9")
+        == 5062
+    )
 
 
 def _nat_client(use_observed: bool, received: str | None, rport: int = 40000):

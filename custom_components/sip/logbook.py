@@ -4,6 +4,7 @@ Event entities only ever render a generic "detected an event" line in the
 logbook, so we describe the integration's bus events here to produce readable
 messages (and attach the device id so they show in the device's logbook tab).
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -43,11 +44,17 @@ def async_describe_events(
     def describe_incoming(event: Event) -> dict[str, str]:
         data = event.data
         who = data.get("caller_name") or data.get("caller") or "unknown"
-        return {LOGBOOK_ENTRY_NAME: _name(data), LOGBOOK_ENTRY_MESSAGE: f"incoming call from {who}"}
+        return {
+            LOGBOOK_ENTRY_NAME: _name(data),
+            LOGBOOK_ENTRY_MESSAGE: f"incoming call from {who}",
+        }
 
     @callback
     def describe_connected(event: Event) -> dict[str, str]:
-        return {LOGBOOK_ENTRY_NAME: _name(event.data), LOGBOOK_ENTRY_MESSAGE: "call connected"}
+        return {
+            LOGBOOK_ENTRY_NAME: _name(event.data),
+            LOGBOOK_ENTRY_MESSAGE: "call connected",
+        }
 
     @callback
     def describe_ended(event: Event) -> dict[str, str]:
@@ -58,7 +65,10 @@ def async_describe_events(
     @callback
     def describe_dtmf(event: Event) -> dict[str, str]:
         digit = event.data.get("digit", "")
-        return {LOGBOOK_ENTRY_NAME: _name(event.data), LOGBOOK_ENTRY_MESSAGE: f"DTMF keypress {digit}".strip()}
+        return {
+            LOGBOOK_ENTRY_NAME: _name(event.data),
+            LOGBOOK_ENTRY_MESSAGE: f"DTMF keypress {digit}".strip(),
+        }
 
     @callback
     def describe_playback_done(event: Event) -> dict[str, str]:
@@ -74,11 +84,17 @@ def async_describe_events(
 
     @callback
     def describe_recording_stopped(event: Event) -> dict[str, str]:
-        return {LOGBOOK_ENTRY_NAME: _name(event.data), LOGBOOK_ENTRY_MESSAGE: "recording stopped"}
+        return {
+            LOGBOOK_ENTRY_NAME: _name(event.data),
+            LOGBOOK_ENTRY_MESSAGE: "recording stopped",
+        }
 
     @callback
     def describe_registered(event: Event) -> dict[str, str]:
-        return {LOGBOOK_ENTRY_NAME: _name(event.data), LOGBOOK_ENTRY_MESSAGE: "registered"}
+        return {
+            LOGBOOK_ENTRY_NAME: _name(event.data),
+            LOGBOOK_ENTRY_MESSAGE: "registered",
+        }
 
     @callback
     def describe_assist_rejected(event: Event) -> dict[str, str]:
@@ -95,7 +111,11 @@ def async_describe_events(
     async_describe_event(DOMAIN, EVENT_SIP_CALL_ENDED, describe_ended)
     async_describe_event(DOMAIN, EVENT_SIP_DTMF_DIGIT, describe_dtmf)
     async_describe_event(DOMAIN, EVENT_SIP_PLAYBACK_DONE, describe_playback_done)
-    async_describe_event(DOMAIN, EVENT_SIP_RECORDING_STARTED, describe_recording_started)
-    async_describe_event(DOMAIN, EVENT_SIP_RECORDING_STOPPED, describe_recording_stopped)
+    async_describe_event(
+        DOMAIN, EVENT_SIP_RECORDING_STARTED, describe_recording_started
+    )
+    async_describe_event(
+        DOMAIN, EVENT_SIP_RECORDING_STOPPED, describe_recording_stopped
+    )
     async_describe_event(DOMAIN, EVENT_SIP_REGISTERED, describe_registered)
     async_describe_event(DOMAIN, EVENT_SIP_ASSIST_REJECTED, describe_assist_rejected)

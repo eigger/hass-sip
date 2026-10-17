@@ -1,4 +1,5 @@
 """DND restore mapping. Kept free of Home Assistant imports."""
+
 from __future__ import annotations
 
 

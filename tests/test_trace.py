@@ -1,4 +1,5 @@
 """Opt-in SIP/RTP trace: credential masking and no-cost-when-disabled (P1-1)."""
+
 from __future__ import annotations
 
 import asyncio
@@ -68,7 +69,7 @@ def test_mask_sip_authorization_response():
     out = trace.mask_sip(_DIGEST)
     assert secret not in out
     assert 'response="****"' in out
-    assert "username=\"100\"" in out
+    assert 'username="100"' in out
     assert "REGISTER sip:pbx.example" in out
 
 
@@ -192,15 +193,25 @@ def test_sip_send_and_recv_traced_when_enabled():
 CRLF = "\r\n"
 
 _OPTIONS = (
-    "OPTIONS sip:100@192.168.0.241:50114 SIP/2.0" + CRLF
-    + "Via: SIP/2.0/UDP 192.168.0.245:5060;rport;branch=z9hG4bKPj4ff14083" + CRLF
-    + "From: <sip:100@192.168.0.245>;tag=82674a21" + CRLF
-    + "To: <sip:100@192.168.0.241>" + CRLF
-    + "Contact: <sip:100@192.168.0.245:5060>" + CRLF
-    + "Call-ID: d52428ea-c910-4ccc-9492-f8d7df13bb8e" + CRLF
-    + "CSeq: 396 OPTIONS" + CRLF
-    + "Max-Forwards: 70" + CRLF
-    + "Content-Length: 0" + CRLF + CRLF
+    "OPTIONS sip:100@192.168.0.241:50114 SIP/2.0"
+    + CRLF
+    + "Via: SIP/2.0/UDP 192.168.0.245:5060;rport;branch=z9hG4bKPj4ff14083"
+    + CRLF
+    + "From: <sip:100@192.168.0.245>;tag=82674a21"
+    + CRLF
+    + "To: <sip:100@192.168.0.241>"
+    + CRLF
+    + "Contact: <sip:100@192.168.0.245:5060>"
+    + CRLF
+    + "Call-ID: d52428ea-c910-4ccc-9492-f8d7df13bb8e"
+    + CRLF
+    + "CSeq: 396 OPTIONS"
+    + CRLF
+    + "Max-Forwards: 70"
+    + CRLF
+    + "Content-Length: 0"
+    + CRLF
+    + CRLF
 )
 
 
@@ -258,7 +269,9 @@ def test_rtp_trace_summary_counts_loss_and_latch():
         session._send(pkt)
         for seq in (1, 2, 4, 5):
             session._receive_impl(
-                bytes([0x80, 0]) + struct.pack("!HII", seq, 100, 0x1234) + b"\xff" * 160,
+                bytes([0x80, 0])
+                + struct.pack("!HII", seq, 100, 0x1234)
+                + b"\xff" * 160,
                 ("203.0.113.8", 20000),
             )
         captured = []

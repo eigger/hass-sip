@@ -4,6 +4,7 @@ Run with either:
     py tests/test_pure.py
     py -m pytest tests/test_pure.py
 """
+
 import os
 import struct
 import sys
@@ -124,9 +125,7 @@ sys.modules["homeassistant.helpers.selector"] = _selector_mod
 
 _COMPONENT = os.path.join(os.path.dirname(__file__), "..", "custom_components", "sip")
 _CC_PKG = "custom_components.sip"
-sys.modules.setdefault(
-    "custom_components", types.ModuleType("custom_components")
-)
+sys.modules.setdefault("custom_components", types.ModuleType("custom_components"))
 _cc_sip_pkg = types.ModuleType(_CC_PKG)
 _cc_sip_pkg.__path__ = [os.path.abspath(_COMPONENT)]
 sys.modules[_CC_PKG] = _cc_sip_pkg
@@ -274,8 +273,8 @@ def test_pacer_catches_up_after_an_event_loop_stall():
         slept.append(delay)
         return result
 
-    p.account(8000 * 2)          # 1.0 s of audio queued
-    clock.now = 3.0              # ...but 3 s of wall time went by: badly behind
+    p.account(8000 * 2)  # 1.0 s of audio queued
+    clock.now = 3.0  # ...but 3 s of wall time went by: badly behind
     with patch.object(audio.asyncio, "sleep", fake_sleep):
         asyncio.run(p.wait())
     # Must yield without stalling so the loop can catch back up.
@@ -298,8 +297,8 @@ def test_pacer_throttles_after_a_producer_stall_burst():
         slept.append(delay)
         return result
 
-    p.account(8000)              # 0.5 s first chunk
-    clock.now = 1.8              # producer gap: ahead ≈ -1.3 s
+    p.account(8000)  # 0.5 s first chunk
+    clock.now = 1.8  # producer gap: ahead ≈ -1.3 s
     with patch.object(audio.asyncio, "sleep", fake_sleep):
         asyncio.run(p.wait())
     assert slept == [0]
@@ -334,18 +333,21 @@ def test_ffmpeg_source_reassembles_short_reads_into_whole_frames():
     # prebuffer window, so the test does no real waiting.
     total = 6450
     script = (
-        "#!" + sys.executable + "\n"
-        "import sys, time\n"
-        "out = sys.stdout.buffer\n"
-        "written = 0\n"
-        "while written < %d:\n"
-        "    n = min(100, %d - written)\n"  # deliberately not a frame multiple
-        "    out.write(b'\\x11\\x22' * (n // 2)); out.flush()\n"
-        "    written += (n // 2) * 2\n"
-        # Pause so the reader drains each burst: read() then returns a short
-        # chunk, which is exactly the case the frame reassembly must handle.
-        "    time.sleep(0.001)\n"
-    ) % (total, total)
+        (
+            "#!" + sys.executable + "\n"
+            "import sys, time\n"
+            "out = sys.stdout.buffer\n"
+            "written = 0\n"
+            "while written < %d:\n"
+            "    n = min(100, %d - written)\n"  # deliberately not a frame multiple
+            "    out.write(b'\\x11\\x22' * (n // 2)); out.flush()\n"
+            "    written += (n // 2) * 2\n"
+            # Pause so the reader drains each burst: read() then returns a short
+            # chunk, which is exactly the case the frame reassembly must handle.
+            "    time.sleep(0.001)\n"
+        )
+        % (total, total)
+    )
 
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as fh:
         fh.write(script)
@@ -652,8 +654,7 @@ def test_parse_combines_repeated_routing_headers_in_wire_order():
         "Record-Route: <sip:second.example;lr>\r\n\r\n"
     )
     assert msg.header("Via") == (
-        "SIP/2.0/UDP first.example;branch=1, "
-        "SIP/2.0/UDP second.example;branch=2"
+        "SIP/2.0/UDP first.example;branch=1, SIP/2.0/UDP second.example;branch=2"
     )
     assert msg.header("Record-Route") == (
         "<sip:first.example;lr>, <sip:second.example;lr>"
@@ -663,10 +664,10 @@ def test_parse_combines_repeated_routing_headers_in_wire_order():
 def test_split_header_values_ignores_nested_commas():
     assert sm.split_header_values(
         '"Proxy, One" <sip:first.example;lr>, '
-        '<sip:second.example?Subject=hello,world;lr>'
+        "<sip:second.example?Subject=hello,world;lr>"
     ) == [
         '"Proxy, One" <sip:first.example;lr>',
-        '<sip:second.example?Subject=hello,world;lr>',
+        "<sip:second.example?Subject=hello,world;lr>",
     ]
 
 
@@ -852,9 +853,15 @@ def test_codecs_keep_or_choose_respects_preset():
     moved = codecs.keep_or_choose(codecs.G722, _sdp({9, 0, 8}, **_ALL_OFFER), order)
     assert moved.name == "PCMA"
     # Allowed codec still offered: kept even though another is preferred.
-    assert codecs.keep_or_choose(codecs.PCMU, _sdp({9, 0, 8}, **_ALL_OFFER), order) is codecs.PCMU
+    assert (
+        codecs.keep_or_choose(codecs.PCMU, _sdp({9, 0, 8}, **_ALL_OFFER), order)
+        is codecs.PCMU
+    )
     # Remote dropped the current codec: pick by our order, skipping G.722.
-    assert codecs.keep_or_choose(codecs.PCMU, _sdp({9, 8}, pcma=8, g722=9), order).name == "PCMA"
+    assert (
+        codecs.keep_or_choose(codecs.PCMU, _sdp({9, 8}, pcma=8, g722=9), order).name
+        == "PCMA"
+    )
     # Remote now offers only G.722: reject (None), never fall back to PCMU.
     assert codecs.keep_or_choose(codecs.PCMU, _sdp({9}, g722=9), order) is None
     assert codecs.keep_or_choose(codecs.G722, _sdp({9}, g722=9), order) is None
@@ -874,12 +881,18 @@ def test_codecs_keep_or_choose_respects_preset():
 )
 def test_codecs_sdp_offer_follows_preset(preset, pts, rtpmap):
     order = codecs.preset_order(preset)
-    assert codecs.sdp_media_line(7078, order=order) == f"m=audio 7078 RTP/AVP {pts} 101\r\n"
+    assert (
+        codecs.sdp_media_line(7078, order=order)
+        == f"m=audio 7078 RTP/AVP {pts} 101\r\n"
+    )
     lines = codecs.sdp_rtpmaps(order=order).splitlines()
     assert [ln.split()[1].split("/")[0] for ln in lines[:-1]] == rtpmap
     assert lines[-1] == "a=rtpmap:101 telephone-event/8000"
     # An answer is unaffected by the order: single negotiated codec only.
-    assert codecs.sdp_media_line(7078, only=codecs.PCMA, order=order) == "m=audio 7078 RTP/AVP 8 101\r\n"
+    assert (
+        codecs.sdp_media_line(7078, only=codecs.PCMA, order=order)
+        == "m=audio 7078 RTP/AVP 8 101\r\n"
+    )
 
 
 def test_codec_mismatch_and_offered_names_follow_preset():
@@ -905,8 +918,7 @@ def test_codecs_sdp_answer_only_negotiated():
     only = codecs.PCMU
     assert codecs.sdp_media_line(7078, only=only) == "m=audio 7078 RTP/AVP 0 101\r\n"
     assert codecs.sdp_rtpmaps(only=only) == (
-        "a=rtpmap:0 PCMU/8000\r\n"
-        "a=rtpmap:101 telephone-event/8000\r\n"
+        "a=rtpmap:0 PCMU/8000\r\na=rtpmap:101 telephone-event/8000\r\n"
     )
     dyn = codecs.PCMU.with_payload_type(96)
     assert "96" in codecs.sdp_media_line(7078, only=dyn)
@@ -944,7 +956,9 @@ def test_client_sdp_and_diagnostics_follow_codec_preference():
         )
         client = sip_client.SipClient(cfg)
         client._local_ip = "192.0.2.1"
-        return client._local_sdp(), client.diagnostics_snapshot()["codec"]["local_supported"]
+        return client._local_sdp(), client.diagnostics_snapshot()["codec"][
+            "local_supported"
+        ]
 
     offer, supported = asyncio.run(run("g711_only_pcma_first"))
     assert "RTP/AVP 8 0 101" in offer
@@ -959,10 +973,15 @@ def test_codec_preference_option_schema():
     schema = config_flow._build_options_schema({})
     assert schema({})[const.CONF_CODEC_PREFERENCE] == "auto"
     for key in const.CODEC_PREFERENCE_OPTIONS:
-        assert schema({const.CONF_CODEC_PREFERENCE: key})[const.CONF_CODEC_PREFERENCE] == key
+        assert (
+            schema({const.CONF_CODEC_PREFERENCE: key})[const.CONF_CODEC_PREFERENCE]
+            == key
+        )
     with pytest.raises(vol.Invalid):
         schema({const.CONF_CODEC_PREFERENCE: "g722_only"})
-    stored = config_flow._build_options_schema({const.CONF_CODEC_PREFERENCE: "g711_only_pcma_first"})
+    stored = config_flow._build_options_schema(
+        {const.CONF_CODEC_PREFERENCE: "g711_only_pcma_first"}
+    )
     assert stored({})[const.CONF_CODEC_PREFERENCE] == "g711_only_pcma_first"
 
 
@@ -1148,7 +1167,10 @@ def test_rejected_reinvite_retransmit_replays_488_and_keeps_dialog_state():
     client.state = sip_client.SipState.IN_CALL
     target = client._d_remote_target
     req = _invite_request(
-        cseq=2, branch="z9hG4bKre", contact="<sip:bob@moved.example>", body=_G722_ONLY_BODY
+        cseq=2,
+        branch="z9hG4bKre",
+        contact="<sip:bob@moved.example>",
+        body=_G722_ONLY_BODY,
     )
     for _ in range(2):  # original + retransmission
         with patch.object(client, "_send_raw") as send:
@@ -1158,7 +1180,9 @@ def test_rejected_reinvite_retransmit_replays_488_and_keeps_dialog_state():
     assert client._remote_invite_cseq == 1
     assert client._d_remote_target == target
     # A later, acceptable re-INVITE still works and refreshes the target.
-    good = _invite_request(cseq=3, branch="z9hG4bKre3", contact="<sip:bob@moved.example>")
+    good = _invite_request(
+        cseq=3, branch="z9hG4bKre3", contact="<sip:bob@moved.example>"
+    )
     with patch.object(client, "_send_raw") as send:
         client._handle_request(good)
     assert send.call_args.args[0].startswith("SIP/2.0 200 OK")
@@ -1176,7 +1200,9 @@ def test_awaiting_answer_cleared_by_later_sdp_offer():
     assert client._awaiting_answer is True
     pcmu_only = _sdp_body(pts="0", rtpmap="a=rtpmap:0 PCMU/8000\r\n")
     with patch.object(client, "_send_raw") as send:
-        client._handle_request(_invite_request(cseq=2, branch="z9hG4bKre", body=pcmu_only))
+        client._handle_request(
+            _invite_request(cseq=2, branch="z9hG4bKre", body=pcmu_only)
+        )
     assert client._awaiting_answer is False
     assert "RTP/AVP 0 101" in send.call_args.args[0]
 
@@ -1335,6 +1361,7 @@ def _info_dtmf_request(digit="1"):
 
 def _handle_info_dtmf(state):
     """Feed one DTMF INFO to a client in `state`; return (digits, responses)."""
+
     async def run():
         got = []
         client = sip_client.SipClient(
@@ -1708,7 +1735,9 @@ def test_inbound_dialog_keeps_record_route_wire_order():
     bye, response, _send = asyncio.run(run())
     assert bye.startswith("BYE sip:bob@target.example SIP/2.0\r\n")
     assert "Route: <sip:first.example;lr>, <sip:second.example;lr>\r\n" in bye
-    assert "Record-Route: <sip:first.example;lr>,<sip:second.example;lr>\r\n" in response
+    assert (
+        "Record-Route: <sip:first.example;lr>,<sip:second.example;lr>\r\n" in response
+    )
 
 
 def _inbound_client_with_routes(record_route):
@@ -1804,14 +1833,10 @@ def test_ringing_response_establishes_early_dialog():
 
 
 # ------------------------------------------------------- in-dialog re-INVITE
-def _sdp_body(ip="198.51.100.10", port=4000, extra="", pts="8", rtpmap="a=rtpmap:8 PCMA/8000\r\n"):
-    return (
-        "v=0\r\n"
-        f"c=IN IP4 {ip}\r\n"
-        f"m=audio {port} RTP/AVP {pts}\r\n"
-        f"{rtpmap}"
-        f"{extra}"
-    )
+def _sdp_body(
+    ip="198.51.100.10", port=4000, extra="", pts="8", rtpmap="a=rtpmap:8 PCMA/8000\r\n"
+):
+    return f"v=0\r\nc=IN IP4 {ip}\r\nm=audio {port} RTP/AVP {pts}\r\n{rtpmap}{extra}"
 
 
 def _invite_request(
@@ -2204,10 +2229,7 @@ def test_reinvite_keeps_codec_when_still_offered():
         )
         client.state = sip_client.SipState.REGISTERED
         client._local_ip = "192.0.2.1"
-        g722_rtpmap = (
-            "a=rtpmap:9 G722/8000\r\n"
-            "a=rtpmap:8 PCMA/8000\r\n"
-        )
+        g722_rtpmap = "a=rtpmap:9 G722/8000\r\na=rtpmap:8 PCMA/8000\r\n"
         orig = _invite_request(pts="9 8", rtpmap=g722_rtpmap)
         with patch.object(client, "_send_raw"):
             client._handle_request(orig)
@@ -3145,8 +3167,10 @@ def test_recvonly_peer_disables_media_watchdog():
 def _te_packet(pt, marker, timestamp, event, seq=1):
     """Build one telephone-event RTP packet."""
     b1 = (0x80 if marker else 0) | pt
-    return bytes([0x80, b1]) + struct.pack("!HII", seq, timestamp, 0x1234) + bytes(
-        [event, 0x0A, 0x00, 0xA0]
+    return (
+        bytes([0x80, b1])
+        + struct.pack("!HII", seq, timestamp, 0x1234)
+        + bytes([event, 0x0A, 0x00, 0xA0])
     )
 
 
@@ -3328,9 +3352,7 @@ def test_rtp_dtmf_packet_latches():
         session.on_dtmf = digits.append
         addr = ("203.0.113.40", 15000)
         for i in range(rtp_session._LATCH_LEARN_COUNT):
-            session._receive_impl(
-                _te_packet(101, i == 0, 1000, 5, seq=1 + i), addr
-            )
+            session._receive_impl(_te_packet(101, i == 0, 1000, 5, seq=1 + i), addr)
         return session._remote, session.latched_remote, digits
 
     remote, latched, digits = asyncio.run(run())
@@ -3408,7 +3430,9 @@ def test_rtp_unknown_pt_does_not_latch():
     async def run():
         session = rtp_session.RtpSession()
         session.set_remote("192.168.1.10", 10000)
-        unknown = bytes([0x80, 99]) + struct.pack("!HII", 1, 100, 0x1234) + b"\x00" * 160
+        unknown = (
+            bytes([0x80, 99]) + struct.pack("!HII", 1, 100, 0x1234) + b"\x00" * 160
+        )
         session._receive_impl(unknown, ("203.0.113.8", 20000))
         before = session._remote, session._latch_count
         _feed_pcmu(session, ("198.51.100.7", 9000))
@@ -3918,7 +3942,12 @@ def test_rtp_hold_clears_in_flight_dtmf():
         )
         clock["t"] = 6.0
         session.set_tx_enabled(True)
-        return paused, session._timestamp, session._dtmf_active, list(session._dtmf_queue)
+        return (
+            paused,
+            session._timestamp,
+            session._dtmf_active,
+            list(session._dtmf_queue),
+        )
 
     paused, ts, active, queued = asyncio.run(run())
     assert paused == (False, [], 8000)
@@ -4016,9 +4045,15 @@ def test_g722_bitexact_reference_vectors():
     # Decode path: same payloads through a fresh decoder must match reference PCM
     # prefixes (first 16 samples of each frame) from the C implementation.
     dec_ref_prefix = [
-        bytes.fromhex("0000ffffffff00000000ffff00000000ffffffff000001000200020001000100"),
-        bytes.fromhex("0100010001000000ffffffff000002000100fdfffeff0300fdfff2fffbff1600"),
-        bytes.fromhex("dc24932628278926c324eb21101e3d19da130b0e4d07baff05fa42f5d5ecdee3"),
+        bytes.fromhex(
+            "0000ffffffff00000000ffff00000000ffffffff000001000200020001000100"
+        ),
+        bytes.fromhex(
+            "0100010001000000ffffffff000002000100fdfffeff0300fdfff2fffbff1600"
+        ),
+        bytes.fromhex(
+            "dc24932628278926c324eb21101e3d19da130b0e4d07baff05fa42f5d5ecdee3"
+        ),
     ]
     dec = g722.G722Decoder()
     for payload, prefix in zip(ref, dec_ref_prefix):
@@ -4253,7 +4288,9 @@ def _zoh_upsample(pcm_le: bytes) -> bytes:
     return bytes(out)
 
 
-def _sine_pcm(freq_hz: float, sample_rate: int, n_samples: int, amplitude: int = 8000) -> bytes:
+def _sine_pcm(
+    freq_hz: float, sample_rate: int, n_samples: int, amplitude: int = 8000
+) -> bytes:
     import math
 
     return struct.pack(
@@ -4489,9 +4526,7 @@ def test_assist_initial_prompt_error_still_starts_audio_with_context():
         fake_run,
         fake_input,
         fake_chat_session,
-    ) = _initial_prompt_doubles(
-        PET, PE, (PET.ERROR, {"code": "intent-failed"})
-    )
+    ) = _initial_prompt_doubles(PET, PE, (PET.ERROR, {"code": "intent-failed"}))
 
     async def mock_audio_pipeline(hass, **kwargs):
         audio_calls.append(kwargs)
@@ -4524,10 +4559,7 @@ def test_assist_initial_prompt_error_still_starts_audio_with_context():
     assert pipeline_runs[0].kwargs["end_stage"] == "tts"
     assert len(audio_calls) == 1
     assert audio_calls[0]["conversation_id"] == "opening-conversation"
-    assert (
-        audio_calls[0]["conversation_extra_system_prompt"]
-        == "Keep answers concise"
-    )
+    assert audio_calls[0]["conversation_extra_system_prompt"] == "Keep answers concise"
 
 
 def test_assist_system_prompt_does_not_create_opening_turn():
@@ -5467,6 +5499,7 @@ def test_assist_max_turns_waits_for_final_playback():
     original_get_stream = mock_tts.async_get_stream.return_value
     mock_tts.async_get_stream.return_value = MagicMock()
     try:
+
         async def mock_pipeline(hass, **kwargs):
             cb = kwargs["event_callback"]
             cb(PE(PET.RUN_START, {"conversation_id": "c1"}))
@@ -6755,8 +6788,8 @@ def test_assist_turn_tone_media_resolves_media_source_id():
     assist_mod.media_source.async_resolve_media.return_value = types.SimpleNamespace(
         url="http://resolved.local/chime.mp3"
     )
-    assist_mod.async_process_play_media_url.side_effect = (
-        lambda hass, url: resolved_urls.append(url) or url
+    assist_mod.async_process_play_media_url.side_effect = lambda hass, url: (
+        resolved_urls.append(url) or url
     )
 
     def play(src):
@@ -6782,9 +6815,7 @@ def test_assist_turn_tone_media_resolves_media_source_id():
         assert resolved_urls == ["http://resolved.local/chime.mp3"]
     finally:
         assist_mod.media_source.is_media_source_id.return_value = False
-        assist_mod.async_process_play_media_url.side_effect = (
-            lambda hass, url: url
-        )
+        assist_mod.async_process_play_media_url.side_effect = lambda hass, url: url
 
 
 def test_assist_tone_media_resolution_failure_falls_back_to_beep():
@@ -7275,8 +7306,7 @@ def test_build_schema_new_entry_has_no_prefilled_values():
     )
     assert markers["media_timeout"].default() == config_flow.DEFAULT_MEDIA_TIMEOUT
     assert (
-        markers["max_call_duration"].default()
-        == config_flow.DEFAULT_MAX_CALL_DURATION
+        markers["max_call_duration"].default() == config_flow.DEFAULT_MAX_CALL_DURATION
     )
 
 
@@ -7290,7 +7320,9 @@ def test_build_schema_reconfigure_prefills_current_entry_values():
         "register_expiration": 600,
         "local_rtp_port": 7080,
     }
-    schema = config_flow._build_schema(7078, defaults=current, omit_password_default=True)
+    schema = config_flow._build_schema(
+        7078, defaults=current, omit_password_default=True
+    )
     markers = {str(k): k for k in schema.schema}
     assert markers["server"].default() == "pbx.example.com"
     assert markers["username"].default() == "1001"
@@ -7301,8 +7333,7 @@ def test_build_schema_reconfigure_prefills_current_entry_values():
     assert markers["local_rtp_port"].default() == 7080
     assert markers["media_timeout"].default() == config_flow.DEFAULT_MEDIA_TIMEOUT
     assert (
-        markers["max_call_duration"].default()
-        == config_flow.DEFAULT_MAX_CALL_DURATION
+        markers["max_call_duration"].default() == config_flow.DEFAULT_MAX_CALL_DURATION
     )
     # Fields never set on the original entry stay untouched (no forced "").
     assert markers["domain"].default is vol.UNDEFINED
@@ -7371,9 +7402,7 @@ def test_reconfigure_retry_keeps_password_optional():
         "password": "",
         "port": 5061,
     }
-    schema = config_flow._build_schema(
-        7080, defaults=typed, omit_password_default=True
-    )
+    schema = config_flow._build_schema(7080, defaults=typed, omit_password_default=True)
     markers = {str(k): k for k in schema.schema}
     assert markers["password"].default is vol.UNDEFINED
     assert markers["server"].default() == "pbx.invalid"
@@ -7445,9 +7474,7 @@ def test_contact_refresh_replaces_cache_with_executor_result():
         await init_mod.async_refresh_contacts(hass, runtime)
         return runtime["contacts"]
 
-    assert asyncio.run(run()) == {
-        "200": {"name": "Front door", "auto_answer": True}
-    }
+    assert asyncio.run(run()) == {"200": {"name": "Front door", "auto_answer": True}}
 
 
 def test_contact_refresh_keeps_cache_while_file_is_unparseable():

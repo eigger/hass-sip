@@ -2,6 +2,7 @@
 
 Kept free of Home Assistant imports so the SIP core tests can load it.
 """
+
 from __future__ import annotations
 
 import os
@@ -40,9 +41,7 @@ def is_allowed_recording_path(path: str, roots: list[str]) -> bool:
     return False
 
 
-def recording_allow_roots(
-    config_dir: str, extra: list[str] | None = None
-) -> list[str]:
+def recording_allow_roots(config_dir: str, extra: list[str] | None = None) -> list[str]:
     """Config dir, caller extras, and HA OS ``/media`` / ``/share`` when present."""
     roots = [config_dir]
     if extra:
