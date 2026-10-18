@@ -1,4 +1,5 @@
 """RFC 2617 HTTP Digest authentication (MD5)."""
+
 from __future__ import annotations
 
 import hashlib

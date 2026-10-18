@@ -10,6 +10,7 @@ Today's implementations cover "play a file / TTS to the far end" (TX) and
 media_player sink can be added later by implementing the same tiny interfaces,
 without touching the SIP core.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -100,8 +101,7 @@ class AudioSink(ABC):
     """Consumes s16le / mono PCM coming off the RTP RX path."""
 
     @abstractmethod
-    def write(self, pcm_le: bytes) -> None:
-        ...
+    def write(self, pcm_le: bytes) -> None: ...
 
     def close(self) -> None:  # optional
         ...

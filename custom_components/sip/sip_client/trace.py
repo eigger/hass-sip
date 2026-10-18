@@ -10,6 +10,7 @@ Off by default. Callers must go through :func:`log_sip` / :func:`log_rtp`
 (or check :func:`enabled`) before building log strings so masking and
 format work are skipped when the logger is not at DEBUG.
 """
+
 from __future__ import annotations
 
 import logging
@@ -18,6 +19,28 @@ import re
 _LOGGER = logging.getLogger(__name__)
 
 REDACTED = "****"
+
+# mask_number keeps this many trailing digits of a phone number / SIP user.
+_KEEP_DIGITS = 2
+
+
+def mask_number(number: str | None) -> str | None:
+    """Mask a phone number / SIP user, keeping the last two digits."""
+    if not number:
+        return number
+    digits = sum(1 for c in number if c.isdigit())
+    if digits == 0:
+        return "*" * len(number)
+    seen = 0
+    out: list[str] = []
+    for char in number:
+        if char.isdigit():
+            seen += 1
+            out.append(char if seen > digits - _KEEP_DIGITS else "*")
+        else:
+            out.append(char)
+    return "".join(out)
+
 
 # Digest fields that are the response hash or the challenge material used
 # to compute it. Applied only on Authorization / Proxy-Authorization lines.

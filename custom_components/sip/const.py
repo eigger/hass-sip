@@ -1,4 +1,5 @@
 """Constants for the SIP Client integration."""
+
 import logging
 
 DOMAIN = "sip"

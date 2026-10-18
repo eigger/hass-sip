@@ -1,9 +1,10 @@
 """P1-3 media status view: one-way vs bidirectional from entity fields."""
+
 from __future__ import annotations
 
 import asyncio
 
-from test_pure import _load_component_module, sip_client
+from .common import _load_component_module, sip_client
 
 media_status = _load_component_module("media_status")
 
@@ -27,9 +28,7 @@ def test_audio_confirmed_requires_both_directions_above_threshold():
 
 def test_call_duration_live_then_history():
     now = 1_000.0
-    live = media_status.call_duration_seconds(
-        {"call_connect_time": now - 12.4}, now
-    )
+    live = media_status.call_duration_seconds({"call_connect_time": now - 12.4}, now)
     assert live == 12
     ended = media_status.call_duration_seconds(
         {"call_history": [{"duration": 41}]}, now
@@ -72,9 +71,7 @@ def test_media_view_bidirectional_is_confirmed():
             "call": {"last_end_reason": "remote_bye", "in_call": False},
         }
     )
-    view = media_status.media_view(
-        client, {"call_history": [{"duration": 8}]}, 0.0
-    )
+    view = media_status.media_view(client, {"call_history": [{"duration": 8}]}, 0.0)
     assert view["audio_path"] == "bidirectional"
     assert view["audio_confirmed"] is True
     assert view["call_duration"] == 8
@@ -82,8 +79,6 @@ def test_media_view_bidirectional_is_confirmed():
 
 
 def test_media_view_from_real_sip_client_one_way():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))

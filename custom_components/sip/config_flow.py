@@ -1,4 +1,5 @@
 """Config flow for SIP Client integration."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -46,6 +47,7 @@ from .const import (
     DEFAULT_MAX_CALL_DURATION,
 )
 
+
 def _password_selector() -> TextSelector:
     """Return a password text selector so the field is never shown in the clear."""
     return TextSelector(
@@ -84,26 +86,20 @@ def _build_schema(
     return vol.Schema(
         {
             vol.Required(CONF_SERVER, default=_default(CONF_SERVER)): cv.string,
-            vol.Optional(
-                CONF_PORT, default=_default(CONF_PORT, DEFAULT_PORT)
-            ): cv.port,
+            vol.Optional(CONF_PORT, default=_default(CONF_PORT, DEFAULT_PORT)): cv.port,
             vol.Required(CONF_USERNAME, default=_default(CONF_USERNAME)): cv.string,
             password_key: _password_selector(),
             vol.Optional(
                 CONF_AUTH_USERNAME, default=_default(CONF_AUTH_USERNAME)
             ): cv.string,
             vol.Optional(CONF_DOMAIN, default=_default(CONF_DOMAIN)): cv.string,
-            vol.Optional(
-                CONF_CALLER_ID, default=_default(CONF_CALLER_ID)
-            ): cv.string,
+            vol.Optional(CONF_CALLER_ID, default=_default(CONF_CALLER_ID)): cv.string,
             vol.Optional(
                 CONF_OUTBOUND_PROXY, default=_default(CONF_OUTBOUND_PROXY)
             ): cv.string,
             vol.Optional(
                 CONF_REGISTER_EXPIRATION,
-                default=_default(
-                    CONF_REGISTER_EXPIRATION, DEFAULT_REGISTER_EXPIRATION
-                ),
+                default=_default(CONF_REGISTER_EXPIRATION, DEFAULT_REGISTER_EXPIRATION),
             ): cv.positive_int,
             vol.Optional(
                 CONF_LOCAL_RTP_PORT,
@@ -344,9 +340,7 @@ class SipConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="reconfigure",
             data_schema=_build_schema(
-                reconfigure_entry.data.get(
-                    CONF_LOCAL_RTP_PORT, DEFAULT_LOCAL_RTP_PORT
-                ),
+                reconfigure_entry.data.get(CONF_LOCAL_RTP_PORT, DEFAULT_LOCAL_RTP_PORT),
                 defaults=user_input or reconfigure_entry.data,
                 omit_password_default=True,
             ),

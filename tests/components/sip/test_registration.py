@@ -4,20 +4,19 @@ Timers are fired explicitly so the suite stays well under a second of
 wall-clock wait. The harness also covers an in-dialog re-INVITE so P0-1
 can reuse the real socket path.
 """
+
 from __future__ import annotations
 
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-from mock_pbx import MockPbx
-from test_pure import _load_component_module, sip_client, sm
+import pytest
 
-if sip_client is None:  # enum.StrEnum needs Python 3.11+
-    def _skip():
-        return True
-else:
-    def _skip():
-        return False
+from .common import _load_component_module, sip_client, sm
+from .mock_pbx import MockPbx
+
+# These tests drive real UDP sockets on 127.0.0.1 (mock PBX / RTP peers).
+pytestmark = pytest.mark.usefixtures("socket_enabled")
 
 
 def fire_register_timer(client) -> None:
@@ -60,8 +59,6 @@ async def _stop(client, pbx) -> None:
 
 
 def test_register_401_then_success_emits_once():
-    if _skip():
-        return
 
     async def run():
         pbx = MockPbx()
@@ -95,8 +92,6 @@ def test_register_401_then_success_emits_once():
 
 
 def test_register_407_proxy_auth():
-    if _skip():
-        return
 
     async def run():
         pbx = MockPbx()
@@ -123,8 +118,6 @@ def test_register_407_proxy_auth():
 
 
 def test_register_423_raises_expires():
-    if _skip():
-        return
 
     async def run():
         pbx = MockPbx()
@@ -156,8 +149,6 @@ def test_register_423_raises_expires():
 
 
 def test_register_unanswered_reconnects():
-    if _skip():
-        return
 
     async def run():
         pbx = MockPbx()
@@ -196,8 +187,6 @@ def test_register_unanswered_reconnects():
 
 
 def test_register_refresh_at_half_expiration():
-    if _skip():
-        return
 
     async def run():
         pbx = MockPbx()
@@ -228,8 +217,6 @@ def test_register_refresh_at_half_expiration():
 
 
 def test_register_refresh_keeps_registered_state():
-    if _skip():
-        return
 
     async def run():
         pbx = MockPbx()
@@ -262,8 +249,6 @@ def test_register_refresh_keeps_registered_state():
 
 
 def test_register_deferred_during_call():
-    if _skip():
-        return
 
     async def run():
         pbx = MockPbx()
@@ -301,8 +286,6 @@ def test_register_deferred_during_call():
 
 
 def test_register_recovers_after_pbx_restart():
-    if _skip():
-        return
 
     async def run():
         pbx = MockPbx()
@@ -341,8 +324,6 @@ def test_register_recovers_after_pbx_restart():
 
 def test_register_403_retries_without_reconnect():
     """403 retries with backoff and does not reconnect the socket."""
-    if _skip():
-        return
 
     async def run():
         pbx = MockPbx()
@@ -388,8 +369,6 @@ def _reg_response(code: int, reason: str, cseq: int = 1):
 
 def test_register_403_exponential_backoff_caps_and_resets():
     """Consecutive 403s grow ×3 to 30 min; a 200 OK resets the interval."""
-    if _skip():
-        return
 
     async def run():
         delays: list[float] = []
@@ -435,8 +414,6 @@ def test_register_403_exponential_backoff_caps_and_resets():
 
 
 def test_register_500_backoff_is_slower_than_auth():
-    if _skip():
-        return
 
     async def run():
         delays: list[float] = []
@@ -457,8 +434,6 @@ def test_register_500_backoff_is_slower_than_auth():
 
 def test_register_401_challenge_does_not_count_as_failure():
     """First 401/407 is a digest challenge, not a failed register."""
-    if _skip():
-        return
 
     async def run():
         sent: list[str] = []
@@ -483,7 +458,11 @@ def test_register_401_challenge_does_not_count_as_failure():
         client._handle_register_response(
             _reg_response(401, "Unauthorized", client._reg_cseq)
         )
-        return after_challenge + (list(failed), list(delays), client.register_auth_failures)
+        return after_challenge + (
+            list(failed),
+            list(delays),
+            client.register_auth_failures,
+        )
 
     (
         failed1,
@@ -515,8 +494,6 @@ def test_auth_repair_opens_after_three_failures():
 
 def test_harness_reinvite_answers_with_new_transaction():
     """Mock PBX UAS: outbound call then in-dialog re-INVITE (P0-1 reuse)."""
-    if _skip():
-        return
 
     async def run():
         pbx = MockPbx()

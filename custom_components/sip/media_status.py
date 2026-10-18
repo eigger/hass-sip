@@ -2,6 +2,7 @@
 
 No Home Assistant imports. Tests load this module standalone.
 """
+
 from __future__ import annotations
 
 from typing import Any

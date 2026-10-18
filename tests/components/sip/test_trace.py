@@ -1,4 +1,5 @@
 """Opt-in SIP/RTP trace: credential masking and no-cost-when-disabled (P1-1)."""
+
 from __future__ import annotations
 
 import asyncio
@@ -6,7 +7,9 @@ import logging
 import struct
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from test_pure import rtp_session, sip_client, trace
+import pytest
+
+from .common import rtp_session, sip_client, trace
 
 _DIGEST = (
     "REGISTER sip:pbx.example SIP/2.0\r\n"
@@ -58,6 +61,19 @@ _OK_INVITE = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _trace_logger_at_default_level():
+    """Run with the trace logger at its default (non-DEBUG) level.
+
+    pytest -v makes the Home Assistant test plugin raise the root logger to
+    DEBUG, which would otherwise enable tracing for the "disabled" tests.
+    """
+    previous = trace._LOGGER.level
+    trace._LOGGER.setLevel(logging.INFO)
+    yield
+    trace._LOGGER.setLevel(previous)
+
+
 def test_trace_disabled_by_default():
     assert not trace.enabled()
     assert not trace._LOGGER.isEnabledFor(logging.DEBUG)
@@ -68,7 +84,7 @@ def test_mask_sip_authorization_response():
     out = trace.mask_sip(_DIGEST)
     assert secret not in out
     assert 'response="****"' in out
-    assert "username=\"100\"" in out
+    assert 'username="100"' in out
     assert "REGISTER sip:pbx.example" in out
 
 
@@ -158,8 +174,6 @@ def test_log_sip_masks_before_debug():
 
 
 def test_sip_send_and_recv_traced_when_enabled():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -192,21 +206,29 @@ def test_sip_send_and_recv_traced_when_enabled():
 CRLF = "\r\n"
 
 _OPTIONS = (
-    "OPTIONS sip:100@192.168.0.241:50114 SIP/2.0" + CRLF
-    + "Via: SIP/2.0/UDP 192.168.0.245:5060;rport;branch=z9hG4bKPj4ff14083" + CRLF
-    + "From: <sip:100@192.168.0.245>;tag=82674a21" + CRLF
-    + "To: <sip:100@192.168.0.241>" + CRLF
-    + "Contact: <sip:100@192.168.0.245:5060>" + CRLF
-    + "Call-ID: d52428ea-c910-4ccc-9492-f8d7df13bb8e" + CRLF
-    + "CSeq: 396 OPTIONS" + CRLF
-    + "Max-Forwards: 70" + CRLF
-    + "Content-Length: 0" + CRLF + CRLF
+    "OPTIONS sip:100@192.168.0.241:50114 SIP/2.0"
+    + CRLF
+    + "Via: SIP/2.0/UDP 192.168.0.245:5060;rport;branch=z9hG4bKPj4ff14083"
+    + CRLF
+    + "From: <sip:100@192.168.0.245>;tag=82674a21"
+    + CRLF
+    + "To: <sip:100@192.168.0.241>"
+    + CRLF
+    + "Contact: <sip:100@192.168.0.245:5060>"
+    + CRLF
+    + "Call-ID: d52428ea-c910-4ccc-9492-f8d7df13bb8e"
+    + CRLF
+    + "CSeq: 396 OPTIONS"
+    + CRLF
+    + "Max-Forwards: 70"
+    + CRLF
+    + "Content-Length: 0"
+    + CRLF
+    + CRLF
 )
 
 
 def test_options_keepalive_traced_as_one_line():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -231,8 +253,6 @@ def test_options_keepalive_traced_as_one_line():
 
 
 def test_sip_send_raw_does_not_format_when_disabled():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -258,7 +278,9 @@ def test_rtp_trace_summary_counts_loss_and_latch():
         session._send(pkt)
         for seq in (1, 2, 4, 5):
             session._receive_impl(
-                bytes([0x80, 0]) + struct.pack("!HII", seq, 100, 0x1234) + b"\xff" * 160,
+                bytes([0x80, 0])
+                + struct.pack("!HII", seq, 100, 0x1234)
+                + b"\xff" * 160,
                 ("203.0.113.8", 20000),
             )
         captured = []

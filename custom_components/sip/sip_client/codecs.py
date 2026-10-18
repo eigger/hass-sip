@@ -8,6 +8,7 @@ narrows what we offer and pick; the receive path stays lenient.
 Stateful codecs (G.722) need per-call encoder/decoder instances. Codec exposes
 ``new_encoder`` / ``new_decoder`` factories; G.711 returns stateless adapters.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -140,6 +141,7 @@ def preset_order(name: str | None) -> tuple[Codec, ...]:
     """Ordered codecs for a preset name; unknown or missing means ``auto``."""
     return PRESETS.get(name or DEFAULT_PRESET, SUPPORTED)
 
+
 TELEPHONE_EVENT_PT = 101
 
 
@@ -216,9 +218,7 @@ def sdp_media_line(
     return f"m=audio {port} RTP/AVP {pts} {TELEPHONE_EVENT_PT}\r\n"
 
 
-def sdp_rtpmaps(
-    only: Codec | None = None, order: tuple[Codec, ...] = SUPPORTED
-) -> str:
+def sdp_rtpmaps(only: Codec | None = None, order: tuple[Codec, ...] = SUPPORTED) -> str:
     """Build ``a=rtpmap`` lines. Pass ``only`` for a single-codec answer."""
     entries = (only,) if only is not None else order
     lines = "".join(

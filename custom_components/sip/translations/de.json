@@ -72,6 +72,18 @@
   "exceptions": {
     "no_active_call": {
       "message": "Kein aktiver SIP-Anruf zum Auflegen."
+    },
+    "target_not_loaded": {
+      "message": "Das Ziel des SIP-Dienstes entspricht keinem geladenen SIP-Konto."
+    },
+    "not_in_call": {
+      "message": "Medien können nicht abgespielt werden: Die SIP-Leitung befindet sich in keinem aktiven Anruf."
+    },
+    "media_source_resolve_failed": {
+      "message": "Medienquelle {media_id} konnte nicht aufgelöst werden: {error}"
+    },
+    "media_url_prepare_failed": {
+      "message": "Medien-URL {url} konnte nicht vorbereitet werden: {error}"
     }
   },
   "entity": {

@@ -4,6 +4,7 @@ Framework-agnostic: it talks UDP and exposes call-control methods plus a set of
 callback hooks. The Home Assistant layer wires those hooks to entities, events
 and services. No knowledge of Home Assistant lives here.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -82,7 +83,11 @@ class SipCallbacks:
 
 
 _HOLD_IPS = frozenset({"0.0.0.0", "0:0:0:0:0:0:0:0", "::"})
-_INFO_DTMF_TYPES = ("application/dtmf-relay", "application/dtmf", "audio/telephone-event")
+_INFO_DTMF_TYPES = (
+    "application/dtmf-relay",
+    "application/dtmf",
+    "audio/telephone-event",
+)
 # How long stop() waits for cancelled sources / background work to finish.
 _STOP_DRAIN_TIMEOUT_SEC = 3.0
 _DIALOG_STATES = frozenset(
@@ -143,7 +148,7 @@ def _angle_uri(value: str) -> str:
     lt = value.find("<")
     gt = value.find(">")
     if lt != -1 and gt != -1 and gt > lt:
-        return value[lt + 1:gt]
+        return value[lt + 1 : gt]
     # No angle brackets: treat the whole value as a bare URI (RFC 3261 §20.10)
     stripped = value.strip()
     return stripped if stripped.startswith("sip") else ""
@@ -293,7 +298,9 @@ class _SipProtocol(asyncio.DatagramProtocol):
 
 
 class SipClient:
-    def __init__(self, config: SipConfig, callbacks: SipCallbacks | None = None) -> None:
+    def __init__(
+        self, config: SipConfig, callbacks: SipCallbacks | None = None
+    ) -> None:
         self.config = config
         if not self.config.domain:
             self.config.domain = config.server
@@ -521,7 +528,9 @@ class SipClient:
     async def _drain_tasks(self, timeout: float = _STOP_DRAIN_TIMEOUT_SEC) -> None:
         """Let cancelled sources finish their ffmpeg cleanup before the client
         is discarded; whatever is still pending after ``timeout`` is cancelled."""
-        pending = {t for t in self._tx_source_tasks | self._background_tasks if not t.done()}
+        pending = {
+            t for t in self._tx_source_tasks | self._background_tasks if not t.done()
+        }
         if not pending:
             return
         _done, still_pending = await asyncio.wait(pending, timeout=timeout)
@@ -565,7 +574,11 @@ class SipClient:
         self._observed_ip = ""
         self._observed_port = 0
         self._warned_observed_ip = ""
-        target_server = self.config.outbound_proxy if self.config.outbound_proxy else self.config.server
+        target_server = (
+            self.config.outbound_proxy
+            if self.config.outbound_proxy
+            else self.config.server
+        )
         # Resolve via the loop so a slow DNS lookup never blocks the event loop.
         try:
             infos = await self._loop.getaddrinfo(
@@ -610,7 +623,6 @@ class SipClient:
         if traced:
             trace.log_sip("TX", msg)
         self._transport.sendto(msg.encode("utf-8"))
-
 
     def _emit(self, name: str, *args) -> None:
         """Invoke a user callback, never letting its failure break SIP logic."""
@@ -816,7 +828,10 @@ class SipClient:
         if m.status_code == 423:
             # RFC 3261 §10.2.8 / §21.4.17: retry with Expires >= Min-Expires.
             min_expires = self._parse_min_expires(m)
-            if min_expires is not None and min_expires > self.config.register_expiration:
+            if (
+                min_expires is not None
+                and min_expires > self.config.register_expiration
+            ):
                 _LOGGER.info(
                     "REGISTER 423 Interval Too Brief; raising Expires from %s to %s",
                     self.config.register_expiration,
@@ -867,9 +882,7 @@ class SipClient:
                 self._do_register()
             return
         _LOGGER.warning("REGISTER failed: %s %s", m.status_code, m.reason)
-        self._retry_after_register_failure(
-            m.status_code, f"{m.status_code} {m.reason}"
-        )
+        self._retry_after_register_failure(m.status_code, f"{m.status_code} {m.reason}")
 
     def _retry_after_register_failure(self, status: int, reason: str) -> None:
         """Schedule the next REGISTER with exponential backoff.
@@ -916,14 +929,23 @@ class SipClient:
         cnonce = sm.gen_random_hex(8)
         auth_user = self.config.auth_username or self.config.username
         resp = digest_response(
-            auth_user, self.config.password, realm, "REGISTER", uri,
-            nonce, "auth" if qop else "", nc, cnonce,
+            auth_user,
+            self.config.password,
+            realm,
+            "REGISTER",
+            uri,
+            nonce,
+            "auth" if qop else "",
+            nc,
+            cnonce,
         )
         self._reg_cseq += 1
         self._reg_branch = sm.gen_branch()
         msg = self._build_register()
         auth_user = self.config.auth_username or self.config.username
-        auth = self._digest_auth_line(proxy, auth_user, realm, nonce, uri, resp, qop, nc, cnonce, opaque)
+        auth = self._digest_auth_line(
+            proxy, auth_user, realm, nonce, uri, resp, qop, nc, cnonce, opaque
+        )
         return msg.replace("Content-Length:", auth + "Content-Length:", 1)
 
     # -- outbound call --------------------------------------------------
@@ -951,15 +973,13 @@ class SipClient:
         self._invite_cseq = self._d_cseq
         self._invite_number = number
         disp = self.config.caller_id or self.config.username
-        self._d_local = (
-            f'"{disp}" <sip:{self.config.username}@{self.config.domain}>;tag={self._d_local_tag}'
-        )
+        self._d_local = f'"{disp}" <sip:{self.config.username}@{self.config.domain}>;tag={self._d_local_tag}'
         self._d_remote = f"<sip:{number}@{self.config.domain}>"
         self._d_remote_target = f"sip:{number}@{self.config.domain}"
         self._invite_msg = self._build_invite()
         self._send_raw(self._invite_msg)
         self._set_state(SipState.INVITING)
-        _LOGGER.info("Calling %s", number)
+        _LOGGER.info("Calling %s", trace.mask_number(number))
         self._start_invite_retx()
         if ring_timeout:
             self._ring_timeout_handle = self._loop.call_later(
@@ -973,7 +993,9 @@ class SipClient:
 
     def _schedule_invite_retx(self, seconds: float) -> None:
         self._cancel_invite_retx()
-        self._invite_retx_handle = self._loop.call_later(seconds, self._invite_retx_timer)
+        self._invite_retx_handle = self._loop.call_later(
+            seconds, self._invite_retx_timer
+        )
 
     def _cancel_invite_retx(self) -> None:
         if self._invite_retx_handle is not None:
@@ -990,7 +1012,7 @@ class SipClient:
             self._invite_retx_count += 1
             self._send_raw(self._invite_msg)
             # RFC 3261 T1 exponential backoff, capped at 4 s.
-            self._schedule_invite_retx(min(0.5 * (2 ** self._invite_retx_count), 4.0))
+            self._schedule_invite_retx(min(0.5 * (2**self._invite_retx_count), 4.0))
         except Exception:  # noqa: BLE001
             _LOGGER.exception("INVITE retransmit error")
 
@@ -1038,7 +1060,7 @@ class SipClient:
         )
         if self._service_routes:
             msg += f"Route: {self._service_routes}\r\n"
-        
+
         msg += (
             f"From: {self._d_local}\r\n"
             f"To: {self._d_remote}\r\n"
@@ -1052,23 +1074,21 @@ class SipClient:
         )
         return msg
 
-    def _build_ack(
-        self, resp: sm.SipMessage, routes: list[str] | None = None
-    ) -> str:
+    def _build_ack(self, resp: sm.SipMessage, routes: list[str] | None = None) -> str:
         to = resp.header("To")
         target = _angle_uri(resp.header("Contact")) or self._d_remote_target
         try:
             cseq = resp.header("CSeq").split()[0]
         except (ValueError, IndexError):
             cseq = str(self._invite_cseq)
-            
+
         if 300 <= resp.status_code < 700:
             # ACK to a non-2xx response MUST use the exact same branch as the original request
             branch = self._d_branch
         else:
             # ACK to a 2xx response is a new transaction, needs a new branch
             branch = sm.gen_branch()
-            
+
         via = f"SIP/2.0/UDP {self._local_ip}:{self._local_port};branch={branch};rport"
 
         if self._service_routes and 300 <= resp.status_code < 700:
@@ -1133,8 +1153,15 @@ class SipClient:
             cnonce = sm.gen_random_hex(8)
             auth_user = self.config.auth_username or self.config.username
             resp = digest_response(
-                auth_user, self.config.password, realm, "INVITE", uri,
-                nonce, "auth" if qop else "", nc, cnonce,
+                auth_user,
+                self.config.password,
+                realm,
+                "INVITE",
+                uri,
+                nonce,
+                "auth" if qop else "",
+                nc,
+                cnonce,
             )
             self._d_cseq += 1
             self._invite_cseq = self._d_cseq
@@ -1208,14 +1235,16 @@ class SipClient:
         _LOGGER.warning("Call failed: %s %s", m.status_code, m.reason)
         self._end_call("remote_reject")
 
-    def _digest_auth_line(self, proxy, auth_user, realm, nonce, uri, resp, qop, nc, cnonce, opaque) -> str:
+    def _digest_auth_line(
+        self, proxy, auth_user, realm, nonce, uri, resp, qop, nc, cnonce, opaque
+    ) -> str:
         head = "Proxy-Authorization: " if proxy else "Authorization: "
         auth = (
             f'{head}Digest username="{auth_user}", realm="{realm}", '
             f'nonce="{nonce}", uri="{uri}", response="{resp}", algorithm=MD5'
         )
         if qop:
-            auth += f", qop=auth, nc={nc}, cnonce=\"{cnonce}\""
+            auth += f', qop=auth, nc={nc}, cnonce="{cnonce}"'
         if opaque:
             auth += f', opaque="{opaque}"'
         return auth + "\r\n"
@@ -1274,7 +1303,9 @@ class SipClient:
             if in_dialog:
                 _LOGGER.info(
                     "Negotiated codec %s (pt=%s, %s Hz)",
-                    self._codec.name, self._codec.payload_type, self._codec.sample_rate,
+                    self._codec.name,
+                    self._codec.payload_type,
+                    self._codec.sample_rate,
                 )
                 self._emit("on_codec_change", self._codec)
 
@@ -1342,7 +1373,7 @@ class SipClient:
         end = at if (at != -1 and (gt == -1 or at < gt)) else gt
         if end == -1:
             end = len(frm)
-        return frm[lt + 4:end]
+        return frm[lt + 4 : end]
 
     @staticmethod
     def _stateless_tag(req: sm.SipMessage) -> str:
@@ -1563,7 +1594,8 @@ class SipClient:
             offer = sm.parse_sdp(m.body)
             if codecs.choose(offer, self._codec_order) is None:
                 _LOGGER.warning(
-                    "Rejecting call from %s: no allowed codec in its offer", caller
+                    "Rejecting call from %s: no allowed codec in its offer",
+                    trace.mask_number(caller),
                 )
                 self._reject_media(m, in_dialog=False)
                 return
@@ -1594,7 +1626,9 @@ class SipClient:
             if call_info and "answer-after=" in call_info:
                 try:
                     idx = call_info.find("answer-after=")
-                    val = call_info[idx + len("answer-after="):].split(";")[0].split()[0]
+                    val = (
+                        call_info[idx + len("answer-after=") :].split(";")[0].split()[0]
+                    )
                     if int(val) == 0:
                         auto_answer = True
                 except Exception:
@@ -1610,7 +1644,10 @@ class SipClient:
                     pass
 
             if auto_answer:
-                _LOGGER.info("Auto-answering incoming call from %s (intercom)", caller)
+                _LOGGER.info(
+                    "Auto-answering incoming call from %s (intercom)",
+                    trace.mask_number(caller),
+                )
                 self._send_raw(self._build_response(m, 100, "Trying", False))
                 self._set_state(SipState.ANSWERING)
                 self._send_raw(self._build_response(m, 200, "OK", True))
@@ -1624,7 +1661,7 @@ class SipClient:
             self._send_raw(self._build_response(m, 100, "Trying", False))
             self._send_raw(self._build_response(m, 180, "Ringing", False))
             self._set_state(SipState.INCOMING)
-            _LOGGER.info("Incoming call from %s", caller)
+            _LOGGER.info("Incoming call from %s", trace.mask_number(caller))
             self._emit("on_incoming_call", caller)
             return
 
@@ -1701,7 +1738,9 @@ class SipClient:
             # A keypress only means something inside a call. ANSWERING counts:
             # the INFO can arrive before the ACK that moves us to IN_CALL.
             if self.state not in (SipState.IN_CALL, SipState.ANSWERING):
-                _LOGGER.debug("DTMF '%s' via SIP INFO ignored in state %s", digit, self.state)
+                _LOGGER.debug(
+                    "DTMF '%s' via SIP INFO ignored in state %s", digit, self.state
+                )
                 return
             _LOGGER.debug("DTMF '%s' received via SIP INFO", digit)
             self._on_rx_dtmf(digit)
@@ -1768,7 +1807,9 @@ class SipClient:
                 603: "Decline",
             }
             phrase = reasons.get(code, "Decline")
-            self._send_raw(self._build_response(self._incoming_invite, code, phrase, False))
+            self._send_raw(
+                self._build_response(self._incoming_invite, code, phrase, False)
+            )
             self._end_call(reason)
 
     def _build_in_dialog(
@@ -1806,7 +1847,9 @@ class SipClient:
         Route headers. A strict router instead takes the Request-URI, and the
         remote target moves to the tail of the route set so it is not lost.
         """
-        active = [r for r in (self._dialog_routes if routes is None else routes) if r.strip()]
+        active = [
+            r for r in (self._dialog_routes if routes is None else routes) if r.strip()
+        ]
         if not active:
             return target, ""
         if _is_loose_route(active[0]):
@@ -1903,7 +1946,9 @@ class SipClient:
         self._max_duration_handle = None
         if self.state not in (SipState.IN_CALL, SipState.ANSWERING):
             return
-        _LOGGER.warning("Max call duration reached (%ss)", self.config.max_call_duration)
+        _LOGGER.warning(
+            "Max call duration reached (%ss)", self.config.max_call_duration
+        )
         self.hangup(reason="max_duration")
 
     def _on_media_timeout(self) -> None:
@@ -1954,7 +1999,10 @@ class SipClient:
             self._media_owner = session
             _LOGGER.info(
                 "Media started: remote %s:%s pt=%s dtmf_pt=%s",
-                self._remote_rtp_ip, self._remote_rtp_port, self._chosen_pt, self._remote_dtmf_pt,
+                self._remote_rtp_ip,
+                self._remote_rtp_port,
+                self._chosen_pt,
+                self._remote_dtmf_pt,
             )
 
     async def _stop_media(self) -> None:

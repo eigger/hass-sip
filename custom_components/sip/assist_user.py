@@ -1,4 +1,5 @@
 """Home Assistant user that owns Assist intent execution for a SIP account."""
+
 from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry

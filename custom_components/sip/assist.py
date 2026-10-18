@@ -1,4 +1,5 @@
 """Home Assistant Assist Pipeline integration for SIP Client."""
+
 from __future__ import annotations
 
 import array
@@ -419,7 +420,8 @@ class AssistBridge(AudioSink):
                 tool_args = getattr(tool_call, "tool_args", None)
                 external = getattr(tool_call, "external", True)
             if (
-                tool_name in (
+                tool_name
+                in (
                     ASSIST_HANGUP_TOOL_NAME,
                     ASSIST_HANGUP_MERGED_TOOL_NAME,
                 )
@@ -858,7 +860,9 @@ class AssistBridge(AudioSink):
         self._tx_wait = "tone"
         self._tx_done.clear()
         timeout = (
-            _TONE_WAIT_TIMEOUT_SECONDS if not media_id else _TONE_MEDIA_WAIT_TIMEOUT_SECONDS
+            _TONE_WAIT_TIMEOUT_SECONDS
+            if not media_id
+            else _TONE_MEDIA_WAIT_TIMEOUT_SECONDS
         )
         timed_out = False
         played = False
@@ -893,7 +897,9 @@ class AssistBridge(AudioSink):
         if not self._running or self._processing_active:
             return
         self._processing_active = True
-        LOGGER.debug("Assist turn %d: STT done, starting processing cue", self._turn_index)
+        LOGGER.debug(
+            "Assist turn %d: STT done, starting processing cue", self._turn_index
+        )
         self._processing_task = asyncio.create_task(self._run_processing_cue())
 
     async def _run_processing_cue(self) -> None:
@@ -1026,10 +1032,7 @@ class AssistBridge(AudioSink):
                     self._continue_conversation,
                 )
         elif event.type == PipelineEventType.TTS_END:
-            if (
-                event.data
-                and (tts_output := event.data.get("tts_output"))
-            ):
+            if event.data and (tts_output := event.data.get("tts_output")):
                 self._begin_tts_playback(tts_output["token"])
         elif event.type == PipelineEventType.ERROR:
             if event.data:

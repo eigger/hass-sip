@@ -1,17 +1,17 @@
 """Diagnostics for calls that end up with no audio (one-way / no RTP)."""
+
 from __future__ import annotations
 
 import asyncio
 import logging
+from unittest.mock import AsyncMock, patch
 
-from test_pure import sip_client, sm
+import pytest
 
-if sip_client is None:  # enum.StrEnum needs Python 3.11+
-    def _skip():
-        return True
-else:
-    def _skip():
-        return False
+from .common import sip_client, sm
+
+# These tests drive real UDP sockets on 127.0.0.1 (mock PBX / RTP peers).
+pytestmark = pytest.mark.usefixtures("socket_enabled")
 
 
 def _reg_response(received: str | None, cseq: int = 1):
@@ -32,20 +32,19 @@ def _warnings(caplog, needle: str) -> list[str]:
 
 
 def test_via_received_parsing():
-    if _skip():
-        return
     assert sip_client._via_received("SIP/2.0/UDP a:1;rport=1;received=10.0.0.5") == (
         "10.0.0.5"
     )
     assert sip_client._via_received("SIP/2.0/UDP a:1;rport=1") == ""
-    assert sip_client._via_received(
-        "SIP/2.0/UDP a:1;received=10.0.0.5, SIP/2.0/UDP b:1;received=10.0.0.9"
-    ) == "10.0.0.5"
+    assert (
+        sip_client._via_received(
+            "SIP/2.0/UDP a:1;received=10.0.0.5, SIP/2.0/UDP b:1;received=10.0.0.9"
+        )
+        == "10.0.0.5"
+    )
 
 
 def test_nat_mismatch_warns_once(caplog):
-    if _skip():
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -62,8 +61,6 @@ def test_nat_mismatch_warns_once(caplog):
 
 
 def test_public_received_address_is_only_info(caplog):
-    if _skip():
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -74,7 +71,8 @@ def test_public_received_address_is_only_info(caplog):
             client._handle_register_response(_reg_response("8.8.8.8"))
         assert _warnings(caplog, "sees this client") == []
         assert any(
-            r.levelno == logging.INFO and "sees this client as 8.8.8.8" in r.getMessage()
+            r.levelno == logging.INFO
+            and "sees this client as 8.8.8.8" in r.getMessage()
             for r in caplog.records
         )
 
@@ -82,8 +80,6 @@ def test_public_received_address_is_only_info(caplog):
 
 
 def test_observed_address_cleared_when_it_matches_again():
-    if _skip():
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -99,8 +95,6 @@ def test_observed_address_cleared_when_it_matches_again():
 
 
 def test_cgnat_and_vpn_range_counts_as_lan():
-    if _skip():
-        return
     assert sip_client._is_lan_address("100.64.1.2")
     assert sip_client._is_lan_address("192.168.1.2")
     assert not sip_client._is_lan_address("8.8.8.8")
@@ -108,8 +102,6 @@ def test_cgnat_and_vpn_range_counts_as_lan():
 
 
 def test_matching_or_missing_received_does_not_warn(caplog):
-    if _skip():
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -145,8 +137,6 @@ def _end(client):
 
 
 def test_call_without_any_rtp_warns(caplog):
-    if _skip():
-        return
 
     async def run():
         client = _in_call_client(rx=0, tx=80000)
@@ -161,8 +151,6 @@ def test_call_without_any_rtp_warns(caplog):
 
 
 def test_end_of_call_warning_includes_observed_address(caplog):
-    if _skip():
-        return
 
     async def run():
         client = _in_call_client(rx=0, tx=80000)
@@ -176,8 +164,6 @@ def test_end_of_call_warning_includes_observed_address(caplog):
 
 
 def test_no_rtp_warning_when_audio_arrived_short_or_held(caplog):
-    if _skip():
-        return
 
     async def run():
         cases = [
@@ -200,8 +186,6 @@ def test_no_rtp_warning_when_audio_arrived_short_or_held(caplog):
 
 
 def test_first_rtp_packet_source_is_logged_once(caplog):
-    if _skip():
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -211,7 +195,11 @@ def test_first_rtp_packet_source_is_logged_once(caplog):
         with caplog.at_level(logging.INFO):
             rtp._receive(packet, ("192.0.2.1", 7084))
             rtp._receive(packet, ("192.0.2.1", 7084))
-        first = [r.getMessage() for r in caplog.records if "First RTP packet" in r.getMessage()]
+        first = [
+            r.getMessage()
+            for r in caplog.records
+            if "First RTP packet" in r.getMessage()
+        ]
         assert len(first) == 1 and "differs" not in first[0]
         assert rtp.rx_packets == 2
 
@@ -219,22 +207,25 @@ def test_first_rtp_packet_source_is_logged_once(caplog):
         rtp.reset_byte_counters()
         with caplog.at_level(logging.INFO):
             rtp._receive(packet, ("203.0.113.9", 4000))
-        first = [r.getMessage() for r in caplog.records if "First RTP packet" in r.getMessage()]
+        first = [
+            r.getMessage()
+            for r in caplog.records
+            if "First RTP packet" in r.getMessage()
+        ]
         assert len(first) == 1 and "differs from SDP" in first[0]
 
     asyncio.run(run())
 
 
 def test_via_rport_parsing():
-    if _skip():
-        return
     assert sip_client._via_rport("SIP/2.0/UDP a:1;rport=5062;received=10.0.0.5") == 5062
     assert sip_client._via_rport("SIP/2.0/UDP a:1;rport") == 0
     assert sip_client._via_rport("SIP/2.0/UDP a:1;rport=0") == 0
     assert sip_client._via_rport("SIP/2.0/UDP a:1;rport=70000") == 0
-    assert sip_client._via_rport(
-        "SIP/2.0/UDP a:1;rport=5062, SIP/2.0/UDP b:1;rport=9"
-    ) == 5062
+    assert (
+        sip_client._via_rport("SIP/2.0/UDP a:1;rport=5062, SIP/2.0/UDP b:1;rport=9")
+        == 5062
+    )
 
 
 def _nat_client(use_observed: bool, received: str | None, rport: int = 40000):
@@ -259,8 +250,6 @@ def _nat_client(use_observed: bool, received: str | None, rport: int = 40000):
 
 
 def test_advertised_address_off_uses_local():
-    if _skip():
-        return
 
     async def run():
         client = _nat_client(False, "192.168.3.100")
@@ -273,8 +262,6 @@ def test_advertised_address_off_uses_local():
 
 
 def test_advertised_address_on_uses_observed():
-    if _skip():
-        return
 
     async def run():
         client = _nat_client(True, "192.168.3.100")
@@ -290,8 +277,6 @@ def test_advertised_address_on_uses_observed():
 
 
 def test_advertised_address_on_falls_back_to_local():
-    if _skip():
-        return
 
     async def run():
         client = _nat_client(True, None)
@@ -302,8 +287,6 @@ def test_advertised_address_on_falls_back_to_local():
 
 
 def test_observed_address_triggers_one_reregister():
-    if _skip():
-        return
 
     async def run():
         client = _nat_client(True, None)
@@ -328,8 +311,6 @@ def test_observed_address_triggers_one_reregister():
 
 
 def test_observed_reregister_deferred_during_call():
-    if _skip():
-        return
 
     async def run():
         client = _nat_client(True, None)
@@ -352,8 +333,6 @@ def test_observed_reregister_deferred_during_call():
 
 
 def test_observed_address_cleared_when_not_reported_or_socket_reopened():
-    if _skip():
-        return
 
     async def run():
         client = _nat_client(True, "192.168.3.100")
@@ -372,7 +351,11 @@ def test_observed_address_cleared_when_not_reported_or_socket_reopened():
         client._observed_port = 40000
         client._warned_observed_ip = "192.168.3.100"
         client.config.server = "invalid.invalid"
-        await client._open_socket()
+        # DNS is the network boundary: the lookup fails like NXDOMAIN would.
+        with patch.object(
+            client._loop, "getaddrinfo", AsyncMock(side_effect=OSError("NXDOMAIN"))
+        ):
+            assert await client._open_socket() is False
         assert client._observed_ip == "" and client._observed_port == 0
         assert client._warned_observed_ip == ""
 

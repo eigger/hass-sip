@@ -1,15 +1,28 @@
 """Call recording close, non-blocking WAV I/O, and path policy (P2-2)."""
+
 from __future__ import annotations
 
 import asyncio
 import os
+import socket
+import struct
 import tempfile
 import threading
 import time
 import wave
 from unittest.mock import MagicMock, patch
 
-from test_pure import _load_component_module, audio
+from pytest_homeassistant_custom_component.common import async_capture_events
+
+from homeassistant.core import HomeAssistant
+
+from custom_components.sip.const import (
+    EVENT_SIP_RECORDING_STARTED,
+    EVENT_SIP_RECORDING_STOPPED,
+)
+from custom_components.sip.sip_client.sip_client import SipState
+
+from .common import _load_component_module, audio, phone_line, sip_device, wait_for
 
 recording = _load_component_module("recording")
 
@@ -161,3 +174,71 @@ def test_wav_recorder_creates_parent_directory():
             assert os.path.isfile(path)
 
     asyncio.run(run())
+
+
+# ------------------------------------------------ sip.start/stop_recording flow
+def _pcmu_packet(seq: int, ssrc: int = 0x5150) -> bytes:
+    # 20 ms of PCMU silence (0xFF) with a real RTP header.
+    return bytes([0x80, 0]) + struct.pack("!HII", seq, seq * 160, ssrc) + b"\xff" * 160
+
+
+async def test_start_stop_recording_records_call_audio(
+    hass: HomeAssistant, init_integration, tmp_path
+) -> None:
+    """Record a real call with the mock PBX into a WAV through HA services."""
+    entry = init_integration
+    client = entry.runtime_data["client"]
+    target = phone_line(hass, entry)
+    hass.config.allowlist_external_dirs = {str(tmp_path)}
+    wav_path = tmp_path / "calls" / "call_{{ username }}.wav"
+    started = async_capture_events(hass, EVENT_SIP_RECORDING_STARTED)
+    stopped = async_capture_events(hass, EVENT_SIP_RECORDING_STOPPED)
+
+    await hass.services.async_call(
+        "sip", "dial", {"number": "200", **target}, blocking=True
+    )
+    await wait_for(lambda: client.state == SipState.IN_CALL)
+    await hass.services.async_call(
+        "sip",
+        "start_recording",
+        {"recording_file": str(wav_path), **target},
+        blocking=True,
+    )
+    expected = tmp_path / "calls" / "call_1001.wav"
+    assert [e.data["recording_file"] for e in started] == [str(expected)]
+    assert started[0].data["device_id"] == sip_device(hass, entry).id
+    assert entry.runtime_data["recorder"] is not None
+
+    # The far end talks: RTP from the PBX side reaches the client's RTP port
+    # and is written to the recording by the real RTP stack.
+    # Media starts in a task after IN_CALL, so wait for the RTP socket and
+    # keep talking until the client has decoded ten 20 ms frames.
+    await wait_for(lambda: client.rtp.running)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as far_end:
+        far_end.bind(("127.0.0.1", 0))
+        port = entry.data["local_rtp_port"]
+        seq = 0
+
+        def talk() -> bool:
+            nonlocal seq
+            seq += 1
+            far_end.sendto(_pcmu_packet(seq), ("127.0.0.1", port))
+            return client.rtp.bytes_received >= 10 * 320
+
+        await wait_for(talk)
+
+    await hass.services.async_call("sip", "stop_recording", target, blocking=True)
+    assert entry.runtime_data.get("recorder") is None
+    assert len(stopped) == 1
+    assert stopped[0].data["sip_account"] == "1001"
+
+    with wave.open(str(expected), "rb") as wav:
+        assert wav.getframerate() == 8000
+        assert wav.getsampwidth() == 2
+        assert wav.getnframes() >= 10 * 160
+
+    await hass.services.async_call("sip", "hangup", target, blocking=True)
+    await wait_for(lambda: client.state == SipState.REGISTERED)
+    # Stopping explicitly does not fire a second "stopped" on hang-up.
+    await hass.async_block_till_done()
+    assert len(stopped) == 1

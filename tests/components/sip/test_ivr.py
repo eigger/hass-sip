@@ -1,10 +1,11 @@
 """IVR lifecycle regression tests."""
+
 from __future__ import annotations
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
-from test_pure import _load_component_module
+from .common import _load_component_module
 
 
 ivr = _load_component_module("ivr")
@@ -119,6 +120,7 @@ def test_assist_mapping_drops_only_the_invalid_key():
     """max_silent_turns=0 would end the session after the first turn; the
     service schema rejects it, so the menu must not smuggle it through —
     but the pipeline choice next to it survives."""
+
     async def run():
         trigger = AsyncMock()
         session = _session(trigger_assist=trigger)
@@ -135,6 +137,7 @@ def test_assist_mapping_drops_only_the_invalid_key():
 def test_suspend_holds_playback_done_until_resume():
     """An announcement finishing under a sip.start_assist PIN prompt must not
     hang up; a rejected PIN resumes the menu and its post_action runs then."""
+
     async def run():
         session = _session()
         session.hass.async_create_task = asyncio.ensure_future

@@ -4,6 +4,7 @@ Download from Settings → Devices & Services → SIP Client → ⋮ → Downloa
 diagnostics. The payload is meant to distinguish registration failure, codec
 mismatch, and one-way audio without exposing passwords.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -12,29 +13,21 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_AUTH_USERNAME, CONF_PASSWORD
+from .const import (
+    CONF_AUTH_USERNAME,
+    CONF_CALLER_ID,
+    CONF_OUTBOUND_PROXY,
+    CONF_PASSWORD,
+)
+from .sip_client.trace import mask_number
 
-TO_REDACT = {CONF_PASSWORD, "password", CONF_AUTH_USERNAME}
-
-_KEEP_DIGITS = 2
-
-
-def mask_number(number: str | None) -> str | None:
-    """Mask a phone number / SIP user, keeping the last two digits."""
-    if not number:
-        return number
-    digits = sum(1 for c in number if c.isdigit())
-    if digits == 0:
-        return "*" * len(number)
-    seen = 0
-    out: list[str] = []
-    for char in number:
-        if char.isdigit():
-            seen += 1
-            out.append(char if seen > digits - _KEEP_DIGITS else "*")
-        else:
-            out.append(char)
-    return "".join(out)
+TO_REDACT = {
+    CONF_PASSWORD,
+    "password",
+    CONF_AUTH_USERNAME,
+    CONF_CALLER_ID,
+    CONF_OUTBOUND_PROXY,
+}
 
 
 def _mask_history_entry(entry: dict[str, Any]) -> dict[str, Any]:

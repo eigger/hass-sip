@@ -1,22 +1,18 @@
 """Asyncio UDP mock SIP registrar / minimal UAS.
 
-No Home Assistant. Used by registration-recovery tests and reusable for
+The network boundary for the SIP tests: a real UDP endpoint on 127.0.0.1
+standing in for the user's PBX. Used by registration-recovery tests and reusable for
 in-dialog INVITE / re-INVITE flows (P0-1) over the real socket path.
 """
+
 from __future__ import annotations
 
 import asyncio
 import os
 import socket
-import sys
 
-_SIP = os.path.join(
-    os.path.dirname(__file__), "..", "custom_components", "sip", "sip_client"
-)
-sys.path.insert(0, os.path.abspath(_SIP))
-
-import sip_auth  # noqa: E402
-import sip_message as sm  # noqa: E402
+from custom_components.sip.sip_client import sip_auth
+from custom_components.sip.sip_client import sip_message as sm
 
 _DEFAULT_SDP = (
     "v=0\r\n"
@@ -159,6 +155,25 @@ class MockPbx:
         )
         self.send_raw(msg)
 
+    def send_invite(self, caller: str) -> str:
+        """Send a new inbound INVITE from ``caller``; return its Call-ID."""
+        call_id = f"in-{sm.gen_tag()}"
+        body = _DEFAULT_SDP
+        msg = (
+            f"INVITE {self.client_contact} SIP/2.0\r\n"
+            f"Via: SIP/2.0/UDP {self.host}:{self.port};branch={sm.gen_branch()}\r\n"
+            "Max-Forwards: 70\r\n"
+            f"From: <sip:{caller}@{self.domain}>;tag={sm.gen_tag()}\r\n"
+            f"To: <sip:{self.username}@{self.domain}>\r\n"
+            f"Call-ID: {call_id}\r\n"
+            "CSeq: 1 INVITE\r\n"
+            f"Contact: <sip:{caller}@{self.host}:{self.port}>\r\n"
+            "Content-Type: application/sdp\r\n"
+            f"Content-Length: {len(body)}\r\n\r\n{body}"
+        )
+        self.send_raw(msg)
+        return call_id
+
     def _on_datagram(self, data: bytes, addr) -> None:
         self.peer_addr = addr
         raw = data.decode("utf-8", errors="replace")
@@ -186,7 +201,9 @@ class MockPbx:
             if self.force_code == 423:
                 extra = f"Min-Expires: {self.min_expires or 600}\r\n"
             self.send_raw(
-                self._response(msg, self.force_code, self._reason(self.force_code), extra),
+                self._response(
+                    msg, self.force_code, self._reason(self.force_code), extra
+                ),
                 addr,
             )
             return
@@ -212,7 +229,11 @@ class MockPbx:
 
     def _challenge(self, msg: sm.SipMessage) -> str:
         if self.challenge == "proxy":
-            code, reason, hdr = 407, "Proxy Authentication Required", "Proxy-Authenticate"
+            code, reason, hdr = (
+                407,
+                "Proxy Authentication Required",
+                "Proxy-Authenticate",
+            )
         else:
             code, reason, hdr = 401, "Unauthorized", "WWW-Authenticate"
         extra = (

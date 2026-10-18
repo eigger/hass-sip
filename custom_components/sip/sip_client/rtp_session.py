@@ -13,6 +13,7 @@ Port of rtp_session.cpp. The audio I/O is fully decoupled:
 When no TX audio is queued during an active call, comfort-silence frames are
 sent so the bidirectional stream / NAT mapping stays alive.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -378,7 +379,9 @@ class RtpSession:
             self._note_trace_tx(packet)
 
     def _send_audio_packet(self, frame: bytes) -> None:
-        header = self._rtp_header(self._first_packet, self.payload_type, self._timestamp)
+        header = self._rtp_header(
+            self._first_packet, self.payload_type, self._timestamp
+        )
         self._send(header + self._encode(frame))
         if self._transport is not None and self._remote is not None:
             self.bytes_sent += len(frame)
@@ -400,7 +403,9 @@ class RtpSession:
             self._dtmf_timestamp = self._timestamp
 
         end = self._dtmf_duration >= _DTMF_TONE_SAMPLES
-        header = self._rtp_header(self._dtmf_duration == 0, self.dtmf_pt, self._dtmf_timestamp)
+        header = self._rtp_header(
+            self._dtmf_duration == 0, self.dtmf_pt, self._dtmf_timestamp
+        )
         payload = struct.pack(
             ">BBH",
             self._dtmf_event & 0xFF,
@@ -415,7 +420,9 @@ class RtpSession:
             if self._dtmf_end_packets >= _DTMF_END_PACKETS:
                 self._dtmf_active = False
                 # DTMF durations are in 8 kHz clock ticks for both codecs.
-                self._timestamp = self._dtmf_timestamp + self._dtmf_duration + SAMPLES_PER_FRAME
+                self._timestamp = (
+                    self._dtmf_timestamp + self._dtmf_duration + SAMPLES_PER_FRAME
+                )
                 self._first_packet = True  # re-mark audio after DTMF
         else:
             self._dtmf_duration += SAMPLES_PER_FRAME
@@ -516,9 +523,7 @@ class RtpSession:
         self._media_timeout_handle = None
         if self._transport is None or not self.tx_enabled or not self.expect_rx:
             return
-        _LOGGER.warning(
-            "RTP media timeout after %ss without RX", self.media_timeout
-        )
+        _LOGGER.warning("RTP media timeout after %ss without RX", self.media_timeout)
         cb = self.on_media_timeout
         if cb is None:
             return
@@ -537,9 +542,7 @@ class RtpSession:
 
     def _arm_trace(self) -> None:
         self._cancel_trace()
-        self._trace_handle = self._loop.call_later(
-            _TRACE_INTERVAL, self._trace_tick
-        )
+        self._trace_handle = self._loop.call_later(_TRACE_INTERVAL, self._trace_tick)
 
     def _cancel_trace(self) -> None:
         if self._trace_handle is not None:
@@ -589,9 +592,7 @@ class RtpSession:
         except Exception:  # noqa: BLE001 - a bad RTP packet must not kill the session
             _LOGGER.exception("Error handling RTP packet (ignored)")
 
-    def _receive_impl(
-        self, data: bytes, addr: tuple[str, int] | None = None
-    ) -> None:
+    def _receive_impl(self, data: bytes, addr: tuple[str, int] | None = None) -> None:
         if len(data) < 12:
             return
         if data[0] >> 6 != 2:

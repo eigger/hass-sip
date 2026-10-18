@@ -1,4 +1,5 @@
 """Assist caller allow-list and PIN gate. Kept free of Home Assistant imports."""
+
 from __future__ import annotations
 
 import asyncio

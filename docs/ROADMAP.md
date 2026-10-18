@@ -27,7 +27,7 @@
 
 ### 지킬 것
 
-- SIP core 수정은 반드시 회귀 테스트를 함께 추가한다 (`tests/test_pure.py` 또는
+- SIP core 수정은 반드시 회귀 테스트를 함께 추가한다 (`tests/components/sip/test_pure.py` 또는
   전용 테스트 파일).
 - SIP core에는 `homeassistant` import 금지. 새 기능이 HA를 필요로 하면 콜백/주입으로 뺀다.
 - 이벤트 루프에서 블로킹 I/O 금지(파일, 소켓, subprocess 대기).
@@ -41,13 +41,13 @@
 ### 검증
 
 ```
-python -m pytest tests/
-ruff check custom_components/ tests/
+python -m pytest tests/components/sip/
+ruff check .
+ruff format --check .
 ```
 
-SIP core는 HA 없이 단독 로드할 수 있다. `tests/test_pure.py` 상단의
-`_load_pkg_module` / `_load_component_module` 패턴으로 `SipClient`에 메시지를
-주입하고 `_send_raw`를 patch해 송신 문자열을 검사한다.
+SIP core(`sip_client/`)는 HA 없이 단독 로드할 수 있다. `tests/components/sip/common.py`의
+헬퍼로 `SipClient`에 메시지를 주입하고 `_send_raw`를 patch해 송신 문자열을 검사한다.
 
 ---
 
@@ -100,9 +100,7 @@ SIP core는 HA 없이 단독 로드할 수 있다. `tests/test_pure.py` 상단�
   IP에서 온 패킷을 커널이 버린다. 소스 필터링 이득은 있지만, outbound proxy 설정 시
   PBX 직접 INVITE가 사라지고 멀티 인터페이스/SBC 환경에서 조용히 실패한다.
   관련 이슈가 나오면 unconnected 소켓 + 명시적 소스 검증으로 전환.
-- **테스트를 `pytest-homeassistant-custom-component`로 이전**: 현재 `tests/conftest.py`가
-  HA를 `MagicMock`으로 대체해 `__init__.py`·엔티티·config_flow의 HA 생명주기가
-  사실상 미검증이다. HA 재시작, 언로드/재로드, 통화 중 언로드를 테스트할 수 없다.
+- ~~테스트를 `pytest-homeassistant-custom-component`로 이전~~: 완료(`tests/components/sip/`, 실제 HA 사용).
 - **`entry.runtime_data`를 typed dataclass로**: 현재 dict에 클로저를 담아 문자열 키로
   함수를 꺼내 쓴다(`data["trigger_assist_fn"]`). HA 권장 패턴(`ConfigEntry[SipData]`)과 어긋난다.
 - **`sip_client/`를 PyPI 라이브러리로 분리**: 이미 HA 의존이 없어 비용이 거의 없다.
