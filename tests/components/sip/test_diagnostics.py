@@ -4,30 +4,25 @@ from __future__ import annotations
 
 import asyncio
 import struct
-import sys
-import types
 from unittest.mock import MagicMock
 
-from test_pure import _load_component_module, rtp_session, sip_client, sm
+from pytest_homeassistant_custom_component.components.diagnostics import (
+    get_diagnostics_for_config_entry,
+)
+from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
+from homeassistant.components.diagnostics import async_redact_data
+from homeassistant.core import HomeAssistant
 
-def _redact(data, to_redact):
-    if isinstance(data, dict):
-        return {
-            key: "**REDACTED**" if key in to_redact else _redact(value, to_redact)
-            for key, value in data.items()
-        }
-    if isinstance(data, list):
-        return [_redact(item, to_redact) for item in data]
-    return data
+from .common import (
+    _load_component_module,
+    phone_line,
+    rtp_session,
+    sip_client,
+    sm,
+    wait_for,
+)
 
-
-_diag_mod = types.ModuleType("homeassistant.components.diagnostics")
-_diag_mod.async_redact_data = _redact
-sys.modules["homeassistant.components.diagnostics"] = _diag_mod
-mock_components = sys.modules.get("homeassistant.components")
-if isinstance(mock_components, MagicMock):
-    mock_components.diagnostics = _diag_mod
 
 diagnostics = _load_component_module("diagnostics")
 
@@ -51,6 +46,8 @@ def test_collect_diagnostics_redacts_password_and_masks_history():
             "username": "100",
             "password": "super-secret",
             "authentication_username": "auth100",
+            "caller_id": "Kim 01011112222",
+            "outbound_proxy": "proxy.carrier.example:5060",
             "local_rtp_port": 7078,
         },
         {
@@ -67,9 +64,13 @@ def test_collect_diagnostics_redacts_password_and_masks_history():
             "call_status": "answered",
         },
     )
-    redacted = _redact(payload, diagnostics.TO_REDACT)
+    redacted = async_redact_data(payload, diagnostics.TO_REDACT)
     assert redacted["config"]["password"] == "**REDACTED**"
     assert redacted["config"]["authentication_username"] == "**REDACTED**"
+    assert redacted["config"]["caller_id"] == "**REDACTED**"
+    assert redacted["config"]["outbound_proxy"] == "**REDACTED**"
+    # The extension username is kept on purpose: it identifies which account
+    # the download belongs to and is not a secret on its own.
     assert redacted["config"]["server"] == "pbx.example"
     assert redacted["config"]["username"] == "100"
     assert payload["call_history"][0]["number"] == "*********78"
@@ -78,8 +79,6 @@ def test_collect_diagnostics_redacts_password_and_masks_history():
 
 
 def test_diagnostics_snapshot_registration_failure():
-    if sip_client is None:
-        return
 
     async def run():
         failed = []
@@ -101,8 +100,6 @@ def test_diagnostics_snapshot_registration_failure():
 
 
 def test_diagnostics_snapshot_codec_mismatch():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -123,8 +120,6 @@ def test_diagnostics_snapshot_codec_mismatch():
 
 
 def test_diagnostics_snapshot_matching_codec_is_not_mismatch():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -143,8 +138,6 @@ def test_diagnostics_snapshot_matching_codec_is_not_mismatch():
 
 
 def test_diagnostics_snapshot_one_way_audio():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -167,8 +160,6 @@ def test_diagnostics_snapshot_one_way_audio():
 
 def test_diagnostics_no_media_call_does_not_inherit_previous_rtp_bytes():
     """486 / CANCEL / ring-timeout must not copy the previous call's PCM totals."""
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -222,31 +213,44 @@ def test_rtp_byte_counters_count_pcm_not_dtmf():
     assert received == 320  # decoded PCMU frame
 
 
-def test_async_get_config_entry_diagnostics_redacts():
-    if sip_client is None:
-        return
+async def test_async_get_config_entry_diagnostics_redacts(
+    hass: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    init_integration,
+) -> None:
+    """Download diagnostics through HA's diagnostics platform after a real call."""
+    entry = init_integration
+    client = entry.runtime_data["client"]
+    # A real outbound call to the mock PBX, then local hang-up, so the call
+    # history entry comes from the integration's own callbacks.
+    target = phone_line(hass, entry)
+    await hass.services.async_call(
+        "sip", "dial", {"number": "01099998888", **target}, blocking=True
+    )
+    await wait_for(lambda: client.state == sip_client.SipState.IN_CALL)
+    await hass.services.async_call("sip", "hangup", target, blocking=True)
+    await wait_for(lambda: entry.runtime_data["call_history"])
+    client.last_caller = "01099998888"
+    # Display name / carrier proxy are account details, not needed to debug.
+    hass.config_entries.async_update_entry(
+        entry,
+        data={
+            **entry.data,
+            "caller_id": "Front desk 0215550000",
+            "outbound_proxy": "proxy.carrier.example",
+        },
+    )
 
-    async def run():
-        client = sip_client.SipClient(
-            sip_client.SipConfig(server="pbx.example", password="secret")
-        )
-        client.last_caller = "01099998888"
-        entry = MagicMock()
-        entry.data = {
-            "server": "pbx.example",
-            "username": "100",
-            "password": "secret",
-            "authentication_username": "auth100",
-        }
-        entry.runtime_data = {
-            "client": client,
-            "call_history": [{"number": "01099998888", "reason": "local"}],
-        }
-        return await diagnostics.async_get_config_entry_diagnostics(MagicMock(), entry)
+    payload = await get_diagnostics_for_config_entry(hass, hass_client, entry)
 
-    payload = asyncio.run(run())
     assert payload["config"]["password"] == "**REDACTED**"
-    assert payload["config"]["authentication_username"] == "**REDACTED**"
-    assert "secret" not in str(payload)
+    assert payload["config"]["username"] == entry.data["username"]
+    assert entry.data["password"] not in str(payload)
+    assert payload["config"]["caller_id"] == "**REDACTED**"
+    assert payload["config"]["outbound_proxy"] == "**REDACTED**"
+    assert "0215550000" not in str(payload)
+    assert "proxy.carrier.example" not in str(payload)
     assert payload["call_history"][0]["number"] == "*********88"
+    assert payload["call_history"][0]["direction"] == "outgoing"
     assert payload["sip"]["call"]["last_caller"] == "*********88"
+    assert payload["sip"]["registration"]["registered"] is True

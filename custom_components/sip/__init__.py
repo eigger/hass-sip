@@ -81,6 +81,7 @@ from .repairs import (
 )
 from .sip_client.audio import FfmpegAudioSource
 from .sip_client.sip_client import SipCallbacks, SipClient, SipConfig, SipState
+from .sip_client.trace import mask_number
 
 
 def _recording_roots(hass: HomeAssistant) -> list[str]:
@@ -348,8 +349,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         async_dispatcher_send(hass, f"{DOMAIN}_state_update_{entry.entry_id}")
         fire_sip_event(EVENT_SIP_STATE_CHANGED, {"state": str(state)})
 
+    # REGISTER retries every few seconds while the PBX is unreachable or
+    # rejects us; warn once per outage and log the repeats at DEBUG.
+    register_failure_logged = False
+
     @callback
     def on_registered() -> None:
+        nonlocal register_failure_logged
+        if register_failure_logged:
+            register_failure_logged = False
+            LOGGER.info("[%s] SIP registration recovered", sip_config.username)
         LOGGER.info("[%s] SIP Client successfully registered", sip_config.username)
         entry.runtime_data["registered"] = True
         entry.runtime_data["last_register_failed"] = None
@@ -360,7 +369,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     @callback
     def on_register_failed(reason: str) -> None:
-        LOGGER.warning("[%s] SIP registration failed: %s", sip_config.username, reason)
+        nonlocal register_failure_logged
+        if register_failure_logged:
+            LOGGER.debug(
+                "[%s] SIP registration still failing: %s", sip_config.username, reason
+            )
+        else:
+            register_failure_logged = True
+            LOGGER.warning(
+                "[%s] SIP registration failed: %s (retrying; further failures "
+                "are logged at debug level until it recovers)",
+                sip_config.username,
+                reason,
+            )
         entry.runtime_data["registered"] = False
         entry.runtime_data["last_register_failed"] = reason
         if is_register_auth_failure(reason) and should_open_auth_repair(
@@ -383,7 +404,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     @callback
     def on_incoming_call(caller: str) -> None:
-        LOGGER.info("[%s] Incoming call from %s", sip_config.username, caller)
+        LOGGER.info(
+            "[%s] Incoming call from %s", sip_config.username, mask_number(caller)
+        )
 
         caller_name, auto_answer = get_contact_info_from_cache(
             entry.runtime_data.get("contacts", {}), caller
@@ -568,12 +591,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except Exception:  # noqa: BLE001 - never let startup crash leave a dead task
             LOGGER.exception("SIP client startup failed; will keep retrying via timer")
 
-    start_task = asyncio.create_task(start_client())
+    # Tracked by the config entry, so HA cancels it if the entry unloads or
+    # setup fails before it finishes.
+    start_task = entry.async_create_background_task(
+        hass, start_client(), f"{DOMAIN} {sip_config.username} start"
+    )
     entry.runtime_data["start_task"] = start_task
-
-    # Setup platforms
-
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Handle clean shutdown
     async def shutdown(event) -> None:
@@ -705,28 +728,43 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     entry_data["set_assist"] = set_assist
 
-    # Register services
-    await async_register_services(hass)
+    # Set up platforms and services. If this fails the entry ends in
+    # SETUP_ERROR and async_unload_entry is never called, so stop the client
+    # here: otherwise its UDP transport and REGISTER timer outlive the entry.
+    try:
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        await async_register_services(hass)
+    except BaseException:
+        await _async_stop_client(entry_data)
+        raise
 
     LOGGER.info("SIP account %s set up", sip_config.username)
     return True
 
 
+async def _async_stop_client(entry_data: dict[str, Any]) -> None:
+    """Stop the account's SipClient: startup task, recorder, socket, timers."""
+    # Cancel startup first so it cannot open the socket after stop() closed it.
+    start_task: asyncio.Task | None = entry_data.get("start_task")
+    if start_task is not None and not start_task.done():
+        start_task.cancel()
+        await asyncio.wait({start_task})
+    client: SipClient | None = entry_data.get("client")
+    recorder = close_recorder_slot(entry_data)
+    if client is not None:
+        client.clear_sinks()
+    if recorder is not None:
+        await recorder.wait_closed()
+    if client is not None:
+        await client.stop()
+
+
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    entry_data = entry.runtime_data
+    entry_data = getattr(entry, "runtime_data", None)
     LOGGER.info("Unloading SIP account %s", entry.data.get(CONF_USERNAME))
     if entry_data:
-        client: SipClient = entry_data["client"]
-        recorder = close_recorder_slot(entry_data)
-        client.clear_sinks()
-        if recorder is not None:
-            await recorder.wait_closed()
-        await client.stop()
-        # Clean up tasks
-        start_task: asyncio.Task = entry_data.get("start_task")
-        if start_task:
-            start_task.cancel()
+        await _async_stop_client(entry_data)
 
         set_ivr = entry_data.get("set_ivr")
         if set_ivr:
@@ -802,7 +840,7 @@ async def async_register_services(hass: HomeAssistant) -> None:
             # Never fall back to another account for a target the caller
             # named; surface it so automations/Developer Tools see a failure.
             raise ServiceValidationError(
-                "SIP service target did not match a loaded SIP account"
+                translation_domain=DOMAIN, translation_key="target_not_loaded"
             )
 
         if not matched_entries:
@@ -1115,7 +1153,9 @@ async def async_register_services(hass: HomeAssistant) -> None:
                 contacts=data.get("contacts"),
                 contacts_only=contacts_only,
             ):
-                LOGGER.info("Assist rejected for caller %s (not allowed)", caller)
+                LOGGER.info(
+                    "Assist rejected for caller %s (not allowed)", mask_number(caller)
+                )
                 _fire_assist_rejected(hass, entry_id, data, caller, REASON_NOT_ALLOWED)
                 continue
             # A ``sip.dial`` / ``sip.answer`` ``message`` (or menu) leaves an
@@ -1138,7 +1178,9 @@ async def async_register_services(hass: HomeAssistant) -> None:
                     if ivr is not None:
                         ivr.resume()
                     LOGGER.info(
-                        "Assist rejected for caller %s (%s)", caller, pin_result
+                        "Assist rejected for caller %s (%s)",
+                        mask_number(caller),
+                        pin_result,
                     )
                     _fire_assist_rejected(hass, entry_id, data, caller, pin_result)
                     continue

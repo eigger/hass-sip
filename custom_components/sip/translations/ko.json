@@ -72,6 +72,18 @@
   "exceptions": {
     "no_active_call": {
       "message": "종료할 활성 SIP 통화가 없습니다."
+    },
+    "target_not_loaded": {
+      "message": "SIP 서비스 대상이 로드된 SIP 계정과 일치하지 않습니다."
+    },
+    "not_in_call": {
+      "message": "미디어를 재생할 수 없습니다: SIP 회선이 통화 중이 아닙니다."
+    },
+    "media_source_resolve_failed": {
+      "message": "미디어 소스 {media_id}을(를) 확인하지 못했습니다: {error}"
+    },
+    "media_url_prepare_failed": {
+      "message": "미디어 URL {url}을(를) 준비하지 못했습니다: {error}"
     }
   },
   "entity": {

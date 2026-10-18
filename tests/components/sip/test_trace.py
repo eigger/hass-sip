@@ -7,7 +7,7 @@ import logging
 import struct
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from test_pure import rtp_session, sip_client, trace
+from .common import rtp_session, sip_client, trace
 
 _DIGEST = (
     "REGISTER sip:pbx.example SIP/2.0\r\n"
@@ -159,8 +159,6 @@ def test_log_sip_masks_before_debug():
 
 
 def test_sip_send_and_recv_traced_when_enabled():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -216,8 +214,6 @@ _OPTIONS = (
 
 
 def test_options_keepalive_traced_as_one_line():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -242,8 +238,6 @@ def test_options_keepalive_traced_as_one_line():
 
 
 def test_sip_send_raw_does_not_format_when_disabled():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))

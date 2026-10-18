@@ -11,10 +11,13 @@ permissions:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-# "current" installs the pinned current HA; "minimum-ha" installs the exact
-# hacs.json minimum in a separate environment. The suite mocks Home Assistant
-# (test-profile: unit), so these jobs verify installability/resolution and the
-# mocked unit tests only. Real-HA tests are tracked in ADOPTION_CHECKLIST.md.
+# "current" tests the pinned current HA; "minimum-ha" tests the exact
+# hacs.json minimum in a separate environment. Both run the real-HA suite
+# (test-profile: ha, pytest-homeassistant-custom-component) in
+# tests/components/sip/. ha-components installs the requirements of the
+# manifest dependencies (ffmpeg, llm, logbook, media_source, tts) and the
+# after_dependencies the integration imports (assist_pipeline, stt) from the
+# installed HA.
 jobs:
   current:
     uses: eigger/hass-repo-standards/.github/workflows/python-tests.yml@7acd9cab6ac774e4695f2c962e3d88b5faa4620d
@@ -23,8 +26,9 @@ jobs:
       python-versions: '["3.14"]'
       requirements: requirements_test.txt
       expected-ha-version: '2026.10.2'
-      test-profile: unit
-      pytest-args: tests/ -v
+      test-profile: ha
+      ha-components: ffmpeg llm logbook media_source tts assist_pipeline stt
+      pytest-args: tests/components/sip/ -v
   minimum-ha:
     uses: eigger/hass-repo-standards/.github/workflows/python-tests.yml@7acd9cab6ac774e4695f2c962e3d88b5faa4620d
     with:
@@ -32,5 +36,6 @@ jobs:
       python-versions: '["3.14"]'
       requirements: requirements_test_min.txt
       expected-ha-version: '2026.10.0'
-      test-profile: unit
-      pytest-args: tests/ -v
+      test-profile: ha
+      ha-components: ffmpeg llm logbook media_source tts assist_pipeline stt
+      pytest-args: tests/components/sip/ -v

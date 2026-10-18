@@ -166,7 +166,7 @@ class SipMediaPlayer(MediaPlayerEntity):
         """Play a piece of media (URL or TTS media source ID) to the call."""
         if not self._client.in_call:
             raise HomeAssistantError(
-                "Cannot play media: the SIP line is not in an active call"
+                translation_domain=DOMAIN, translation_key="not_in_call"
             )
 
         url = media_id
@@ -179,7 +179,9 @@ class SipMediaPlayer(MediaPlayerEntity):
                 url = media_item.url
             except Exception as err:
                 raise HomeAssistantError(
-                    f"Failed to resolve media source '{media_id}': {err}"
+                    translation_domain=DOMAIN,
+                    translation_key="media_source_resolve_failed",
+                    translation_placeholders={"media_id": media_id, "error": str(err)},
                 ) from err
 
         # Make Home Assistant URLs absolute and sign protected paths such as
@@ -188,7 +190,12 @@ class SipMediaPlayer(MediaPlayerEntity):
             url = async_process_play_media_url(self.hass, url)
         except Exception as err:
             raise HomeAssistantError(
-                f"Failed to prepare media URL '{url}': {err}"
+                translation_domain=DOMAIN,
+                translation_key="media_url_prepare_failed",
+                translation_placeholders={
+                    "url": url.partition("?")[0],
+                    "error": str(err),
+                },
             ) from err
 
         # A prepared HA URL may carry an authSig. Never put it in the log.

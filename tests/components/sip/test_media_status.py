@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from test_pure import _load_component_module, sip_client
+from .common import _load_component_module, sip_client
 
 media_status = _load_component_module("media_status")
 
@@ -79,8 +79,6 @@ def test_media_view_bidirectional_is_confirmed():
 
 
 def test_media_view_from_real_sip_client_one_way():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))

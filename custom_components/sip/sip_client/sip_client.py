@@ -979,7 +979,7 @@ class SipClient:
         self._invite_msg = self._build_invite()
         self._send_raw(self._invite_msg)
         self._set_state(SipState.INVITING)
-        _LOGGER.info("Calling %s", number)
+        _LOGGER.info("Calling %s", trace.mask_number(number))
         self._start_invite_retx()
         if ring_timeout:
             self._ring_timeout_handle = self._loop.call_later(
@@ -1594,7 +1594,8 @@ class SipClient:
             offer = sm.parse_sdp(m.body)
             if codecs.choose(offer, self._codec_order) is None:
                 _LOGGER.warning(
-                    "Rejecting call from %s: no allowed codec in its offer", caller
+                    "Rejecting call from %s: no allowed codec in its offer",
+                    trace.mask_number(caller),
                 )
                 self._reject_media(m, in_dialog=False)
                 return
@@ -1643,7 +1644,10 @@ class SipClient:
                     pass
 
             if auto_answer:
-                _LOGGER.info("Auto-answering incoming call from %s (intercom)", caller)
+                _LOGGER.info(
+                    "Auto-answering incoming call from %s (intercom)",
+                    trace.mask_number(caller),
+                )
                 self._send_raw(self._build_response(m, 100, "Trying", False))
                 self._set_state(SipState.ANSWERING)
                 self._send_raw(self._build_response(m, 200, "OK", True))
@@ -1657,7 +1661,7 @@ class SipClient:
             self._send_raw(self._build_response(m, 100, "Trying", False))
             self._send_raw(self._build_response(m, 180, "Ringing", False))
             self._set_state(SipState.INCOMING)
-            _LOGGER.info("Incoming call from %s", caller)
+            _LOGGER.info("Incoming call from %s", trace.mask_number(caller))
             self._emit("on_incoming_call", caller)
             return
 

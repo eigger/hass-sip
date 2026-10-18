@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
-from test_pure import _load_component_module
+from .common import _load_component_module
 
 
 ivr = _load_component_module("ivr")

@@ -1,145 +1,39 @@
-"""Unit tests for the framework-agnostic SIP core (no Home Assistant needed).
+"""Unit tests for the SIP core and the integration's pure helpers.
 
-Run with either:
-    py tests/test_pure.py
-    py -m pytest tests/test_pure.py
+These are supplementary to the real-HA config entry tests in test_init.py /
+test_config_flow.py; they import the real modules (and real HA) directly.
 """
 
+import asyncio
+import functools
 import os
 import struct
 import sys
 import tempfile
+import types
+from unittest.mock import AsyncMock, MagicMock, patch
 
-# Load the standalone modules directly (they have no HA / relative-package deps).
-_SIP = os.path.join(
-    os.path.dirname(__file__), "..", "custom_components", "sip", "sip_client"
+import pytest
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+import voluptuous as vol
+
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
+
+from .common import (
+    _assist_ctx,
+    _initial_prompt_doubles,
+    _load_component_module,
+    _run_bridge_session,
+    audio,
+    codecs,
+    g711,
+    g722,
+    rtp_session,
+    sip_auth,
+    sip_client,
+    sm,
 )
-sys.path.insert(0, os.path.abspath(_SIP))
-
-import g711  # noqa: E402
-import sip_auth  # noqa: E402
-import sip_message as sm  # noqa: E402
-
-# rtp_session / sip_client use relative imports, so expose the directory as a
-# throwaway package to load them without Home Assistant.
-import asyncio  # noqa: E402
-import functools  # noqa: E402
-import importlib.util  # noqa: E402
-import types  # noqa: E402
-
-_PKG = "_sipcore"
-_pkg_mod = types.ModuleType(_PKG)
-_pkg_mod.__path__ = [os.path.abspath(_SIP)]
-sys.modules[_PKG] = _pkg_mod
-
-
-def _load_pkg_module(name):
-    spec = importlib.util.spec_from_file_location(
-        f"{_PKG}.{name}", os.path.join(os.path.abspath(_SIP), f"{name}.py")
-    )
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[f"{_PKG}.{name}"] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-g722 = _load_pkg_module("g722")
-codecs = _load_pkg_module("codecs")
-trace = _load_pkg_module("trace")
-rtp_session = _load_pkg_module("rtp_session")
-audio = _load_pkg_module("audio")
-try:
-    sip_client = _load_pkg_module("sip_client")
-except AttributeError:  # enum.StrEnum needs Python 3.11+ (CI runs 3.12+)
-    sip_client = None
-
-# config_flow.py only needs voluptuous plus a couple of HA symbols it never
-# calls (FlowResult, cv.*). Stub those directly with setdefault so this works
-# standalone too — not just under pytest, where conftest.py already mocks
-# `homeassistant`/`homeassistant.core`/`homeassistant.config_entries`.
-from unittest.mock import AsyncMock, MagicMock, patch  # noqa: E402
-import pytest  # noqa: E402
-import voluptuous as vol  # noqa: E402
-
-for _mod_name in (
-    "homeassistant",
-    "homeassistant.core",
-    "homeassistant.config_entries",
-    "homeassistant.helpers",
-):
-    sys.modules.setdefault(_mod_name, MagicMock())
-sys.modules.setdefault("homeassistant.data_entry_flow", MagicMock(FlowResult=dict))
-sys.modules.setdefault("homeassistant.helpers.config_validation", MagicMock())
-
-
-class _TextSelectorType:
-    PASSWORD = "password"
-    TEXT = "text"
-
-
-class _TextSelectorConfig(dict):
-    def __init__(self, type=None, autocomplete=None, **kwargs):
-        super().__init__()
-        if type is not None:
-            self["type"] = type
-        if autocomplete is not None:
-            self["autocomplete"] = autocomplete
-        self.update(kwargs)
-
-
-class _TextSelector:
-    def __init__(self, config=None):
-        self.config = dict(config) if config is not None else {}
-
-    def __call__(self, data):
-        return data
-
-
-class _SelectSelectorMode:
-    DROPDOWN = "dropdown"
-
-
-class _SelectSelectorConfig(dict):
-    def __init__(self, **kwargs):
-        super().__init__(kwargs)
-
-
-class _SelectSelector:
-    def __init__(self, config=None):
-        self.config = dict(config) if config is not None else {}
-
-    def __call__(self, data):
-        if data not in self.config.get("options", ()):
-            raise ValueError(f"invalid option {data!r}")
-        return data
-
-
-_selector_mod = types.ModuleType("homeassistant.helpers.selector")
-_selector_mod.TextSelector = _TextSelector
-_selector_mod.TextSelectorConfig = _TextSelectorConfig
-_selector_mod.TextSelectorType = _TextSelectorType
-_selector_mod.SelectSelector = _SelectSelector
-_selector_mod.SelectSelectorConfig = _SelectSelectorConfig
-_selector_mod.SelectSelectorMode = _SelectSelectorMode
-sys.modules["homeassistant.helpers.selector"] = _selector_mod
-
-_COMPONENT = os.path.join(os.path.dirname(__file__), "..", "custom_components", "sip")
-_CC_PKG = "custom_components.sip"
-sys.modules.setdefault("custom_components", types.ModuleType("custom_components"))
-_cc_sip_pkg = types.ModuleType(_CC_PKG)
-_cc_sip_pkg.__path__ = [os.path.abspath(_COMPONENT)]
-sys.modules[_CC_PKG] = _cc_sip_pkg
-
-
-def _load_component_module(name):
-    spec = importlib.util.spec_from_file_location(
-        f"{_CC_PKG}.{name}", os.path.join(os.path.abspath(_COMPONENT), f"{name}.py")
-    )
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[f"{_CC_PKG}.{name}"] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
 
 const = _load_component_module("const")
 config_flow = _load_component_module("config_flow")
@@ -524,8 +418,6 @@ def test_failed_audio_source_emits_playback_error_not_done():
     """A failed source must not look like a finished one, but consumers
     blocked on completion (IVR, Assist, wait-for-playback automations)
     still need a signal to move on."""
-    if sip_client is None:
-        return
 
     class FailingSource(audio.AudioSource):
         async def run(self, push, is_active):
@@ -551,8 +443,6 @@ def test_failed_audio_source_emits_playback_error_not_done():
 
 
 def test_public_playback_error_omits_media_urls():
-    if sip_client is None:
-        return
     ffmpeg = RuntimeError(
         "ffmpeg exited with status 1: "
         "https://ha.local/media/local/clip.mp3?authSig=secret"
@@ -896,8 +786,6 @@ def test_codecs_sdp_offer_follows_preset(preset, pts, rtpmap):
 
 
 def test_codec_mismatch_and_offered_names_follow_preset():
-    if sip_client is None:
-        pytest.skip("needs Python 3.11+")
     g722_only = _sdp({9}, g722=9)
     names = sip_client._offered_codec_names(g722_only)
     assert names == ["G722"]  # what the remote offered is reported as-is
@@ -926,8 +814,6 @@ def test_codecs_sdp_answer_only_negotiated():
 
 
 def test_local_sdp_offer_and_answer():
-    if sip_client is None:
-        return
 
     async def run():
         cfg = sip_client.SipConfig(server="pbx.example", local_rtp_port=7078)
@@ -947,8 +833,6 @@ def test_local_sdp_offer_and_answer():
 
 
 def test_client_sdp_and_diagnostics_follow_codec_preference():
-    if sip_client is None:
-        pytest.skip("needs Python 3.11+")
 
     async def run(preference):
         cfg = sip_client.SipConfig(
@@ -1019,8 +903,6 @@ def _pcma_only_client(state=None):
 
 @_in_loop
 def test_incoming_invite_without_allowed_codec_gets_488():
-    if sip_client is None:
-        pytest.skip("needs Python 3.11+")
     events = []
     client = _pcma_only_client()
     client.cb.on_incoming_call = events.append
@@ -1041,8 +923,6 @@ def test_incoming_invite_without_allowed_codec_gets_488():
 
 @_in_loop
 def test_incoming_invite_with_allowed_codec_is_answered_with_it():
-    if sip_client is None:
-        pytest.skip("needs Python 3.11+")
     client = _pcma_only_client()
     body = _sdp_body(
         pts="9 0 8",
@@ -1056,8 +936,6 @@ def test_incoming_invite_with_allowed_codec_is_answered_with_it():
 
 @_in_loop
 def test_reinvite_without_allowed_codec_gets_488_and_keeps_session():
-    if sip_client is None:
-        pytest.skip("needs Python 3.11+")
     for method_body in ("INVITE", "UPDATE"):
         client = _pcma_only_client()
         with patch.object(client, "_send_raw"):
@@ -1088,8 +966,6 @@ def test_reinvite_without_allowed_codec_gets_488_and_keeps_session():
 
 @_in_loop
 def test_outbound_answer_without_allowed_codec_acks_then_byes():
-    if sip_client is None:
-        pytest.skip("needs Python 3.11+")
     ended, connected = [], []
     client = _pcma_only_client(sip_client.SipState.RINGING_OUT)
     client.cb.on_call_ended = ended.append
@@ -1131,8 +1007,6 @@ def test_outbound_answer_without_allowed_codec_acks_then_byes():
 )
 @_in_loop
 def test_offerless_invite_200_offers_ordered_codecs_and_ack_answers(preset, pts):
-    if sip_client is None:
-        pytest.skip("needs Python 3.11+")
     client = _pcma_only_client()
     client.config.codec_preference = preset
     client._codec_order = codecs.preset_order(preset)
@@ -1157,10 +1031,10 @@ def test_offerless_invite_200_offers_ordered_codecs_and_ack_answers(preset, pts)
     assert "RTP/AVP 8 101" in client._build_response(invite, 200, "OK", True)
 
 
+# Answering starts RTP, which binds a real local UDP socket.
+@pytest.mark.usefixtures("socket_enabled")
 @_in_loop
 def test_rejected_reinvite_retransmit_replays_488_and_keeps_dialog_state():
-    if sip_client is None:
-        pytest.skip("needs Python 3.11+")
     client = _pcma_only_client()
     with patch.object(client, "_send_raw"):
         client._handle_request(_invite_request())
@@ -1189,10 +1063,10 @@ def test_rejected_reinvite_retransmit_replays_488_and_keeps_dialog_state():
     assert client._d_remote_target == "sip:bob@moved.example"
 
 
+# Answering starts RTP, which binds a real local UDP socket.
+@pytest.mark.usefixtures("socket_enabled")
 @_in_loop
 def test_awaiting_answer_cleared_by_later_sdp_offer():
-    if sip_client is None:
-        pytest.skip("needs Python 3.11+")
     client = _pcma_only_client()
     with patch.object(client, "_send_raw"):
         client._handle_request(_invite_request(body=""))
@@ -1209,8 +1083,6 @@ def test_awaiting_answer_cleared_by_later_sdp_offer():
 
 @_in_loop
 def test_out_of_dialog_rejections_carry_fresh_stable_to_tag():
-    if sip_client is None:
-        pytest.skip("needs Python 3.11+")
     client = _pcma_only_client()
     client._d_local_tag = "stale"
     invite = _invite_request(body=_G722_ONLY_BODY)
@@ -1236,8 +1108,6 @@ def test_out_of_dialog_rejections_carry_fresh_stable_to_tag():
 
 @_in_loop
 def test_ack_answer_without_allowed_codec_sends_bye():
-    if sip_client is None:
-        pytest.skip("needs Python 3.11+")
     ended = []
     client = _pcma_only_client()
     client.cb.on_call_ended = ended.append
@@ -1261,25 +1131,6 @@ def test_ack_answer_without_allowed_codec_sends_bye():
     assert send.call_args.args[0].startswith("BYE ")
     assert ended == ["codec_mismatch"]
     assert client.state == sip_client.SipState.REGISTERED
-
-
-def test_options_flow_shows_and_saves_codec_preference():
-    flow = config_flow.SipOptionsFlow()
-    flow.config_entry = MagicMock(options={})
-
-    kind, kw = asyncio.run(flow.async_step_init(None))
-    assert kind == "form" and kw["step_id"] == "init"
-    assert kw["data_schema"]({})[const.CONF_CODEC_PREFERENCE] == "auto"
-
-    kind, kw = asyncio.run(
-        flow.async_step_init({const.CONF_CODEC_PREFERENCE: "g711_only_pcma_first"})
-    )
-    assert kind == "entry"
-    assert kw["data"] == {const.CONF_CODEC_PREFERENCE: "g711_only_pcma_first"}
-    assert isinstance(
-        config_flow.SipConfigFlow.async_get_options_flow(MagicMock()),
-        config_flow.SipOptionsFlow,
-    )
 
 
 def test_auth_param():
@@ -1317,8 +1168,6 @@ def test_digest_response_legacy_no_qop():
 
 # ------------------------------------------------------- SIP INFO DTMF
 def test_info_dtmf_signal_forms():
-    if sip_client is None:
-        return
     p = sip_client._parse_info_dtmf
     assert p("application/dtmf-relay", "Signal=1\r\nDuration=160") == "1"
     assert p("application/dtmf-relay", "signal=#") == "#"
@@ -1327,8 +1176,6 @@ def test_info_dtmf_signal_forms():
 
 
 def test_info_dtmf_numeric_event_codes():
-    if sip_client is None:
-        return
     # RFC 4733 event numbers, as sent by some gateways.
     p = sip_client._parse_info_dtmf
     assert p("application/dtmf-relay", "Signal=10") == "*"
@@ -1337,8 +1184,6 @@ def test_info_dtmf_numeric_event_codes():
 
 
 def test_info_dtmf_ignores_other_content():
-    if sip_client is None:
-        return
     p = sip_client._parse_info_dtmf
     assert p("application/sdp", "Signal=1") is None
     assert p("application/dtmf-relay", "") is None
@@ -1378,8 +1223,6 @@ def _handle_info_dtmf(state):
 
 
 def test_info_dtmf_fires_during_call():
-    if sip_client is None:
-        return
     # ANSWERING too: the INFO can arrive before the ACK that ends it.
     for state in (sip_client.SipState.IN_CALL, sip_client.SipState.ANSWERING):
         digits, sent = _handle_info_dtmf(state)
@@ -1388,8 +1231,6 @@ def test_info_dtmf_fires_during_call():
 
 
 def test_info_dtmf_outside_call_is_answered_but_not_delivered():
-    if sip_client is None:
-        return
     # An INFO outside a dialog is rejected and must not inject a keypress into
     # IVR menus / automations.
     digits, sent = _handle_info_dtmf(sip_client.SipState.REGISTERED)
@@ -1398,8 +1239,6 @@ def test_info_dtmf_outside_call_is_answered_but_not_delivered():
 
 
 def test_info_dtmf_from_another_dialog_is_rejected():
-    if sip_client is None:
-        return
 
     async def run():
         got = []
@@ -1419,8 +1258,6 @@ def test_info_dtmf_from_another_dialog_is_rejected():
 
 
 def test_response_copies_complete_via_chain():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -1443,8 +1280,6 @@ def test_response_copies_complete_via_chain():
 
 
 def test_successful_invite_ack_and_bye_use_reversed_record_route():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -1521,8 +1356,6 @@ def test_successful_invite_ack_and_bye_use_reversed_record_route():
 
 
 def test_cancel_race_acks_and_ends_late_2xx_with_original_invite_cseq():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -1570,8 +1403,6 @@ def test_cancel_race_acks_and_ends_late_2xx_with_original_invite_cseq():
 
 
 def test_invite_response_from_previous_call_id_is_ignored():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -1602,8 +1433,6 @@ def test_invite_response_from_previous_call_id_is_ignored():
 
 
 def test_forked_invite_2xx_is_acknowledged_and_ended_without_replacing_dialog():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -1645,8 +1474,6 @@ def test_forked_invite_2xx_is_acknowledged_and_ended_without_replacing_dialog():
 
 
 def test_new_outbound_call_clears_previous_dialog_routes():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -1663,8 +1490,6 @@ def test_new_outbound_call_clears_previous_dialog_routes():
 
 
 def test_authenticated_invite_updates_retained_invite_cseq():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(
@@ -1709,8 +1534,6 @@ def test_authenticated_invite_updates_retained_invite_cseq():
 
 
 def test_inbound_dialog_keeps_record_route_wire_order():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -1767,8 +1590,6 @@ def test_strict_route_moves_first_hop_into_request_uri():
     The 3CX SBC in issue #39 record-routes without ";lr", so sending the BYE
     to the peer's Contact would address 127.0.0.1 and never reach the SBC.
     """
-    if sip_client is None:
-        return
 
     async def run():
         client, _ = _inbound_client_with_routes(
@@ -1786,8 +1607,6 @@ def test_strict_route_moves_first_hop_into_request_uri():
 
 def test_strict_route_keeps_remaining_hops_from_combined_header():
     """Comma-combined and repeated Record-Route rows must behave identically."""
-    if sip_client is None:
-        return
 
     async def run():
         client, _ = _inbound_client_with_routes(
@@ -1801,8 +1620,6 @@ def test_strict_route_keeps_remaining_hops_from_combined_header():
 
 
 def test_lr_lookalike_param_is_not_treated_as_loose():
-    if sip_client is None:
-        return
 
     async def run():
         client, _ = _inbound_client_with_routes("<sip:sbc.example;lrx=1>")
@@ -1814,8 +1631,6 @@ def test_lr_lookalike_param_is_not_treated_as_loose():
 
 def test_ringing_response_establishes_early_dialog():
     """18x opens an early dialog, so it needs Record-Route and Contact too."""
-    if sip_client is None:
-        return
 
     async def run():
         client, invite = _inbound_client_with_routes("<sip:sbc.example;lr>")
@@ -1889,8 +1704,6 @@ def _inbound_in_call():
 
 
 def test_incoming_call_extracts_sip_caller_id_name():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -1906,8 +1719,6 @@ def test_incoming_call_extracts_sip_caller_id_name():
 
 
 def test_caller_id_name_handles_unquoted_escaped_and_missing_names():
-    if sip_client is None:
-        return
 
     quoted = _invite_request(frm='"Alice \\"Support\\"" <sip:100@example>')
     unquoted = _invite_request(frm="Front Desk <sip:101@example>")
@@ -1948,8 +1759,6 @@ def _outbound_in_call():
 
 def test_inbound_reinvite_answers_with_new_transaction():
     """re-INVITE 200 must echo the re-INVITE Via branch and CSeq, not the original."""
-    if sip_client is None:
-        return
 
     async def run():
         client, orig, incoming = _inbound_in_call()
@@ -1988,8 +1797,6 @@ def test_inbound_reinvite_answers_with_new_transaction():
 
 
 def test_outbound_reinvite_is_not_busy_here():
-    if sip_client is None:
-        return
 
     async def run():
         client, incoming = _outbound_in_call()
@@ -2017,8 +1824,6 @@ def test_outbound_reinvite_is_not_busy_here():
 
 
 def test_invite_retransmission_replays_prior_response():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -2048,8 +1853,6 @@ def test_invite_retransmission_replays_prior_response():
 
 
 def test_reinvite_hold_and_resume_toggles_tx():
-    if sip_client is None:
-        return
 
     async def run():
         client, _, _ = _inbound_in_call()
@@ -2085,8 +1888,6 @@ def test_reinvite_hold_and_resume_toggles_tx():
 
 
 def test_reinvite_inactive_answers_inactive():
-    if sip_client is None:
-        return
 
     async def run():
         client, _, _ = _inbound_in_call()
@@ -2109,8 +1910,6 @@ def test_reinvite_inactive_answers_inactive():
 
 
 def test_hold_drops_queued_tx_audio():
-    if sip_client is None:
-        return
 
     async def run():
         client, _, _ = _inbound_in_call()
@@ -2134,8 +1933,6 @@ def test_hold_drops_queued_tx_audio():
 
 def test_answering_reinvite_applies_new_sdp():
     """A lost ACK followed by CSeq+1 re-INVITE must not replay the original 200."""
-    if sip_client is None:
-        return
 
     async def run():
         incoming = []
@@ -2174,8 +1971,6 @@ def test_answering_reinvite_applies_new_sdp():
 
 
 def test_offerless_reinvite_applies_ack_sdp():
-    if sip_client is None:
-        return
 
     async def run():
         client, _, _ = _inbound_in_call()
@@ -2214,8 +2009,6 @@ def test_offerless_reinvite_applies_ack_sdp():
 
 
 def test_reinvite_keeps_codec_when_still_offered():
-    if sip_client is None:
-        return
 
     async def run():
         incoming = []
@@ -2253,8 +2046,6 @@ def test_reinvite_keeps_codec_when_still_offered():
 
 
 def test_reinvite_notifies_codec_change():
-    if sip_client is None:
-        return
 
     async def run():
         changed = []
@@ -2288,8 +2079,6 @@ def test_reinvite_notifies_codec_change():
 
 
 def test_update_wrong_call_id_is_481():
-    if sip_client is None:
-        return
 
     async def run():
         client, _, _ = _inbound_in_call()
@@ -2318,8 +2107,6 @@ def test_update_wrong_call_id_is_481():
 
 
 def test_reinvite_starts_media_if_never_started():
-    if sip_client is None:
-        return
 
     async def run():
         client, _, _ = _inbound_in_call()
@@ -2348,8 +2135,6 @@ def test_reinvite_starts_media_if_never_started():
 
 
 def test_telephone_event_pt_does_not_leak_across_calls():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -2379,8 +2164,6 @@ def test_telephone_event_pt_does_not_leak_across_calls():
 
 def test_media_start_after_hangup_does_not_early_return():
     """Hangup's fire-and-forget stop must not make the next start a no-op."""
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -2418,8 +2201,6 @@ def test_media_start_after_hangup_does_not_early_return():
 
 def test_late_media_stop_does_not_kill_new_session():
     """A delayed stop for call A must not tear down call B's RTP."""
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -2455,8 +2236,6 @@ def test_late_media_stop_does_not_kill_new_session():
 
 def test_duplicate_start_media_same_session_does_not_restart():
     """ACK/re-INVITE must not tear down RTP that this dialog just started."""
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -2498,8 +2277,6 @@ def test_duplicate_start_media_same_session_does_not_restart():
 
 def test_start_media_retargets_if_endpoint_changes_during_bind():
     """re-INVITE during bind must not keep sending to the first SDP dest."""
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -2543,8 +2320,6 @@ def test_start_media_retargets_if_endpoint_changes_during_bind():
 
 def test_auto_answer_right_after_bye_starts_media():
     """Intercom: BYE then a new auto-answer INVITE before stop finishes."""
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -2597,8 +2372,6 @@ def test_auto_answer_right_after_bye_starts_media():
 
 
 def test_new_call_chooses_preferred_codec_not_previous():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -2628,8 +2401,6 @@ def test_new_call_chooses_preferred_codec_not_previous():
 
 
 def test_sample_rate_change_flushes_tx_and_cancels_source():
-    if sip_client is None:
-        return
 
     async def run():
         done = []
@@ -2674,8 +2445,6 @@ def test_sample_rate_change_flushes_tx_and_cancels_source():
 
 
 def test_update_with_sdp_returns_answer():
-    if sip_client is None:
-        return
 
     async def run():
         client, _, _ = _inbound_in_call()
@@ -2721,8 +2490,6 @@ def _bye_request(call_id="inbound@example"):
 
 
 def test_local_hangup_emits_reason_and_bye():
-    if sip_client is None:
-        return
 
     async def run():
         client, _, _ = _inbound_in_call()
@@ -2740,8 +2507,6 @@ def test_local_hangup_emits_reason_and_bye():
 
 
 def test_remote_bye_emits_reason():
-    if sip_client is None:
-        return
 
     async def run():
         client, orig, _ = _inbound_in_call()
@@ -2759,8 +2524,6 @@ def test_remote_bye_emits_reason():
 
 
 def test_media_timeout_sends_bye_and_reason():
-    if sip_client is None:
-        return
 
     async def run():
         client, _, _ = _inbound_in_call()
@@ -2778,8 +2541,6 @@ def test_media_timeout_sends_bye_and_reason():
 
 
 def test_max_duration_sends_bye_and_reason():
-    if sip_client is None:
-        return
 
     async def run():
         client, _, _ = _inbound_in_call()
@@ -2802,8 +2563,6 @@ def test_max_duration_sends_bye_and_reason():
 
 
 def test_call_timers_cleared_on_end():
-    if sip_client is None:
-        return
 
     async def run():
         client, _, _ = _inbound_in_call()
@@ -2822,8 +2581,6 @@ def test_call_timers_cleared_on_end():
 
 
 def test_media_timeout_ignored_when_not_in_call():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -2839,8 +2596,6 @@ def test_media_timeout_ignored_when_not_in_call():
 
 
 def test_remote_reject_emits_reason():
-    if sip_client is None:
-        return
 
     async def run():
         ended = []
@@ -2878,8 +2633,6 @@ def test_remote_reject_emits_reason():
 
 
 def test_remote_cancel_emits_reason():
-    if sip_client is None:
-        return
 
     async def run():
         ended = []
@@ -2912,8 +2665,6 @@ def test_remote_cancel_emits_reason():
 
 
 def test_cancel_from_another_transaction_does_not_end_incoming_call():
-    if sip_client is None:
-        return
 
     async def run():
         ended = []
@@ -2948,8 +2699,6 @@ def test_cancel_from_another_transaction_does_not_end_incoming_call():
 
 
 def test_bye_from_another_dialog_does_not_end_active_call():
-    if sip_client is None:
-        return
 
     async def run():
         ended = []
@@ -2998,8 +2747,6 @@ def _ringing_inbound(ended):
 
 def test_bye_while_ringing_ends_incoming_call():
     """A caller may BYE an early dialog (RFC 3261 §15): the bell must stop."""
-    if sip_client is None:
-        return
 
     async def run():
         ended = []
@@ -3018,8 +2765,6 @@ def test_bye_while_ringing_ends_incoming_call():
 def test_info_in_early_dialog_is_acknowledged_but_dtmf_not_delivered():
     """Our own early dialog: 200 (not 481, which would tear the dialog down)
     but a keypress before the call is connected is still dropped."""
-    if sip_client is None:
-        return
 
     async def run():
         got = []
@@ -3038,11 +2783,11 @@ def test_info_in_early_dialog_is_acknowledged_but_dtmf_not_delivered():
     assert response.startswith("SIP/2.0 200 OK")
 
 
+# Answering starts RTP, which binds a real local UDP socket.
+@pytest.mark.usefixtures("socket_enabled")
 def test_cancel_after_answer_is_acknowledged_without_ending_call():
     """CANCEL racing our 200 OK: the INVITE transaction still exists, so it
     gets 200, but the call stays up (RFC 3261 §9.2)."""
-    if sip_client is None:
-        return
 
     async def run():
         ended = []
@@ -3073,8 +2818,6 @@ def test_cancel_after_answer_is_acknowledged_without_ending_call():
 
 
 def test_cancel_with_other_call_id_is_rejected():
-    if sip_client is None:
-        return
 
     async def run():
         ended = []
@@ -3100,8 +2843,6 @@ def test_cancel_with_other_call_id_is_rejected():
 
 
 def test_ring_timeout_emits_reason():
-    if sip_client is None:
-        return
 
     async def run():
         ended = []
@@ -3132,8 +2873,6 @@ def test_ring_timeout_emits_reason():
 
 
 def test_recvonly_peer_disables_media_watchdog():
-    if sip_client is None:
-        return
 
     async def run():
         client, _, _ = _inbound_in_call()
@@ -3737,8 +3476,6 @@ def test_rtp_flush_tx_buffer():
 
 
 def test_replaced_audio_source_is_retained_until_cancel_cleanup_finishes():
-    if sip_client is None:
-        return
 
     class CleanupSource(audio.AudioSource):
         def __init__(self, cleanup_started, cleanup_finished):
@@ -3787,8 +3524,6 @@ def test_replaced_audio_source_is_retained_until_cancel_cleanup_finishes():
 def test_stop_waits_for_cancelled_source_cleanup():
     """stop() must not return while a cancelled source is still in its
     finally block: the integration discards the client right after."""
-    if sip_client is None:
-        return
 
     class CleanupSource(audio.AudioSource):
         def __init__(self):
@@ -3816,8 +3551,6 @@ def test_stop_waits_for_cancelled_source_cleanup():
 
 
 def test_stop_cancels_cleanup_that_outlives_the_drain_timeout():
-    if sip_client is None:
-        return
 
     class StuckSource(audio.AudioSource):
         def __init__(self):
@@ -3845,8 +3578,6 @@ def test_stop_cancels_cleanup_that_outlives_the_drain_timeout():
 
 
 def test_spawned_background_tasks_are_referenced_until_done():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -3867,8 +3598,6 @@ def test_spawned_background_tasks_are_referenced_until_done():
 
 
 def test_replacing_audio_source_flushes_old_pcm():
-    if sip_client is None:
-        return
 
     class WaitingSource(audio.AudioSource):
         async def run(self, push, is_active):
@@ -4106,179 +3835,6 @@ def test_g722_perf_under_budget():
 
 
 # ------------------------------------------------------- assist bridge
-def _setup_assist_deps():
-    """Install minimal HA mocks so assist.py can be loaded."""
-    from unittest.mock import AsyncMock
-
-    class _PipelineEventType:
-        RUN_START = "run-start"
-        STT_END = "stt-end"
-        INTENT_PROGRESS = "intent-progress"
-        INTENT_END = "intent-end"
-        TTS_END = "tts-end"
-        ERROR = "error"
-
-    class _PipelineStage:
-        INTENT = "intent"
-        STT = "stt"
-        TTS = "tts"
-
-    class _PipelineEvent:
-        def __init__(self, event_type, data=None):
-            self.type = event_type
-            self.data = data if data is not None else {}
-
-    class _AudioSettings:
-        """Records the kwargs assist.py builds, so tests can assert on them."""
-
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-    mock_ap = MagicMock()
-    mock_ap.AudioSettings = _AudioSettings
-    mock_ap.PipelineEventType = _PipelineEventType
-    mock_ap.PipelineStage = _PipelineStage
-    mock_ap.PipelineEvent = _PipelineEvent
-
-    pipeline_obj = MagicMock()
-    pipeline_obj.id = "default"
-
-    def _get_pipeline(hass, pipeline_id):
-        return pipeline_obj
-
-    mock_ap.async_get_pipeline = _get_pipeline
-    mock_ap.async_pipeline_from_audio_stream = AsyncMock()
-
-    mock_components = sys.modules.get("homeassistant.components")
-    if not isinstance(mock_components, MagicMock):
-        mock_components = MagicMock()
-        sys.modules["homeassistant.components"] = mock_components
-    mock_components.assist_pipeline = mock_ap
-    sys.modules["homeassistant.components.assist_pipeline"] = mock_ap
-
-    mock_stt = MagicMock()
-
-    class _SpeechMetadata:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-    mock_stt.SpeechMetadata = _SpeechMetadata
-    mock_stt.AudioFormats = MagicMock(WAV="wav")
-    mock_stt.AudioCodecs = MagicMock(PCM="pcm")
-    mock_stt.AudioBitRates = MagicMock(BITRATE_16=16)
-    mock_stt.AudioSampleRates = MagicMock(SAMPLERATE_16000=16000)
-    mock_stt.AudioChannels = MagicMock(CHANNEL_MONO=1)
-    mock_components.stt = mock_stt
-    sys.modules["homeassistant.components.stt"] = mock_stt
-
-    mock_tts = MagicMock()
-    mock_tts.async_get_stream = MagicMock(return_value=None)
-    mock_components.tts = mock_tts
-    sys.modules["homeassistant.components.tts"] = mock_tts
-
-    mock_ffmpeg = MagicMock()
-    mock_ffmpeg.get_ffmpeg_manager = MagicMock(
-        return_value=MagicMock(binary="/usr/bin/ffmpeg")
-    )
-    mock_components.ffmpeg = mock_ffmpeg
-    sys.modules["homeassistant.components.ffmpeg"] = mock_ffmpeg
-
-    # Tone media resolution (turn_tone_media / processing_tone_media): default
-    # to "not a media-source ID" and an identity URL passthrough, so a plain
-    # URL/path exercises the FfmpegAudioSource path without extra setup;
-    # tests can reconfigure assist.media_source / assist.async_process_play_media_url.
-    mock_media_source = MagicMock()
-    mock_media_source.is_media_source_id = MagicMock(return_value=False)
-    mock_media_source.async_resolve_media = AsyncMock()
-    mock_components.media_source = mock_media_source
-    sys.modules["homeassistant.components.media_source"] = mock_media_source
-
-    mock_media_player = MagicMock()
-    mock_media_player.async_process_play_media_url = MagicMock(
-        side_effect=lambda hass, url: url
-    )
-    mock_components.media_player = mock_media_player
-    sys.modules["homeassistant.components.media_player"] = mock_media_player
-
-    _sip_client_pkg = f"{_CC_PKG}.sip_client"
-    if _sip_client_pkg not in sys.modules:
-        sc_pkg = types.ModuleType(_sip_client_pkg)
-        sc_pkg.__path__ = [os.path.join(os.path.abspath(_COMPONENT), "sip_client")]
-        sys.modules[_sip_client_pkg] = sc_pkg
-
-    _load_component_module("helpers")
-    assist = _load_component_module("assist")
-    return assist, mock_ap, _PipelineEventType, _PipelineEvent
-
-
-_ASSIST_CTX = None
-
-
-def _assist_ctx():
-    global _ASSIST_CTX
-    if _ASSIST_CTX is None:
-        _ASSIST_CTX = _setup_assist_deps()
-    return _ASSIST_CTX
-
-
-def _run_bridge_session(bridge):
-    async def _wait():
-        bridge.start()
-        if bridge.session_task:
-            await bridge.session_task
-
-    asyncio.run(_wait())
-
-
-def _initial_prompt_doubles(PET, PE, *events):
-    """Return reusable doubles for a text-input Assist pipeline run."""
-    from contextlib import nullcontext
-
-    pipeline_runs = []
-    pipeline_inputs = []
-
-    class FakePipelineRun:
-        def __init__(self, hass, **kwargs):
-            self.hass = hass
-            self.kwargs = kwargs
-            pipeline_runs.append(self)
-
-    class FakePipelineInput:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            pipeline_inputs.append(self)
-
-        async def validate(self):
-            return None
-
-        async def execute(self):
-            callback = self.kwargs["run"].kwargs["event_callback"]
-            callback(
-                PE(
-                    PET.RUN_START,
-                    {"conversation_id": self.kwargs["session"].conversation_id},
-                )
-            )
-            for event_type, data in events:
-                callback(PE(event_type, data))
-
-    fake_chat_session = MagicMock()
-    fake_chat_session.async_get_chat_session.side_effect = (
-        lambda hass, conversation_id: nullcontext(
-            types.SimpleNamespace(
-                conversation_id=conversation_id or "opening-conversation"
-            )
-        )
-    )
-    return (
-        pipeline_runs,
-        pipeline_inputs,
-        FakePipelineRun,
-        FakePipelineInput,
-        fake_chat_session,
-    )
-
-
 def _zoh_upsample(pcm_le: bytes) -> bytes:
     """Sample-and-hold 8 kHz → 16 kHz (the pre-P3-2 implementation)."""
     out = bytearray(len(pcm_le) * 2)
@@ -4645,7 +4201,7 @@ def test_assist_initial_prompt_reuses_supplied_conversation_id():
 
 def test_assist_initial_prompt_waits_for_tts_before_listening():
     assist_mod, mock_ap, PET, PE = _assist_ctx()
-    mock_tts = sys.modules["homeassistant.components.tts"]
+    mock_tts = _assist_ctx()[0].tts
     original_get_stream = mock_tts.async_get_stream.return_value
     audio_calls = []
     play_source = MagicMock()
@@ -4704,7 +4260,7 @@ def test_assist_initial_prompt_barge_in_becomes_first_turn_preroll():
     assist_mod, mock_ap, PET, PE = _assist_ctx()
     original_grace = assist_mod._BARGE_IN_VAD_GRACE_SECONDS
     assist_mod._BARGE_IN_VAD_GRACE_SECONDS = 0
-    mock_tts = sys.modules["homeassistant.components.tts"]
+    mock_tts = _assist_ctx()[0].tts
     original_get_stream = mock_tts.async_get_stream.return_value
     original_min = assist_mod._VAD_MIN_SPEECH_FRAMES
     original_micro_vad = assist_mod.MicroVad
@@ -4778,7 +4334,7 @@ def test_assist_initial_prompt_barge_in_becomes_first_turn_preroll():
 
 def test_assist_ignores_prior_playback_done_while_tts_is_pending():
     assist_mod, _, PET, PE = _assist_ctx()
-    mock_tts = sys.modules["homeassistant.components.tts"]
+    mock_tts = _assist_ctx()[0].tts
     original_get_stream = mock_tts.async_get_stream.return_value
     media_playing = {"value": True}
     play_source = MagicMock()
@@ -4821,90 +4377,6 @@ def test_assist_ignores_prior_playback_done_while_tts_is_pending():
         asyncio.run(run())
     finally:
         mock_tts.async_get_stream.return_value = original_get_stream
-
-
-def test_start_assist_service_accepts_and_forwards_prompts():
-    from unittest.mock import AsyncMock
-
-    _assist_ctx()
-    helpers = sys.modules["homeassistant.helpers"]
-    original_cv_attr = helpers.config_validation
-    original_cv_module = sys.modules["homeassistant.helpers.config_validation"]
-    original_service_module = sys.modules.get("homeassistant.helpers.service")
-    cv_stub = types.SimpleNamespace(
-        boolean=bool,
-        match_all=lambda value: value,
-        positive_int=int,
-        string=str,
-        ensure_list=lambda v: list(v) if isinstance(v, (list, tuple)) else [v],
-        make_entity_service_schema=lambda schema: vol.Schema(schema),
-    )
-    helpers.config_validation = cv_stub
-    sys.modules["homeassistant.helpers.config_validation"] = cv_stub
-    service_stub = types.ModuleType("homeassistant.helpers.service")
-    service_stub.async_extract_config_entry_ids = AsyncMock()
-    sys.modules["homeassistant.helpers.service"] = service_stub
-    try:
-        module_name = f"{_CC_PKG}._integration_init_test"
-        spec = importlib.util.spec_from_file_location(
-            module_name, os.path.join(os.path.abspath(_COMPONENT), "__init__.py")
-        )
-        integration = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = integration
-        spec.loader.exec_module(integration)
-    finally:
-        helpers.config_validation = original_cv_attr
-        sys.modules["homeassistant.helpers.config_validation"] = original_cv_module
-        if original_service_module is None:
-            sys.modules.pop("homeassistant.helpers.service", None)
-        else:
-            sys.modules["homeassistant.helpers.service"] = original_service_module
-
-    service_data = integration.SERVICE_ASSIST_SCHEMA(
-        {
-            "conversation_id": "existing-conversation",
-            "initial_prompt": "Greet the caller",
-            "system_prompt": "Keep answers concise",
-        }
-    )
-    assert service_data["conversation_id"] == "existing-conversation"
-    assert service_data["initial_prompt"] == "Greet the caller"
-    assert service_data["system_prompt"] == "Keep answers concise"
-    assert service_data["interrupt_media"] is True
-
-    trigger_assist = AsyncMock()
-    entry = MagicMock()
-    entry.domain = "sip"
-    entry.state.value = "loaded"
-    entry.runtime_data = {"trigger_assist_fn": trigger_assist}
-
-    hass = MagicMock()
-    hass.services.has_service.return_value = False
-    hass.config_entries.async_entries.return_value = [entry]
-    hass.config_entries.async_get_entry.return_value = entry
-    integration.async_extract_config_entry_ids = AsyncMock(return_value={"entry-1"})
-
-    async def run_service():
-        await integration.async_register_services(hass)
-        registration = next(
-            call
-            for call in hass.services.async_register.call_args_list
-            if call.args[:2] == ("sip", "start_assist")
-        )
-        handler = registration.args[2]
-        call = types.SimpleNamespace(
-            data=service_data, context=types.SimpleNamespace(user_id=None)
-        )
-        await handler(call)
-
-    asyncio.run(run_service())
-    trigger_assist.assert_awaited_once_with(
-        conversation_id="existing-conversation",
-        initial_prompt="Greet the caller",
-        system_prompt="Keep answers concise",
-        allow_llm_hangup=False,
-        interrupt_media=True,
-    )
 
 
 def test_assist_playback_done_unblocks_next_turn():
@@ -5051,7 +4523,7 @@ def test_assist_tts_starts_before_stream_completes():
 def test_assist_streaming_tts_plays_without_waiting_for_tts_end():
     """Core can start streamed TTS, then omit TTS_END after empty final speech."""
     assist_mod, _, PET, PE = _assist_ctx()
-    mock_tts = sys.modules["homeassistant.components.tts"]
+    mock_tts = _assist_ctx()[0].tts
     original_stream = mock_tts.async_get_stream.return_value
     played: list[str] = []
 
@@ -5112,7 +4584,7 @@ def test_assist_streaming_tts_plays_without_waiting_for_tts_end():
 def test_assist_streamed_tts_without_tts_end_blocks_next_turn():
     """Session loop waits for playback-done after a streamed run with no TTS_END."""
     assist_mod, mock_ap, PET, PE = _assist_ctx()
-    mock_tts = sys.modules["homeassistant.components.tts"]
+    mock_tts = _assist_ctx()[0].tts
     original_stream = mock_tts.async_get_stream.return_value
 
     async def stream_audio():
@@ -5165,7 +4637,7 @@ def test_assist_error_after_streamed_tts_releases_playback_wait():
     never ends; the bridge has to release the playback wait itself.
     """
     assist_mod, mock_ap, PET, PE = _assist_ctx()
-    mock_tts = sys.modules["homeassistant.components.tts"]
+    mock_tts = _assist_ctx()[0].tts
     original_stream = mock_tts.async_get_stream.return_value
 
     async def never_ending():
@@ -5495,7 +4967,7 @@ def test_assist_continue_conversation_resets_silent_streak():
 
 def test_assist_max_turns_waits_for_final_playback():
     assist_mod, mock_ap, PET, PE = _assist_ctx()
-    mock_tts = sys.modules["homeassistant.components.tts"]
+    mock_tts = _assist_ctx()[0].tts
     original_get_stream = mock_tts.async_get_stream.return_value
     mock_tts.async_get_stream.return_value = MagicMock()
     try:
@@ -5537,7 +5009,7 @@ def test_assist_max_turns_waits_for_final_playback():
 
 def test_assist_tts_failure_signals_playback_done():
     assist_mod, mock_ap, PET, PE = _assist_ctx()
-    mock_tts = sys.modules["homeassistant.components.tts"]
+    mock_tts = _assist_ctx()[0].tts
     original_get_stream = mock_tts.async_get_stream.return_value
 
     failing_stream = MagicMock()
@@ -5765,7 +5237,7 @@ def test_assist_barge_in_disabled_without_micro_vad():
 
 def test_assist_barge_in_cancels_inflight_tts():
     assist_mod, mock_ap, PET, PE = _assist_ctx()
-    mock_tts = sys.modules["homeassistant.components.tts"]
+    mock_tts = _assist_ctx()[0].tts
     original_get_stream = mock_tts.async_get_stream.return_value
     original_min = assist_mod._VAD_MIN_SPEECH_FRAMES
     original_grace = assist_mod._BARGE_IN_VAD_GRACE_SECONDS
@@ -5880,7 +5352,7 @@ def test_assist_does_not_capture_rx_during_tts_without_barge_in():
 def test_assist_speech_after_tts_is_prerolled_into_next_turn():
     """Speech 100 ms after TTS ends must be at the front of the next STT stream."""
     assist_mod, mock_ap, PET, PE = _assist_ctx()
-    mock_tts = sys.modules["homeassistant.components.tts"]
+    mock_tts = _assist_ctx()[0].tts
     original_get_stream = mock_tts.async_get_stream.return_value
     streams = []
     play_source = MagicMock()
@@ -5942,7 +5414,7 @@ def test_assist_speech_after_tts_is_prerolled_into_next_turn():
 
 def _assist_gap_preroll_after_tts(assist_mod, mock_ap, PET, PE, marker: bytes) -> bytes:
     """Run two turns: TTS on the first, ``marker`` written 50 ms after it ends."""
-    mock_tts = sys.modules["homeassistant.components.tts"]
+    mock_tts = _assist_ctx()[0].tts
     original_get_stream = mock_tts.async_get_stream.return_value
     streams = []
     play_source = MagicMock()
@@ -6103,16 +5575,21 @@ def test_assist_audio_settings_passed_when_tuned():
     )
     settings = captured["audio_settings"]
     assert settings is not None
-    assert settings.kwargs == {"silence_seconds": 1.2, "noise_suppression_level": 3}
+    # Real HA AudioSettings: only the tuned fields differ from HA's defaults.
+    assert settings == assist_mod.AudioSettings(
+        silence_seconds=1.2, noise_suppression_level=3
+    )
 
 
 def test_assist_audio_settings_partial_options():
     assist_mod, mock_ap, PET, PE = _assist_ctx()
     captured = _run_one_turn(assist_mod, mock_ap, PET, PE, silence_seconds=1.5)
-    assert captured["audio_settings"].kwargs == {"silence_seconds": 1.5}
+    assert captured["audio_settings"] == assist_mod.AudioSettings(silence_seconds=1.5)
 
     captured = _run_one_turn(assist_mod, mock_ap, PET, PE, noise_suppression=2)
-    assert captured["audio_settings"].kwargs == {"noise_suppression_level": 2}
+    assert captured["audio_settings"] == assist_mod.AudioSettings(
+        noise_suppression_level=2
+    )
 
 
 def test_assist_stt_and_intent_text_extractors():
@@ -6391,39 +5868,13 @@ def test_assist_hangup_not_fired_when_closed_before_turn_ends():
     asyncio.run(run())
 
 
-def test_assist_hangup_tool_is_available_and_callable_for_active_sip_context(
-    monkeypatch,
-):
+def test_assist_hangup_tool_is_available_and_callable_for_active_sip_context():
     """An opted-in SIP Assist request gets a callable LLM API tool."""
     assist_mod, _, _, _ = _assist_ctx()
-    llm_component = types.ModuleType("homeassistant.components.llm")
-    llm_component.LLMTools = lambda *, tools, prompt=None: types.SimpleNamespace(
-        tools=tools, prompt=prompt
-    )
-    llm_helpers = types.ModuleType("homeassistant.helpers.llm")
-    llm_helpers.LLM_API_ASSIST = "assist"
-    llm_helpers.LLMContext = type("LLMContext", (), {})
-    llm_helpers.Tool = type("Tool", (), {})
-    llm_helpers.ToolInput = type("ToolInput", (), {})
-    llm_helpers.ToolAnnotations = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    from homeassistant.core import Context
+    from homeassistant.helpers import llm as llm_helpers
 
-    class ToolResult:
-        def __init__(self, *, data, error=False):
-            self.data = data
-            self.error = error
-
-    llm_helpers.ToolResult = ToolResult
-    monkeypatch.setitem(sys.modules, "homeassistant.components.llm", llm_component)
-    monkeypatch.setitem(sys.modules, "homeassistant.helpers.llm", llm_helpers)
-    monkeypatch.setattr(sys.modules["homeassistant.helpers"], "llm", llm_helpers)
-
-    module_name = f"{_CC_PKG}._llm_platform_test"
-    spec = importlib.util.spec_from_file_location(
-        module_name, os.path.join(os.path.abspath(_COMPONENT), "llm.py")
-    )
-    platform = importlib.util.module_from_spec(spec)
-    monkeypatch.setitem(sys.modules, module_name, platform)
-    spec.loader.exec_module(platform)
+    platform = _load_component_module("llm")
 
     hangups: list[str] = []
     bridge = assist_mod.AssistBridge(
@@ -6442,8 +5893,12 @@ def test_assist_hangup_tool_is_available_and_callable_for_active_sip_context(
     entry = types.SimpleNamespace(runtime_data=data)
     hass = MagicMock()
     hass.config_entries.async_entries.return_value = [entry]
-    context = types.SimpleNamespace(
-        device_id="sip-device", context=types.SimpleNamespace(user_id="sip-user")
+    context = llm_helpers.LLMContext(
+        platform="conversation",
+        context=Context(user_id="sip-user"),
+        language=None,
+        assistant="conversation",
+        device_id="sip-device",
     )
     direct_tool = platform.SipHangUpCurrentCallTool(data, bridge, client)
     assert bridge._context.user_id == "sip-user"
@@ -6461,7 +5916,9 @@ def test_assist_hangup_tool_is_available_and_callable_for_active_sip_context(
 
     async def run():
         result = await tools.tools[0].async_call(
-            hass, types.SimpleNamespace(tool_args={}), context
+            hass,
+            llm_helpers.ToolInput(tool_name=tools.tools[0].name, tool_args={}),
+            context,
         )
         assert result.data == {"status": "scheduled_after_turn"}
         assert result.error is False
@@ -6470,7 +5927,9 @@ def test_assist_hangup_tool_is_available_and_callable_for_active_sip_context(
         assert hangups == ["bye"]
         client.state = platform.SipState.REGISTERED
         result = await tools.tools[0].async_call(
-            hass, types.SimpleNamespace(tool_args={}), context
+            hass,
+            llm_helpers.ToolInput(tool_name=tools.tools[0].name, tool_args={}),
+            context,
         )
         assert result.data == {"error": "SIP call is no longer active"}
         assert result.error is True
@@ -7219,18 +6678,14 @@ def test_assist_wait_playback_done_stops_cue_not_handed_over():
 
 
 def _run_validate_registration(fake_client_cls):
-    """Run async_validate_sip_registration against a fake SipClient."""
-    fake = types.ModuleType(f"{_CC_PKG}.sip_client.sip_client")
-    fake.SipConfig = lambda **kw: types.SimpleNamespace(**kw)
-    fake.SipCallbacks = lambda **kw: types.SimpleNamespace(**kw)
-    fake.SipClient = fake_client_cls
-    saved = {
-        k: sys.modules.get(k)
-        for k in (f"{_CC_PKG}.sip_client", f"{_CC_PKG}.sip_client.sip_client")
-    }
-    sys.modules[f"{_CC_PKG}.sip_client"] = types.ModuleType(f"{_CC_PKG}.sip_client")
-    sys.modules[f"{_CC_PKG}.sip_client.sip_client"] = fake
-    try:
+    """Run async_validate_sip_registration against a fake SipClient.
+
+    SipClient is the network boundary (it owns the UDP sockets); SipConfig
+    and SipCallbacks stay real.
+    """
+    with patch(
+        "custom_components.sip.sip_client.sip_client.SipClient", fake_client_cls
+    ):
         return asyncio.run(
             config_flow.async_validate_sip_registration(
                 MagicMock(),
@@ -7241,12 +6696,6 @@ def _run_validate_registration(fake_client_cls):
                 },
             )
         )
-    finally:
-        for k, v in saved.items():
-            if v is None:
-                sys.modules.pop(k, None)
-            else:
-                sys.modules[k] = v
 
 
 def test_validate_registration_survives_client_start_failure():
@@ -7410,130 +6859,68 @@ def test_reconfigure_retry_keeps_password_optional():
     assert markers["port"].default() == 5061
 
 
-def test_sip_device_id_lookup():
-    """_sip_device_id uses async_get_device_by_identifier."""
-    import types
-    from unittest.mock import MagicMock, patch
-
-    if "homeassistant.helpers.service" not in sys.modules:
-        service_stub = types.ModuleType("homeassistant.helpers.service")
-        service_stub.async_extract_config_entry_ids = MagicMock()
-        sys.modules["homeassistant.helpers.service"] = service_stub
-
+async def test_sip_device_id_lookup(
+    hass: HomeAssistant, device_registry: dr.DeviceRegistry
+) -> None:
+    """_sip_device_id finds the account's device in the real device registry."""
     init_mod = _load_component_module("__init__")
+    entry = MockConfigEntry(domain=const.DOMAIN, entry_id="entry_abc")
+    entry.add_to_hass(hass)
 
-    hass = MagicMock()
-    mock_dr = MagicMock()
-    mock_device = MagicMock(id="dev_12345")
-    mock_dr.async_get_device_by_identifier.return_value = mock_device
+    assert init_mod._sip_device_id(hass, "entry_abc") is None
 
-    with patch.object(init_mod.dr, "async_get", return_value=mock_dr):
-        dev_id = init_mod._sip_device_id(hass, "entry_abc")
-        assert dev_id == "dev_12345"
-        mock_dr.async_get_device_by_identifier.assert_called_once_with(
-            ("sip", "entry_abc"), config_entry_id="entry_abc"
-        )
-
-        mock_dr.async_get_device_by_identifier.return_value = None
-        assert init_mod._sip_device_id(hass, "entry_abc") is None
+    device = device_registry.async_get_or_create(
+        config_entry_id="entry_abc", identifiers={(const.DOMAIN, "entry_abc")}
+    )
+    assert init_mod._sip_device_id(hass, "entry_abc") == device.id
+    # Another entry's identifier never matches this account.
+    assert init_mod._sip_device_id(hass, "other") is None
 
 
-def _load_init_for_contacts():
-    _assist_ctx()  # __init__ imports assist/*; make the stubs order-independent
-    if "homeassistant.helpers.service" not in sys.modules:
-        service_stub = types.ModuleType("homeassistant.helpers.service")
-        service_stub.async_extract_config_entry_ids = MagicMock()
-        sys.modules["homeassistant.helpers.service"] = service_stub
-    return _load_component_module("__init__")
+async def test_contact_refresh_replaces_cache_with_executor_result(
+    hass: HomeAssistant, tmp_path
+) -> None:
+    init_mod = _load_component_module("__init__")
+    hass.config.config_dir = str(tmp_path)
+    (tmp_path / "sip_contacts.json").write_text(
+        '{"200": {"name": "Front door", "auto_answer": true}}', encoding="utf-8"
+    )
+    runtime = {"contacts": {"old": "value"}}
+    await init_mod.async_refresh_contacts(hass, runtime)
+    assert runtime["contacts"] == {"200": {"name": "Front door", "auto_answer": True}}
 
 
-def _contacts_hass(tmp_dir):
-    hass = MagicMock()
-    hass.config.path.return_value = tmp_dir
-
-    async def executor(func, *args):
-        return func(*args)
-
-    hass.async_add_executor_job = executor
-    return hass
-
-
-def test_contact_refresh_replaces_cache_with_executor_result():
-    init_mod = _load_init_for_contacts()
-
-    async def run():
-        hass = MagicMock()
-
-        async def executor(func, *args):
-            assert func is init_mod.load_contacts
-            assert args == (hass,)
-            return {"200": {"name": "Front door", "auto_answer": True}}
-
-        hass.async_add_executor_job = executor
-        runtime = {"contacts": {"old": "value"}}
-        await init_mod.async_refresh_contacts(hass, runtime)
-        return runtime["contacts"]
-
-    assert asyncio.run(run()) == {"200": {"name": "Front door", "auto_answer": True}}
-
-
-def test_contact_refresh_keeps_cache_while_file_is_unparseable():
+async def test_contact_refresh_keeps_cache_while_file_is_unparseable(
+    hass: HomeAssistant, tmp_path
+) -> None:
     """A half-written / invalid sip_contacts.json must not wipe auto-answer."""
-    init_mod = _load_init_for_contacts()
+    init_mod = _load_component_module("__init__")
+    hass.config.config_dir = str(tmp_path)
     good = {"200": {"name": "Front door", "auto_answer": True}}
-
-    async def run(tmp_dir):
-        hass = _contacts_hass(tmp_dir)
-        path = os.path.join(tmp_dir, "sip_contacts.json")
-        runtime = {"contacts": dict(good)}
-        with patch.object(init_mod.LOGGER, "warning") as warn:
-            with open(path, "w", encoding="utf-8") as fh:
-                fh.write('{"200": {"name": "Fr')  # editor mid-save
-            await init_mod.async_refresh_contacts(hass, runtime)
-            await init_mod.async_refresh_contacts(hass, runtime)
-            kept = runtime["contacts"]
-            with open(path, "w", encoding="utf-8") as fh:
-                fh.write("[1, 2]")  # valid JSON, not an object
-            await init_mod.async_refresh_contacts(hass, runtime)
-            kept_list = runtime["contacts"]
-            with open(path, "w", encoding="utf-8") as fh:
-                fh.write('{"201": "Gate"}')
-            await init_mod.async_refresh_contacts(hass, runtime)
-            return kept, kept_list, runtime["contacts"], warn.call_count
-
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        kept, kept_list, after, warnings = asyncio.run(run(tmp_dir))
-    assert kept == good
-    assert kept_list == good
-    assert after == {"201": "Gate"}
-    assert warnings == 1  # once per outage, not once per tick
-
-
-def test_contact_refresh_empties_cache_when_file_removed():
-    init_mod = _load_init_for_contacts()
-
-    async def run(tmp_dir):
-        hass = _contacts_hass(tmp_dir)
-        runtime = {"contacts": {"200": "Front door"}}
+    path = tmp_path / "sip_contacts.json"
+    runtime = {"contacts": dict(good)}
+    with patch.object(init_mod.LOGGER, "warning") as warn:
+        path.write_text('{"200": {"name": "Fr', encoding="utf-8")  # editor mid-save
         await init_mod.async_refresh_contacts(hass, runtime)
-        return runtime["contacts"]
+        await init_mod.async_refresh_contacts(hass, runtime)
+        assert runtime["contacts"] == good
+        path.write_text("[1, 2]", encoding="utf-8")  # valid JSON, not an object
+        await init_mod.async_refresh_contacts(hass, runtime)
+        assert runtime["contacts"] == good
+        path.write_text('{"201": "Gate"}', encoding="utf-8")
+        await init_mod.async_refresh_contacts(hass, runtime)
+        assert runtime["contacts"] == {"201": "Gate"}
+    assert warn.call_count == 1  # once per outage, not once per tick
 
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        assert asyncio.run(run(tmp_dir)) == {}
 
-
-if __name__ == "__main__":
-    fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failed = 0
-    for fn in fns:
-        try:
-            fn()
-            print(f"PASS {fn.__name__}")
-        except AssertionError as e:
-            failed += 1
-            print(f"FAIL {fn.__name__}: {e}")
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
-    sys.exit(1 if failed else 0)
+async def test_contact_refresh_empties_cache_when_file_removed(
+    hass: HomeAssistant, tmp_path
+) -> None:
+    init_mod = _load_component_module("__init__")
+    hass.config.config_dir = str(tmp_path)
+    runtime = {"contacts": {"200": "Front door"}}
+    await init_mod.async_refresh_contacts(hass, runtime)
+    assert runtime["contacts"] == {}
 
 
 def test_use_observed_address_in_setup_and_reconfigure_schemas():

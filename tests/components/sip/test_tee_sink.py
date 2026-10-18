@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from test_pure import audio, sip_client
+from .common import audio, sip_client
 
 
 class _ListSink(audio.AudioSink):
@@ -52,8 +52,6 @@ def test_tee_sink_add_remove_does_not_duplicate():
 
 def test_start_recording_during_assist_keeps_both_sinks():
     """Acceptance: Assist stays subscribed when a recorder is added."""
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -73,8 +71,6 @@ def test_start_recording_during_assist_keeps_both_sinks():
 
 
 def test_stop_recording_does_not_detach_assist():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))
@@ -92,8 +88,6 @@ def test_stop_recording_does_not_detach_assist():
 
 
 def test_clear_sinks_drops_every_listener():
-    if sip_client is None:
-        return
 
     async def run():
         client = sip_client.SipClient(sip_client.SipConfig(server="pbx.example"))

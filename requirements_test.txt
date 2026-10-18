@@ -1,7 +1,7 @@
-# Unit-profile environment for the current mocked-HA test suite (tests/).
-# Real-HA tests (pytest-homeassistant-custom-component, tests/components/sip/)
-# are tracked as an open TODO in ADOPTION_CHECKLIST.md.
-# Pinning homeassistant here does not declare or raise the minimum supported
-# HA (hacs.json).
+# Current Home Assistant test environment (test-profile: ha).
+# pytest-homeassistant-custom-component 0.13.373 pins exactly
+# homeassistant==2026.10.2 and its own pytest/pytest-asyncio; they are not
+# listed separately. Pinning homeassistant here does not declare or raise the
+# minimum supported HA (hacs.json); see requirements_test_min.txt.
 homeassistant==2026.10.2
-pytest==9.1.1
+pytest-homeassistant-custom-component==0.13.373

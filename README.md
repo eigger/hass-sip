@@ -24,9 +24,12 @@ Transport is **SIP over UDP** with **G.711 (PCMU/PCMA) and G.722**. TLS, SRTP, a
 
 ## What it is for
 
-### Control Home Assistant by voice
-
-Dial the hass-sip extension → answer → Assist. Several spoken commands in one call, no redial.
+| Use case | What happens | Details |
+|---|---|---|
+| Voice control | Dial the extension, answer, talk to Assist — several commands per call | [Use cases](docs/use-cases.md#control-home-assistant-by-voice) |
+| Phone keypad | Any phone on the PBX presses digits; an IVR menu runs Home Assistant services | [Use cases](docs/use-cases.md#control-home-assistant-with-the-phone-keypad) |
+| Intercom | Door station rings, hass-sip auto-answers, optional DTMF opens the gate | [Use cases](docs/use-cases.md#intercom-auto-answer) |
+| Home Assistant calls you | An automation dials your phone and speaks a TTS message | [Use cases](docs/use-cases.md#home-assistant-calls-you-with-tts) |
 
 ```yaml
 action: sip.start_assist
@@ -36,65 +39,7 @@ target:
 
 ![Phone dials Home Assistant, Assist turns on a light, then sets brightness — storyboard](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/demo/phone-assist.gif)
 
-Full flow: [Voice Assist example](docs/examples.md#voice-assist-automation-example). Door locks: [allow-list + PIN](docs/security.md#door-locks-and-other-security-intents).
-
-### Control Home Assistant with the phone keypad
-
-Any phone on the PBX can call the extension and press digits. An IVR menu runs Home Assistant services — this is not limited to intercoms.
-
-```yaml
-action: sip.answer
-target:
-  entity_id: media_player.phone_line
-data:
-  menu:
-    message: "Press 1 to toggle the living room light."
-    choices:
-      "1":
-        action:
-          domain: light
-          service: toggle
-          entity_id: light.living_room_light
-        message: "Toggling the light now."
-        post_action: hangup
-```
-
-![Phone dials Home Assistant, presses 1 on the keypad, living room light turns on — storyboard](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/demo/phone-dtmf.gif)
-
-Menu fields and nesting: [IVR example](docs/examples.md#ivr-configuration-example). Step-by-step: [DTMF from any phone](docs/examples.md#control-home-assistant-with-dtmf-any-phone).
-
-### Intercom auto-answer
-
-Door station rings → hass-sip answers immediately → optional DTMF to open the gate.
-
-```json
-{
-  "102": { "name": "Front Doorbell", "auto_answer": true }
-}
-```
-
-![Door station rings Home Assistant, auto-answer opens audio, dashboard DTMF opens the gate — storyboard](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/demo/intercom-autoanswer.gif)
-
-Put that in `sip_contacts.json` (or send SIP auto-answer headers). [Intercom details](docs/examples.md#intercom--auto-answer-mode).
-
-> **DIY Hardware**: Looking to build an ESP32-based intercom or doorbell? Check out the [ESPHome External Component](#esphome-external-component).
-
-### Home Assistant calls you with TTS
-
-An automation dials your phone, speaks a message when you answer, then hangs up — package delivery, garage open too long, alarm, and so on.
-
-```yaml
-action: sip.dial
-target:
-  entity_id: media_player.phone_line
-data:
-  number: "100"
-  message: "The garage door has been open for ten minutes."
-```
-
-![Garage sensor triggers Home Assistant, which dials your phone and speaks a TTS warning — storyboard](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/demo/sensor-tts-call.gif)
-
-More options: [Announce a TTS message](docs/examples.md#example-announce-a-tts-message-then-hang-up). Outbound-focused notes: [HA calls you](docs/examples.md#home-assistant-calls-you-with-tts).
+Door locks: [allow-list + PIN](docs/security.md#door-locks-and-other-security-intents).
 
 ## Requirements
 
@@ -136,6 +81,10 @@ It registers an ESP32 as a SIP extension on your PBX with support for ESPHome st
 ## Security
 
 Run hass-sip on the same LAN (or VPN) as the PBX. Do not port-forward UDP 5060 or RTP (`local_rtp_port`, default 7078). For Assist that can unlock a door, use allow-list + DTMF PIN + a dedicated pipeline — **[Security](docs/security.md)**.
+
+## Development
+
+[Contributing](CONTRIBUTING.md) covers the local test setup, ruff, and the real Home Assistant test layout (`tests/components/sip/`). This repository follows [hass-repo-standards](https://github.com/eigger/hass-repo-standards); see [STANDARDS.md](STANDARDS.md).
 
 ## Support and license
 

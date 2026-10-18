@@ -72,6 +72,18 @@
   "exceptions": {
     "no_active_call": {
       "message": "No active SIP call to hang up."
+    },
+    "target_not_loaded": {
+      "message": "The SIP service target does not match a loaded SIP account."
+    },
+    "not_in_call": {
+      "message": "Cannot play media: the SIP line is not in an active call."
+    },
+    "media_source_resolve_failed": {
+      "message": "Failed to resolve media source {media_id}: {error}"
+    },
+    "media_url_prepare_failed": {
+      "message": "Failed to prepare media URL {url}: {error}"
     }
   },
   "entity": {

@@ -1,3 +1,5 @@
 # Exact minimum supported HA (hacs.json "homeassistant"); kept fixed, not bumped by Dependabot.
+# pytest-homeassistant-custom-component 0.13.371 is the release that pins
+# homeassistant==2026.10.0 (PyPI metadata).
 homeassistant==2026.10.0
-pytest==9.1.1
+pytest-homeassistant-custom-component==0.13.371

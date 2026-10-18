@@ -55,7 +55,9 @@ target:
   entity_id: media_player.phone_line
 ```
 
-IVR, 인터폰 자동 응답, TTS 발신 등 더 많은 예제는 [예제(영어)](docs/examples.md)에 있습니다.
+![전화로 Home Assistant에 걸어 Assist로 조명을 켜고 밝기를 조절하는 스토리보드](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/demo/phone-assist.gif)
+
+시나리오별 데모(음성, 키패드, 인터폰, TTS 발신)는 [사용 사례(영어)](docs/use-cases.md), 더 많은 예제는 [예제(영어)](docs/examples.md)에 있습니다.
 
 ### 키패드/IVR, 인터폰, TTS 발신
 
@@ -72,11 +74,16 @@ PBX와 같은 LAN(또는 VPN)에서 실행하세요. UDP 5060이나 RTP(`local_r
 
 - [설정 및 빠른 시작](docs/setup.md) · [PBX 호환성](docs/setup.md#pbx-compatibility)
 - [서비스, 엔티티, 이벤트](docs/services.md)
+- [사용 사례](docs/use-cases.md)
 - [예제](docs/examples.md)
 - [보안](docs/security.md)
 - [문제 해결](docs/troubleshooting.md)
 - [ESPHome 외부 컴포넌트](https://github.com/eigger/espcomponents/tree/master/components/sip_client#readme)
 - [공통 개발 규칙 적용 기록](STANDARDS.md) · [적용 체크리스트](ADOPTION_CHECKLIST.md)
+
+## 개발
+
+로컬 테스트·ruff·실제 HA 테스트 구조는 [CONTRIBUTING(영어)](CONTRIBUTING.md)을 참고하세요. 이 리포는 [hass-repo-standards](https://github.com/eigger/hass-repo-standards)를 따르며 [STANDARDS.md](STANDARDS.md)에 기록합니다.
 
 ## 지원 및 라이선스
 
