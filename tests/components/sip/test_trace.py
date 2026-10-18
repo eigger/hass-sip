@@ -7,6 +7,8 @@ import logging
 import struct
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from .common import rtp_session, sip_client, trace
 
 _DIGEST = (
@@ -57,6 +59,19 @@ _OK_INVITE = (
     "Content-Length: 0\r\n"
     "\r\n"
 )
+
+
+@pytest.fixture(autouse=True)
+def _trace_logger_at_default_level():
+    """Run with the trace logger at its default (non-DEBUG) level.
+
+    pytest -v makes the Home Assistant test plugin raise the root logger to
+    DEBUG, which would otherwise enable tracing for the "disabled" tests.
+    """
+    previous = trace._LOGGER.level
+    trace._LOGGER.setLevel(logging.INFO)
+    yield
+    trace._LOGGER.setLevel(previous)
 
 
 def test_trace_disabled_by_default():
