@@ -220,15 +220,22 @@ class WavRecorderSink(AudioSink):
             await asyncio.sleep(0.02)
 
     def _run(self) -> None:
+        fh = None
         wav = None
         try:
             parent = os.path.dirname(self.path)
             if parent:
                 os.makedirs(parent, exist_ok=True)
-            wav = wave.open(self.path, "wb")
+            fh = open(self.path, "wb")  # noqa: SIM115 - closed in finally
+            wav = wave.open(fh, "wb")
             wav.setnchannels(1)
             wav.setsampwidth(2)
             wav.setframerate(self._sample_rate)
+            # Write the RIFF/WAVE header now instead of with the first frame,
+            # so the file is a valid (empty) WAV from the start even if no
+            # audio ever arrives or the process dies mid-call.
+            wav.writeframes(b"")
+            fh.flush()
             while True:
                 try:
                     chunk = self._queue.get(timeout=0.05)
@@ -236,6 +243,8 @@ class WavRecorderSink(AudioSink):
                     if self._stop.is_set():
                         break
                     continue
+                # writeframes (not ...raw) keeps the header sizes current, so
+                # a recording cut short by a crash is still playable.
                 wav.writeframes(chunk)
         except Exception:  # noqa: BLE001
             _LOGGER.exception("WAV recorder failed (%s)", self.path)
@@ -243,6 +252,11 @@ class WavRecorderSink(AudioSink):
             if wav is not None:
                 try:
                     wav.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            if fh is not None:
+                try:
+                    fh.close()
                 except Exception:  # noqa: BLE001
                     pass
             self._done.set()

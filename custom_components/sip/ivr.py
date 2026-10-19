@@ -4,7 +4,7 @@ Menu schema (canonical, flat — matches the service TTS parameters):
 
     id: main                 # optional, target for "goto"
     message: "Welcome"       # TTS text to speak
-    audio_file: /media/x.wav # OR an audio file / URL to play
+    audio_file: media-source://media_source/local/x.wav  # OR http(s) URL
     template: true           # render `message` as a Jinja template
     tts_engine: tts.piper    # TTS engine entity
     language: ko             # TTS language
@@ -34,7 +34,7 @@ from typing import Any, Callable
 
 import voluptuous as vol
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import template
 
 from .const import LOGGER
@@ -118,9 +118,16 @@ class IvrSession:
         hangup_fn: Callable[[], None],
         fire_event_fn: Callable[[str, dict[str, Any]], None],
         trigger_assist_fn: Callable[..., Coroutine[Any, Any, None]],
+        context: Context | None = None,
     ) -> None:
-        """Initialize the IVR session."""
+        """Initialize the IVR session.
+
+        ``context`` is the ``sip.dial`` / ``sip.answer`` call's context. Menu
+        ``action`` service calls run under it so Home Assistant applies that
+        user's permissions (admin-only services stay admin-only).
+        """
         self.hass = hass
+        self.context = context
         self.root_menu = menu_config
         self.play_message = play_message_fn
         self.play_audio_file = play_audio_file_fn
@@ -377,7 +384,9 @@ class IvrSession:
 
         LOGGER.info("IVR action: %s.%s with %s", domain, service, data)
         try:
-            await self.hass.services.async_call(domain, service, data, blocking=False)
+            await self.hass.services.async_call(
+                domain, service, data, blocking=False, context=self.context
+            )
         except Exception as err:  # noqa: BLE001
             LOGGER.error("IVR action service call failed: %s", err)
 

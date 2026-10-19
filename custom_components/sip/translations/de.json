@@ -254,7 +254,7 @@
       "fields": {
         "recording_file": {
           "name": "Aufnahmedateipfad",
-          "description": "Pfad der WAV-Datei. Relative Pfade gelten ab dem Home-Assistant-Konfigurationsverzeichnis. Muss in einem erlaubten Verzeichnis liegen (Config, allowlist_external_dirs, /media oder /share)."
+          "description": "Pfad der WAV-Datei (muss auf .wav enden). Relative Pfade gelten ab dem lokalen Medienverzeichnis. Muss in einem erlaubten Verzeichnis liegen (allowlist_external_dirs, media_dirs, /media oder /share). Eine vorhandene Datei, die keine WAV-Datei ist, wird nie überschrieben."
         }
       }
     },

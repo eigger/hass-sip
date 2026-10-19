@@ -66,12 +66,19 @@ from .const import (
     EVENT_SIP_STATE_CHANGED,
     LOGGER,
 )
-from .helpers import get_ffmpeg_bin
+from .helpers import (
+    async_resolve_playback_url,
+    get_ffmpeg_bin,
+    media_dir_source_hint,
+)
 from .ivr import ASSIST_OPTION_FIELDS, IvrSession
 from .recording import (
     close_recorder_slot,
+    default_recording_dir,
     is_allowed_recording_path,
+    is_protected_config_path,
     recording_allow_roots,
+    recording_target_error,
     resolve_recording_path,
 )
 from .repairs import (
@@ -87,7 +94,7 @@ from .sip_client.trace import mask_number
 def _recording_roots(hass: HomeAssistant) -> list[str]:
     extra = list(hass.config.allowlist_external_dirs)
     extra.extend(hass.config.media_dirs.values())
-    return recording_allow_roots(hass.config.path(), extra)
+    return recording_allow_roots(extra)
 
 
 def _fire_recording_stopped(hass: HomeAssistant, entry_id: str, data: dict) -> None:
@@ -630,10 +637,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except Exception as err:
             LOGGER.error("Failed to generate and play TTS: %s", err)
 
-    # Helper function to play local/URL audio file
+    # Helper function to play an IVR ``audio_file`` (media-source ID or URL).
+    # The menu comes from service data, so resolve it the same way as the
+    # media_player's play_media instead of handing ffmpeg a raw path.
     async def play_audio_file_internal(audio_file: str) -> None:
+        # A host path such as ``/media/x.mp3`` is taken as an HA-relative URL
+        # and does not reach the file; point at the media-source ID instead.
+        hint = media_dir_source_hint(hass.config.media_dirs, str(audio_file))
+        if hint:
+            LOGGER.warning(
+                "IVR audio_file %s looks like a host path inside a media "
+                "directory; host paths are not played, use %s instead",
+                audio_file,
+                hint,
+            )
         try:
-            source = FfmpegAudioSource(url=audio_file, ffmpeg_bin=get_ffmpeg_bin(hass))
+            url = await async_resolve_playback_url(hass, audio_file)
+        except ValueError as err:
+            LOGGER.error("IVR audio_file not played: %s", err)
+            return
+        # A prepared HA URL may carry an authSig. Never put it in the log.
+        LOGGER.debug("IVR playing audio file %s", url.partition("?")[0])
+        try:
+            source = FfmpegAudioSource(url=url, ffmpeg_bin=get_ffmpeg_bin(hass))
             client.play_source(source)
         except Exception as err:
             LOGGER.error("Failed to play audio file: %s", err)
@@ -956,6 +982,7 @@ async def async_register_services(hass: HomeAssistant) -> None:
                         {"sip_account": data["config"].username, **payload},
                     ),
                     trigger_assist_fn=data["trigger_assist_fn"],
+                    context=call.context,
                 )
                 data["set_ivr"](session)
             else:
@@ -1016,6 +1043,7 @@ async def async_register_services(hass: HomeAssistant) -> None:
                         {"sip_account": data["config"].username, **payload},
                     ),
                     trigger_assist_fn=data["trigger_assist_fn"],
+                    context=call.context,
                 )
                 data["set_ivr"](session)
             else:
@@ -1040,7 +1068,7 @@ async def async_register_services(hass: HomeAssistant) -> None:
         import os
 
         roots = _recording_roots(hass)
-        config_dir = hass.config.path()
+        base_dir = default_recording_dir(hass.config.media_dirs, hass.config.path())
 
         for entry_id, data in targets:
             client: SipClient = data["client"]
@@ -1069,16 +1097,35 @@ async def async_register_services(hass: HomeAssistant) -> None:
                     target_file = f"{base}_{data['config'].username}{ext}"
 
             try:
-                target_file = resolve_recording_path(str(target_file), config_dir)
+                target_file = resolve_recording_path(str(target_file), base_dir)
             except ValueError:
                 LOGGER.error("Recording path is empty")
                 continue
             if not is_allowed_recording_path(target_file, roots):
                 LOGGER.error(
                     "Recording path %s is outside allowed directories "
-                    "(config dir, allowlist_external_dirs, media_dirs, /media, /share)",
+                    "(allowlist_external_dirs, media_dirs, /media, /share)",
                     target_file,
                 )
+                continue
+            if is_protected_config_path(
+                target_file,
+                hass.config.config_dir,
+                list(hass.config.media_dirs.values()),
+            ):
+                LOGGER.error(
+                    "Recording path %s is inside the configuration directory; "
+                    "use a media directory instead",
+                    target_file,
+                )
+                continue
+            # The recorder truncates its target as soon as it starts, call or
+            # no call, so refuse anything that is not (already) a WAV file.
+            reason = await hass.async_add_executor_job(
+                recording_target_error, target_file
+            )
+            if reason:
+                LOGGER.error("Recording path %s rejected: %s", target_file, reason)
                 continue
 
             old = close_recorder_slot(data)

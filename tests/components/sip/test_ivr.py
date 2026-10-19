@@ -11,15 +11,16 @@ from .common import _load_component_module
 ivr = _load_component_module("ivr")
 
 
-def _session(*, trigger_assist=None):
+def _session(*, trigger_assist=None, hass=None, **kwargs):
     return ivr.IvrSession(
-        MagicMock(),
+        hass or MagicMock(),
         {"timeout": 3600},
         play_message_fn=AsyncMock(),
         play_audio_file_fn=AsyncMock(),
         hangup_fn=MagicMock(),
         fire_event_fn=MagicMock(),
         trigger_assist_fn=trigger_assist or AsyncMock(),
+        **kwargs,
     )
 
 
@@ -182,3 +183,40 @@ def test_resume_after_close_stays_closed():
     session.resume()
     assert session.is_active is False
     assert session.timeout_task is None
+
+
+def test_menu_action_runs_with_the_callers_context():
+    """A non-admin's sip.dial menu must not run services as the system."""
+    hass = MagicMock()
+    hass.services.async_call = AsyncMock()
+    context = object()
+    session = _session(hass=hass, context=context)
+
+    asyncio.run(
+        session._run_ha_action(
+            {
+                "domain": "light",
+                "service": "turn_on",
+                "entity_id": "light.porch",
+                "data": {"brightness": 10},
+            }
+        )
+    )
+
+    hass.services.async_call.assert_awaited_once_with(
+        "light",
+        "turn_on",
+        {"brightness": 10, "entity_id": "light.porch"},
+        blocking=False,
+        context=context,
+    )
+
+
+def test_menu_action_without_context_keeps_default():
+    hass = MagicMock()
+    hass.services.async_call = AsyncMock()
+    session = _session(hass=hass)
+
+    asyncio.run(session._run_ha_action({"domain": "script", "service": "x"}))
+
+    assert hass.services.async_call.await_args.kwargs["context"] is None

@@ -287,7 +287,7 @@ data:
 |-------|-------------|
 | `id` | Optional menu id; target for `goto`. |
 | `message` | TTS text to speak. |
-| `audio_file` | Audio file path/URL to play instead of `message`. |
+| `audio_file` | Audio to play instead of `message`: a media source ID (for a file in **My media**, `media-source://media_source/local/<file>`) or an `http(s)` URL. Resolved like `media_player.play_media`; local filesystem paths are not played. |
 | `template` | `true` to render `message` as a Jinja template before speaking. |
 | `tts_engine` / `language` / `tts_options` | TTS voice settings (same as the service params). |
 | `wait_for_audio` | `true` (default): collect input only after playback finishes. |
@@ -296,7 +296,7 @@ data:
 | `choices` | Map of input key → target (nested menu, or a bare `post_action` string). |
 | `on_invalid` | Target when the input matches no choice. |
 | `on_timeout` | Target when no input arrives in time. |
-| `action` | A Home Assistant service to call on entry (`domain`, `service`, `entity_id`, `data`). |
+| `action` | A Home Assistant service to call on entry (`domain`, `service`, `entity_id`, `data`). It runs with the permissions of whoever called `sip.dial` / `sip.answer`: from an automation it behaves as before, but a non-admin user cannot reach admin-only services through a menu. |
 | `assist` | `true` to hand the call to Voice Assist, or a mapping of [`sip.start_assist`](services.md#sipstart_assist) options (`pipeline_id`, `system_prompt`, `initial_prompt`, `max_silent_turns`, …). Values are checked with the service's rules; an unknown key or invalid value is logged and dropped, the rest is kept. The caller gate (`allowed_callers`, `contacts_only`, `pin`) is not accepted here — protect the menu with `input: pin` instead. |
 | `post_action` | Terminal action: `hangup` · `repeat` · `back [n]` · `goto <id>` · `wait`. |
 

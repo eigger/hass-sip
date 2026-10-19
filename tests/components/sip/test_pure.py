@@ -37,6 +37,7 @@ from .common import (
 
 const = _load_component_module("const")
 config_flow = _load_component_module("config_flow")
+helpers_mod = _load_component_module("helpers")
 
 
 # ---------------------------------------------------------------- g711
@@ -6243,11 +6244,11 @@ def test_assist_turn_tone_media_resolves_media_source_id():
     resolved_urls: list[str] = []
     holder: dict = {}
 
-    assist_mod.media_source.is_media_source_id.return_value = True
-    assist_mod.media_source.async_resolve_media.return_value = types.SimpleNamespace(
+    helpers_mod.media_source.is_media_source_id.return_value = True
+    helpers_mod.media_source.async_resolve_media.return_value = types.SimpleNamespace(
         url="http://resolved.local/chime.mp3"
     )
-    assist_mod.async_process_play_media_url.side_effect = lambda hass, url: (
+    helpers_mod.async_process_play_media_url.side_effect = lambda hass, url: (
         resolved_urls.append(url) or url
     )
 
@@ -6273,8 +6274,8 @@ def test_assist_turn_tone_media_resolves_media_source_id():
         assert play_calls == ["FfmpegAudioSource"]
         assert resolved_urls == ["http://resolved.local/chime.mp3"]
     finally:
-        assist_mod.media_source.is_media_source_id.return_value = False
-        assist_mod.async_process_play_media_url.side_effect = lambda hass, url: url
+        helpers_mod.media_source.is_media_source_id.return_value = False
+        helpers_mod.async_process_play_media_url.side_effect = lambda hass, url: url
 
 
 def test_assist_tone_media_resolution_failure_falls_back_to_beep():
@@ -6282,8 +6283,8 @@ def test_assist_tone_media_resolution_failure_falls_back_to_beep():
     play_calls: list[str] = []
     holder: dict = {}
 
-    assist_mod.media_source.is_media_source_id.return_value = True
-    assist_mod.media_source.async_resolve_media.side_effect = RuntimeError("boom")
+    helpers_mod.media_source.is_media_source_id.return_value = True
+    helpers_mod.media_source.async_resolve_media.side_effect = RuntimeError("boom")
 
     def play(src):
         play_calls.append(type(src).__name__)
@@ -6306,8 +6307,8 @@ def test_assist_tone_media_resolution_failure_falls_back_to_beep():
         asyncio.run(run())
         assert play_calls == ["ToneAudioSource"]
     finally:
-        assist_mod.media_source.is_media_source_id.return_value = False
-        assist_mod.media_source.async_resolve_media.side_effect = None
+        helpers_mod.media_source.is_media_source_id.return_value = False
+        helpers_mod.media_source.async_resolve_media.side_effect = None
 
 
 def test_assist_tone_media_wait_timeout_is_generous_but_bounded():

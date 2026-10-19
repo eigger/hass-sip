@@ -27,10 +27,10 @@ from .common import _load_component_module, audio, phone_line, sip_device, wait_
 recording = _load_component_module("recording")
 
 
-def test_resolve_recording_path_joins_relative_to_config_dir():
-    with tempfile.TemporaryDirectory() as config_dir:
-        resolved = recording.resolve_recording_path("www/rec.wav", config_dir)
-        assert resolved == os.path.realpath(os.path.join(config_dir, "www/rec.wav"))
+def test_resolve_recording_path_joins_relative_to_base_dir():
+    with tempfile.TemporaryDirectory() as media_dir:
+        resolved = recording.resolve_recording_path("sip/rec.wav", media_dir)
+        assert resolved == os.path.realpath(os.path.join(media_dir, "sip/rec.wav"))
 
 
 def test_resolve_recording_path_keeps_absolute():
@@ -176,6 +176,49 @@ def test_wav_recorder_creates_parent_directory():
     asyncio.run(run())
 
 
+def test_wav_recorder_writes_header_before_first_frame():
+    """The file is a valid (empty) WAV even if no audio ever arrives."""
+
+    async def run():
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "rec.wav")
+            sink = audio.WavRecorderSink(path, sample_rate=8000)
+            try:
+                deadline = time.monotonic() + 2
+                while not recording.is_wav_file(path):
+                    assert time.monotonic() < deadline
+                    await asyncio.sleep(0.01)
+                assert recording.recording_target_error(path) is None
+            finally:
+                sink.close()
+                await sink.wait_closed()
+            with wave.open(path, "rb") as wav:
+                assert wav.getnframes() == 0
+
+    asyncio.run(run())
+
+
+def test_protected_config_path_allows_only_media_dirs_under_config():
+    with tempfile.TemporaryDirectory() as tmp:
+        config = os.path.join(tmp, "config")
+        media = os.path.join(config, "media")
+        outside = os.path.join(tmp, "share")
+        for folder in (media, outside):
+            os.makedirs(folder)
+        protected = recording.is_protected_config_path
+        assert protected(os.path.join(config, "rec.wav"), config, [media])
+        assert protected(os.path.join(config, "www", "rec.wav"), config, [media])
+        assert protected(os.path.join(media, "..", "x.wav"), config, [media])
+        assert not protected(os.path.join(media, "sip", "rec.wav"), config, [media])
+        assert not protected(os.path.join(outside, "rec.wav"), config, [media])
+        # A media dir that is the config dir itself does not open it up.
+        assert protected(os.path.join(config, "rec.wav"), config, [config])
+        if hasattr(os, "symlink"):
+            link = os.path.join(outside, "cfg")
+            os.symlink(config, link)
+            assert protected(os.path.join(link, "rec.wav"), config, [media])
+
+
 # ------------------------------------------------ sip.start/stop_recording flow
 def _pcmu_packet(seq: int, ssrc: int = 0x5150) -> bytes:
     # 20 ms of PCMU silence (0xFF) with a real RTP header.
@@ -242,3 +285,81 @@ async def test_start_stop_recording_records_call_audio(
     # Stopping explicitly does not fire a second "stopped" on hang-up.
     await hass.async_block_till_done()
     assert len(stopped) == 1
+
+
+# ------------------------------------------------------------ path policy
+def test_allow_roots_never_include_config_dir():
+    with tempfile.TemporaryDirectory() as config_dir:
+        media = os.path.join(config_dir, "media")
+        roots = recording.recording_allow_roots([media])
+        assert config_dir not in roots
+        assert media in roots
+        for name in ("configuration.yaml", "secrets.yaml", ".storage/auth"):
+            assert not recording.is_allowed_recording_path(
+                os.path.join(config_dir, name), roots
+            )
+        assert recording.is_allowed_recording_path(
+            os.path.join(media, "sip", "rec.wav"), roots
+        )
+        assert recording.recording_allow_roots() == [
+            root for root in recording.HAOS_RECORDING_ROOTS if os.path.isdir(root)
+        ]
+
+
+def test_default_recording_dir_prefers_local_media_dir():
+    assert (
+        recording.default_recording_dir(
+            {"other": "/srv/other", "local": "/config/media"}, "/config"
+        )
+        == "/config/media"
+    )
+    assert recording.default_recording_dir({"x": "/srv/x"}, "/config") == "/srv/x"
+    assert recording.default_recording_dir({}, "/config") == "/config"
+
+
+def test_recording_target_requires_wav_suffix():
+    with tempfile.TemporaryDirectory() as tmp:
+        assert recording.recording_target_error(os.path.join(tmp, "a.wav")) is None
+        assert recording.recording_target_error(os.path.join(tmp, "A.WAV")) is None
+        for name in (
+            "configuration.yaml",
+            "home-assistant_v2.db",
+            "rec",
+            "rec.wav.txt",
+        ):
+            assert recording.recording_target_error(os.path.join(tmp, name))
+
+
+def test_recording_target_refuses_to_overwrite_non_wav_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake = os.path.join(tmp, "notes.wav")
+        with open(fake, "w", encoding="utf-8") as fh:
+            fh.write("homeassistant:\n  name: Home\n")
+        # A 0-byte file is what a recorder that never got audio leaves behind
+        # (it creates its file up front); it may be reused.
+        empty = os.path.join(tmp, "empty.wav")
+        open(empty, "wb").close()
+        short = os.path.join(tmp, "short.wav")
+        with open(short, "wb") as fh:
+            fh.write(b"x")
+        assert recording.recording_target_error(fake)
+        assert recording.recording_target_error(short)
+        assert recording.recording_target_error(empty) is None
+        with open(fake, encoding="utf-8") as fh:
+            assert fh.read().startswith("homeassistant:")
+
+        folder = os.path.join(tmp, "dir.wav")
+        os.mkdir(folder)
+        assert recording.recording_target_error(folder)
+
+
+def test_recording_target_allows_replacing_previous_recording():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "last.wav")
+        with wave.open(path, "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(8000)
+            wav.writeframes(b"\x00" * 320)
+        assert recording.is_wav_file(path)
+        assert recording.recording_target_error(path) is None

@@ -82,6 +82,7 @@ def _load_component_module(name: str) -> types.ModuleType:
 
 _ASSIST_CTX: tuple | None = None
 _ASSIST_PATCHER = None
+_HELPERS_PATCHER = None
 
 
 def _setup_assist_deps():
@@ -100,10 +101,11 @@ def _setup_assist_deps():
     mock_tts = MagicMock()
     mock_tts.async_get_stream = MagicMock(return_value=None)
 
-    # Tone media resolution (turn_tone_media / processing_tone_media): default
-    # to "not a media-source ID" and an identity URL passthrough, so a plain
-    # URL/path exercises the FfmpegAudioSource path without extra setup;
-    # tests can reconfigure assist.media_source / assist.async_process_play_media_url.
+    # Tone media resolution (turn_tone_media / processing_tone_media) goes
+    # through helpers.async_resolve_playback_url: default to "not a
+    # media-source ID" and an identity URL passthrough, so a plain http(s) URL
+    # exercises the FfmpegAudioSource path without extra setup; tests can
+    # reconfigure helpers.media_source / helpers.async_process_play_media_url.
     mock_media_source = MagicMock()
     mock_media_source.is_media_source_id = MagicMock(return_value=False)
     mock_media_source.async_resolve_media = AsyncMock()
@@ -114,14 +116,19 @@ def _setup_assist_deps():
         async_get_pipeline=mock_ap.async_get_pipeline,
         async_pipeline_from_audio_stream=mock_ap.async_pipeline_from_audio_stream,
         tts=mock_tts,
-        media_source=mock_media_source,
-        async_process_play_media_url=MagicMock(side_effect=lambda hass, url: url),
         get_ffmpeg_bin=MagicMock(return_value="/usr/bin/ffmpeg"),
         # Synthetic PCM is not speech to the real Silero/micro VAD; tests that
         # exercise VAD behaviour install their own deterministic stub.
         MicroVad=None,
     )
     _ASSIST_PATCHER.start()
+    global _HELPERS_PATCHER
+    _HELPERS_PATCHER = patch.multiple(
+        _load_component_module("helpers"),
+        media_source=mock_media_source,
+        async_process_play_media_url=MagicMock(side_effect=lambda hass, url: url),
+    )
+    _HELPERS_PATCHER.start()
     return assist, mock_ap, PipelineEventType, PipelineEvent
 
 
@@ -134,10 +141,13 @@ def _assist_ctx():
 
 def reset_assist_ctx() -> None:
     """Undo the per-test Assist doubles (called from conftest)."""
-    global _ASSIST_CTX, _ASSIST_PATCHER
+    global _ASSIST_CTX, _ASSIST_PATCHER, _HELPERS_PATCHER
     if _ASSIST_PATCHER is not None:
         _ASSIST_PATCHER.stop()
+    if _HELPERS_PATCHER is not None:
+        _HELPERS_PATCHER.stop()
     _ASSIST_PATCHER = None
+    _HELPERS_PATCHER = None
     _ASSIST_CTX = None
 
 
