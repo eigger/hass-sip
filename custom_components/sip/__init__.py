@@ -66,12 +66,17 @@ from .const import (
     EVENT_SIP_STATE_CHANGED,
     LOGGER,
 )
-from .helpers import async_resolve_playback_url, get_ffmpeg_bin
+from .helpers import (
+    async_resolve_playback_url,
+    get_ffmpeg_bin,
+    media_dir_source_hint,
+)
 from .ivr import ASSIST_OPTION_FIELDS, IvrSession
 from .recording import (
     close_recorder_slot,
     default_recording_dir,
     is_allowed_recording_path,
+    is_protected_config_path,
     recording_allow_roots,
     recording_target_error,
     resolve_recording_path,
@@ -636,6 +641,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # The menu comes from service data, so resolve it the same way as the
     # media_player's play_media instead of handing ffmpeg a raw path.
     async def play_audio_file_internal(audio_file: str) -> None:
+        # A host path such as ``/media/x.mp3`` is taken as an HA-relative URL
+        # and does not reach the file; point at the media-source ID instead.
+        hint = media_dir_source_hint(hass.config.media_dirs, str(audio_file))
+        if hint:
+            LOGGER.warning(
+                "IVR audio_file %s looks like a host path inside a media "
+                "directory; host paths are not played, use %s instead",
+                audio_file,
+                hint,
+            )
         try:
             url = await async_resolve_playback_url(hass, audio_file)
         except ValueError as err:
@@ -1090,6 +1105,17 @@ async def async_register_services(hass: HomeAssistant) -> None:
                 LOGGER.error(
                     "Recording path %s is outside allowed directories "
                     "(allowlist_external_dirs, media_dirs, /media, /share)",
+                    target_file,
+                )
+                continue
+            if is_protected_config_path(
+                target_file,
+                hass.config.config_dir,
+                list(hass.config.media_dirs.values()),
+            ):
+                LOGGER.error(
+                    "Recording path %s is inside the configuration directory; "
+                    "use a media directory instead",
                     target_file,
                 )
                 continue

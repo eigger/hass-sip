@@ -3,7 +3,8 @@
 Real Home Assistant, real config entry against the mock PBX, real service
 calls made as a (non-admin) user. Covers the recording path policy as wired
 in ``sip.start_recording``, the caller context carried into IVR menus, and
-IVR ``audio_file`` resolution.
+how caller-supplied media (IVR ``audio_file``, Assist tone media,
+``media_player.play_media``) is resolved before it reaches ffmpeg.
 """
 
 from __future__ import annotations
@@ -18,11 +19,20 @@ from pytest_homeassistant_custom_component.common import (
     async_capture_events,
 )
 
+from homeassistant.components.media_player import (
+    ATTR_MEDIA_CONTENT_ID,
+    ATTR_MEDIA_CONTENT_TYPE,
+    DOMAIN as MP_DOMAIN,
+    SERVICE_PLAY_MEDIA,
+)
 from homeassistant.core import Context, HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.service import async_register_admin_service
 
+from custom_components.sip.assist import AssistBridge
 from custom_components.sip.const import DOMAIN, EVENT_SIP_RECORDING_STARTED
 from custom_components.sip.helpers import async_resolve_playback_url
+from custom_components.sip.sip_client.audio import FfmpegAudioSource, ToneAudioSource
 from custom_components.sip.sip_client.sip_client import SipState
 
 from .common import phone_line, wait_for
@@ -137,6 +147,112 @@ async def test_start_recording_relative_path_lands_in_media_dir(
     assert entry.runtime_data.get("recorder") is None
     assert expected.is_file()
     assert (config_dir / "configuration.yaml").read_text() == "homeassistant:\n"
+
+
+async def test_start_recording_can_be_reissued_to_the_same_path_before_audio(
+    hass: HomeAssistant, init_integration, config_dir: Path
+) -> None:
+    """A 0-byte leftover (no audio yet, or a crash) must not block the path."""
+    entry = init_integration
+    target = phone_line(hass, entry)
+    user = _line_user(hass, target)
+    started = async_capture_events(hass, EVENT_SIP_RECORDING_STARTED)
+    expected = config_dir / "media" / "sip" / "again.wav"
+    expected.write_bytes(b"")  # what a recorder that never got audio leaves
+
+    await _start_recording(hass, target, "sip/again.wav", user)
+    first = entry.runtime_data["recorder"]
+    # No call, so no audio ever arrives: re-issue right away.
+    await _start_recording(hass, target, "sip/again.wav", user)
+    second = entry.runtime_data["recorder"]
+
+    assert second is not first
+    assert second.path == str(expected)
+    assert [e.data["recording_file"] for e in started] == [str(expected)] * 2
+
+    await hass.services.async_call(
+        DOMAIN,
+        "stop_recording",
+        target,
+        blocking=True,
+        context=Context(user_id=user.id),
+    )
+    assert entry.runtime_data.get("recorder") is None
+    assert expected.read_bytes()[:4] == b"RIFF"
+
+
+@pytest.fixture
+def config_dir_allowlisted(config_dir: Path, hass: HomeAssistant) -> Path:
+    """``config_dir`` with the whole config dir allowlisted.
+
+    Also lists ``<config>/www``, which HA allowlists by default.
+    """
+    (config_dir / "www").mkdir()
+    hass.config.allowlist_external_dirs = {
+        str(config_dir),
+        str(config_dir / "www"),
+        str(config_dir / "media"),
+    }
+    return config_dir
+
+
+@pytest.mark.parametrize(
+    "recording_file",
+    [
+        "{config}/evil.wav",
+        "{config}/www/rec.wav",
+        "{config}/.storage/rec.wav",
+        "../evil.wav",
+        "../www/rec.wav",
+    ],
+)
+async def test_start_recording_refuses_config_dir_even_when_allowlisted(
+    hass: HomeAssistant,
+    init_integration,
+    config_dir_allowlisted: Path,
+    recording_file: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    config_dir = config_dir_allowlisted
+    entry = init_integration
+    target = phone_line(hass, entry)
+    user = _line_user(hass, target)
+    started = async_capture_events(hass, EVENT_SIP_RECORDING_STARTED)
+    before = set(config_dir.rglob("*"))
+
+    await _start_recording(hass, target, recording_file.format(config=config_dir), user)
+    await hass.async_block_till_done()
+
+    assert entry.runtime_data.get("recorder") is None
+    assert started == []
+    assert "inside the configuration directory" in caplog.text
+    assert set(config_dir.rglob("*")) == before
+
+
+@pytest.mark.parametrize("recording_file", ["{config}/media/sip/ok.wav", "sip/ok.wav"])
+async def test_start_recording_allows_media_dir_under_allowlisted_config(
+    hass: HomeAssistant,
+    init_integration,
+    config_dir_allowlisted: Path,
+    recording_file: str,
+) -> None:
+    config_dir = config_dir_allowlisted
+    entry = init_integration
+    target = phone_line(hass, entry)
+    user = _line_user(hass, target)
+
+    await _start_recording(hass, target, recording_file.format(config=config_dir), user)
+
+    recorder = entry.runtime_data["recorder"]
+    assert recorder.path == str(config_dir / "media" / "sip" / "ok.wav")
+    await hass.services.async_call(
+        DOMAIN,
+        "stop_recording",
+        target,
+        blocking=True,
+        context=Context(user_id=user.id),
+    )
+    assert (config_dir / "media" / "sip" / "ok.wav").is_file()
 
 
 # ------------------------------------------------------------- IVR context
@@ -337,6 +453,184 @@ async def test_ivr_audio_file_is_resolved_before_ffmpeg(
         assert play_source.call_args.args[0]._url.startswith(expected_prefix)
         assert "IVR playing audio file" in caplog.text
     assert "authSig" not in caplog.text
+
+    await hass.services.async_call(DOMAIN, "hangup", target, blocking=True)
+    await wait_for(lambda: client.state == SipState.REGISTERED)
+    await hass.async_block_till_done()
+
+
+async def test_ivr_audio_file_host_path_in_media_dir_logs_media_source_hint(
+    hass: HomeAssistant,
+    init_integration,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    entry = init_integration
+    hass.config.internal_url = "http://hass.lan:8123"
+    hass.config.media_dirs.clear()
+    hass.config.media_dirs["local"] = str(tmp_path)
+    play_audio_file = entry.runtime_data["play_audio_file_fn"]
+
+    with patch.object(entry.runtime_data["client"], "play_source"):
+        await play_audio_file(str(tmp_path / "sounds" / "hello.mp3"))
+    assert "media-source://media_source/local/sounds/hello.mp3" in caplog.text
+
+    caplog.clear()
+    with patch.object(entry.runtime_data["client"], "play_source"):
+        await play_audio_file("media-source://media_source/local/hello.mp3")
+    assert "looks like a host path" not in caplog.text
+
+
+# --------------------------------------------------- Assist tone media URL
+_REFUSED_MEDIA = ["file:///config/secrets.yaml", "secrets.yaml", "concat:a|b"]
+
+
+def _tone_bridge(hass: HomeAssistant, played: list, **kwargs) -> AssistBridge:
+    holder: dict = {}
+
+    def play(source) -> None:
+        played.append(source)
+        holder["bridge"]._tx_done.set()
+
+    bridge = AssistBridge(
+        hass,
+        play_source_fn=play,
+        on_done_fn=lambda: None,
+        interrupt_media=False,
+        **kwargs,
+    )
+    holder["bridge"] = bridge
+    bridge._running = True
+    return bridge
+
+
+@pytest.fixture
+def media_dir(hass: HomeAssistant, tmp_path: Path) -> Path:
+    hass.config.internal_url = "http://hass.lan:8123"
+    (tmp_path / "ding.mp3").write_bytes(b"ID3")
+    hass.config.media_dirs.clear()
+    hass.config.media_dirs["local"] = str(tmp_path)
+    return tmp_path
+
+
+@pytest.mark.parametrize("media_id", _REFUSED_MEDIA)
+async def test_assist_turn_tone_media_refuses_local_files(
+    hass: HomeAssistant,
+    init_integration,
+    media_dir: Path,
+    media_id: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    played: list = []
+    bridge = _tone_bridge(hass, played, turn_tone=True, turn_tone_media=media_id)
+    await bridge._play_turn_tone()
+    assert [type(src) for src in played] == [ToneAudioSource]
+    assert "tone media not used" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("media_id", "expected_prefix"),
+    [
+        (
+            "media-source://media_source/local/ding.mp3",
+            "http://hass.lan:8123/media/local/ding.mp3?authSig=",
+        ),
+        ("https://example.com/ding.mp3", "https://example.com/ding.mp3"),
+    ],
+)
+async def test_assist_turn_tone_media_plays_media_source_and_http(
+    hass: HomeAssistant,
+    init_integration,
+    media_dir: Path,
+    media_id: str,
+    expected_prefix: str,
+) -> None:
+    played: list = []
+    bridge = _tone_bridge(hass, played, turn_tone=True, turn_tone_media=media_id)
+    await bridge._play_turn_tone()
+    assert len(played) == 1
+    assert isinstance(played[0], FfmpegAudioSource)
+    assert played[0]._url.startswith(expected_prefix)
+
+
+@pytest.mark.parametrize(
+    ("media_id", "expected_prefix"),
+    [
+        *((media_id, None) for media_id in _REFUSED_MEDIA),
+        (
+            "media-source://media_source/local/ding.mp3",
+            "http://hass.lan:8123/media/local/ding.mp3?authSig=",
+        ),
+        ("http://example.com/wait.mp3", "http://example.com/wait.mp3"),
+    ],
+)
+async def test_assist_processing_tone_media_is_resolved_before_ffmpeg(
+    hass: HomeAssistant,
+    init_integration,
+    media_dir: Path,
+    media_id: str,
+    expected_prefix: str | None,
+) -> None:
+    played: list = []
+    bridge = _tone_bridge(
+        hass, played, processing_tone=True, processing_tone_media=media_id
+    )
+    bridge._processing_active = True
+    await bridge._run_processing_cue()
+    assert len(played) == 1
+    if expected_prefix is None:
+        assert isinstance(played[0], ToneAudioSource)
+        assert bridge._processing_url is None
+    else:
+        assert isinstance(played[0], FfmpegAudioSource)
+        assert played[0]._url.startswith(expected_prefix)
+    bridge._processing_active = False
+
+
+# ----------------------------------------------- media_player.play_media URL
+async def test_play_media_refuses_local_files_and_plays_urls(
+    hass: HomeAssistant, init_integration, media_dir: Path
+) -> None:
+    entry = init_integration
+    client = entry.runtime_data["client"]
+    target = phone_line(hass, entry)
+    user = _line_user(hass, target)
+
+    await hass.services.async_call(
+        DOMAIN, "dial", {"number": "200", **target}, blocking=True
+    )
+    await wait_for(lambda: client.state == SipState.IN_CALL)
+    await hass.async_block_till_done()
+
+    async def play(media_id: str) -> None:
+        await hass.services.async_call(
+            MP_DOMAIN,
+            SERVICE_PLAY_MEDIA,
+            {
+                **target,
+                ATTR_MEDIA_CONTENT_TYPE: "music",
+                ATTR_MEDIA_CONTENT_ID: media_id,
+            },
+            blocking=True,
+            context=Context(user_id=user.id),
+        )
+
+    with patch.object(client, "play_source") as play_source:
+        for media_id in (*_REFUSED_MEDIA, "file:/config/secrets.yaml", "pipe:0"):
+            with pytest.raises(HomeAssistantError) as err:
+                await play(media_id)
+            assert err.value.translation_key == "media_url_prepare_failed"
+        play_source.assert_not_called()
+
+        await play("https://example.com/a.mp3")
+        assert play_source.call_args.args[0]._url == "https://example.com/a.mp3"
+        await play("media-source://media_source/local/ding.mp3")
+        assert play_source.call_args.args[0]._url.startswith(
+            "http://hass.lan:8123/media/local/ding.mp3?authSig="
+        )
+        with pytest.raises(HomeAssistantError) as err:
+            await play("media-source://no_such_integration/x.mp3")
+        assert err.value.translation_key == "media_source_resolve_failed"
 
     await hass.services.async_call(DOMAIN, "hangup", target, blocking=True)
     await wait_for(lambda: client.state == SipState.REGISTERED)

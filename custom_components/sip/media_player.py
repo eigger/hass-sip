@@ -12,7 +12,6 @@ from homeassistant.components.media_player import (
     MediaPlayerEntityFeature,
     MediaPlayerState,
     MediaType,
-    async_process_play_media_url,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -21,7 +20,12 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, LOGGER
-from .helpers import build_device_info, get_ffmpeg_bin
+from .helpers import (
+    MediaSourceResolveError,
+    async_resolve_playback_url,
+    build_device_info,
+    get_ffmpeg_bin,
+)
 from .media_status import media_view
 from .sip_client.audio import FfmpegAudioSource
 from .sip_client.sip_client import SipClient, SipState
@@ -169,31 +173,29 @@ class SipMediaPlayer(MediaPlayerEntity):
                 translation_domain=DOMAIN, translation_key="not_in_call"
             )
 
-        url = media_id
-        # Resolve a media source ID if provided (e.g. TTS or the media browser).
-        if media_source.is_media_source_id(media_id):
-            try:
-                media_item = await media_source.async_resolve_media(
-                    self.hass, media_id, self.entity_id
-                )
-                url = media_item.url
-            except Exception as err:
-                raise HomeAssistantError(
-                    translation_domain=DOMAIN,
-                    translation_key="media_source_resolve_failed",
-                    translation_placeholders={"media_id": media_id, "error": str(err)},
-                ) from err
-
-        # Make Home Assistant URLs absolute and sign protected paths such as
-        # /media.  ffmpeg is a separate process and has no HA login session.
+        # Resolve a media-source ID (TTS, the media browser), make HA paths
+        # absolute and sign protected ones such as /media (ffmpeg is a separate
+        # process with no HA login session). Local paths and non-http(s)
+        # ffmpeg protocols (file:, concat:, pipe: ...) are refused.
         try:
-            url = async_process_play_media_url(self.hass, url)
-        except Exception as err:
+            url = await async_resolve_playback_url(
+                self.hass, media_id, target_media_player=self.entity_id
+            )
+        except MediaSourceResolveError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="media_source_resolve_failed",
+                translation_placeholders={
+                    "media_id": media_id,
+                    "error": str(err.__cause__ or err),
+                },
+            ) from err
+        except ValueError as err:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="media_url_prepare_failed",
                 translation_placeholders={
-                    "url": url.partition("?")[0],
+                    "url": str(media_id).partition("?")[0],
                     "error": str(err),
                 },
             ) from err

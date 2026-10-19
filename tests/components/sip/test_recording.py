@@ -176,6 +176,49 @@ def test_wav_recorder_creates_parent_directory():
     asyncio.run(run())
 
 
+def test_wav_recorder_writes_header_before_first_frame():
+    """The file is a valid (empty) WAV even if no audio ever arrives."""
+
+    async def run():
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "rec.wav")
+            sink = audio.WavRecorderSink(path, sample_rate=8000)
+            try:
+                deadline = time.monotonic() + 2
+                while not recording.is_wav_file(path):
+                    assert time.monotonic() < deadline
+                    await asyncio.sleep(0.01)
+                assert recording.recording_target_error(path) is None
+            finally:
+                sink.close()
+                await sink.wait_closed()
+            with wave.open(path, "rb") as wav:
+                assert wav.getnframes() == 0
+
+    asyncio.run(run())
+
+
+def test_protected_config_path_allows_only_media_dirs_under_config():
+    with tempfile.TemporaryDirectory() as tmp:
+        config = os.path.join(tmp, "config")
+        media = os.path.join(config, "media")
+        outside = os.path.join(tmp, "share")
+        for folder in (media, outside):
+            os.makedirs(folder)
+        protected = recording.is_protected_config_path
+        assert protected(os.path.join(config, "rec.wav"), config, [media])
+        assert protected(os.path.join(config, "www", "rec.wav"), config, [media])
+        assert protected(os.path.join(media, "..", "x.wav"), config, [media])
+        assert not protected(os.path.join(media, "sip", "rec.wav"), config, [media])
+        assert not protected(os.path.join(outside, "rec.wav"), config, [media])
+        # A media dir that is the config dir itself does not open it up.
+        assert protected(os.path.join(config, "rec.wav"), config, [config])
+        if hasattr(os, "symlink"):
+            link = os.path.join(outside, "cfg")
+            os.symlink(config, link)
+            assert protected(os.path.join(link, "rec.wav"), config, [media])
+
+
 # ------------------------------------------------ sip.start/stop_recording flow
 def _pcmu_packet(seq: int, ssrc: int = 0x5150) -> bytes:
     # 20 ms of PCMU silence (0xFF) with a real RTP header.
@@ -292,10 +335,16 @@ def test_recording_target_refuses_to_overwrite_non_wav_file():
         fake = os.path.join(tmp, "notes.wav")
         with open(fake, "w", encoding="utf-8") as fh:
             fh.write("homeassistant:\n  name: Home\n")
+        # A 0-byte file is what a recorder that never got audio leaves behind
+        # (it creates its file up front); it may be reused.
         empty = os.path.join(tmp, "empty.wav")
         open(empty, "wb").close()
+        short = os.path.join(tmp, "short.wav")
+        with open(short, "wb") as fh:
+            fh.write(b"x")
         assert recording.recording_target_error(fake)
-        assert recording.recording_target_error(empty)
+        assert recording.recording_target_error(short)
+        assert recording.recording_target_error(empty) is None
         with open(fake, encoding="utf-8") as fh:
             assert fh.read().startswith("homeassistant:")
 

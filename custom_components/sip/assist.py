@@ -9,7 +9,7 @@ import time
 from collections.abc import AsyncIterable, Callable
 from typing import Literal
 
-from homeassistant.components import media_source, tts
+from homeassistant.components import tts
 from homeassistant.components.assist_pipeline import (
     AudioSettings,
     PipelineEvent,
@@ -20,7 +20,6 @@ from homeassistant.components.assist_pipeline import (
     async_get_pipeline,
     async_pipeline_from_audio_stream,
 )
-from homeassistant.components.media_player import async_process_play_media_url
 from homeassistant.components.stt import (
     AudioBitRates,
     AudioChannels,
@@ -37,7 +36,7 @@ from .const import (
     ASSIST_HANGUP_TOOL_NAME,
     LOGGER,
 )
-from .helpers import get_ffmpeg_bin
+from .helpers import async_resolve_playback_url, get_ffmpeg_bin
 from .sip_client.audio import (
     AudioSink,
     AudioSource,
@@ -815,31 +814,17 @@ class AssistBridge(AudioSink):
         """Resolve tone media to a playable URL, or None for the default beep.
 
         ``media_id`` may be a media-source ID (e.g. picked from the media
-        browser) or a URL, mirroring how the media_player entity's
-        ``play_media`` resolves its own ``media_id`` argument. A local
-        filesystem path is not supported: it would be rewritten into an HA URL.
+        browser) or an http(s) / HA-relative URL, resolved exactly like the
+        IVR ``audio_file`` and the media_player's ``play_media``. Local
+        filesystem paths and other ffmpeg protocols (``file:``, ``concat:``
+        ...) are refused and the default beep plays instead.
         """
         if not media_id:
             return None
-        url = media_id
-        if media_source.is_media_source_id(media_id):
-            try:
-                media_item = await media_source.async_resolve_media(
-                    self.hass, media_id, None
-                )
-                url = media_item.url
-            except Exception:
-                LOGGER.exception(
-                    "Assist: failed to resolve tone media '%s'; using default beep",
-                    media_id,
-                )
-                return None
         try:
-            url = async_process_play_media_url(self.hass, url)
-        except Exception:
-            LOGGER.exception(
-                "Assist: failed to prepare tone media URL; using default beep"
-            )
+            url = await async_resolve_playback_url(self.hass, media_id)
+        except ValueError as err:
+            LOGGER.warning("Assist: tone media not used (%s); using default beep", err)
             return None
         # A prepared HA URL may carry an authSig. Never put it in the log.
         LOGGER.debug("Assist: using tone media %s", url.partition("?")[0])
