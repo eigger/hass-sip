@@ -173,7 +173,7 @@ start_recording:
   fields:
     recording_file:
       name: Recording File Path
-      description: Absolute path of the WAV file to save. Supports Jinja templates and target variables.
+      description: Path of the WAV file to save (must end in .wav; relative paths go under the local media directory). Supports Jinja templates and target variables.
       required: true
       example: "/media/voicemails/call_{{ username }}_{{ now().strftime('%Y%m%d_%H%M%S') }}.wav"
       selector:
