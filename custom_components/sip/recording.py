@@ -141,6 +141,44 @@ def is_protected_config_path(path: str, config_dir: str, media_dirs: list[str]) 
     return True
 
 
+class RecordingPathError(ValueError):
+    """A recording target was rejected; ``str(err)`` is the log message."""
+
+
+def validate_recording_target(
+    raw: str,
+    base_dir: str,
+    config_dir: str,
+    extra_roots: list[str],
+    media_dirs: list[str],
+) -> str:
+    """Resolve and vet a recording path; return the absolute path to record to.
+
+    Raises :class:`RecordingPathError` when the target must not be used. Does
+    blocking I/O (``realpath``, ``isdir``, ``stat``, ``open``): run it in the
+    executor, never on the event loop.
+    """
+    try:
+        path = resolve_recording_path(raw, base_dir)
+    except ValueError as err:
+        raise RecordingPathError("Recording path is empty") from err
+    if not is_allowed_recording_path(path, recording_allow_roots(extra_roots)):
+        raise RecordingPathError(
+            f"Recording path {path} is outside allowed directories "
+            "(allowlist_external_dirs, media_dirs, /media, /share)"
+        )
+    if is_protected_config_path(path, config_dir, media_dirs):
+        raise RecordingPathError(
+            f"Recording path {path} is inside the configuration directory; "
+            "use a media directory instead"
+        )
+    # The recorder truncates its target as soon as it starts, call or no call,
+    # so refuse anything that is not (already) a WAV file.
+    if reason := recording_target_error(path):
+        raise RecordingPathError(f"Recording path {path} rejected: {reason}")
+    return path
+
+
 def close_recorder_slot(data: dict[str, Any]) -> Any:
     """Pop and close ``data['recorder']``. Returns the sink, or None."""
     recorder = data.pop("recorder", None)

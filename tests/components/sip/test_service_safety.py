@@ -9,6 +9,7 @@ how caller-supplied media (IVR ``audio_file``, Assist tone media,
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from unittest.mock import patch
@@ -119,6 +120,33 @@ async def test_start_recording_refuses_unsafe_targets(
         path: path.read_bytes() for path in config_dir.rglob("*") if path.is_file()
     }
     assert after == before  # nothing created, truncated or overwritten
+
+
+async def test_start_recording_validates_path_off_the_event_loop(
+    hass: HomeAssistant, init_integration, config_dir: Path
+) -> None:
+    """realpath/isdir/stat must not run on the event loop (slow storage)."""
+    from custom_components.sip import recording
+
+    entry = init_integration
+    target = phone_line(hass, entry)
+    user = _line_user(hass, target)
+    on_loop: list[bool] = []
+
+    def spy(*args):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            on_loop.append(False)
+        else:
+            on_loop.append(True)
+        return recording.validate_recording_target(*args)
+
+    with patch("custom_components.sip.validate_recording_target", new=spy):
+        await _start_recording(hass, target, "sip/offloop.wav", user)
+
+    assert on_loop == [False]
+    assert entry.runtime_data["recorder"] is not None
 
 
 async def test_start_recording_relative_path_lands_in_media_dir(
