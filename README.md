@@ -1,16 +1,20 @@
+<!-- hass-standards:header:start -->
 # SIP Client Home Assistant Integration (hass-sip)
+
+A Home Assistant custom integration for SIP calls, IVR, intercoms, and Voice Assist.
 
 **English** | [한국어](README.ko.md)
 
 <!-- hass-standards:badges:start -->
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5?style=flat-square)](#installation)
-[![Release](https://img.shields.io/github/v/release/eigger/hass-sip?style=flat-square)](https://github.com/eigger/hass-sip/releases)
-[![Home Assistant minimum](https://img.shields.io/badge/HA-%E2%89%A5%202026.10.0-41BDF5?style=flat-square)](hacs.json)
-[![Tests](https://img.shields.io/github/actions/workflow/status/eigger/hass-sip/tests.yml?branch=main&style=flat-square&label=Tests)](https://github.com/eigger/hass-sip/actions/workflows/tests.yml)
-[![Validate](https://img.shields.io/github/actions/workflow/status/eigger/hass-sip/validate.yml?branch=main&style=flat-square&label=Validate)](https://github.com/eigger/hass-sip/actions/workflows/validate.yml)
-[![License](https://img.shields.io/github/license/eigger/hass-sip?style=flat-square)](LICENSE)
-[![Analytics reporting installs](https://img.shields.io/badge/dynamic/json?style=flat-square&color=41BDF5&label=Usage&query=%24.sip.total&url=https%3A%2F%2Fanalytics.home-assistant.io%2Fcustom_integrations.json)](https://analytics.home-assistant.io/)
+[![Release](https://img.shields.io/github/v/release/eigger/hass-sip?style=flat)](https://github.com/eigger/hass-sip/releases)
+[![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5?style=flat)](#installation)
+[![Home Assistant minimum](https://img.shields.io/badge/HA-%E2%89%A5%202026.10.0-41BDF5?style=flat)](hacs.json)
+[![Tests](https://img.shields.io/github/actions/workflow/status/eigger/hass-sip/tests.yml?branch=main&style=flat&label=Tests)](https://github.com/eigger/hass-sip/actions/workflows/tests.yml)
+[![Validate](https://img.shields.io/github/actions/workflow/status/eigger/hass-sip/validate.yml?branch=main&style=flat&label=Validate)](https://github.com/eigger/hass-sip/actions/workflows/validate.yml)
+[![License](https://img.shields.io/github/license/eigger/hass-sip?style=flat)](LICENSE)
+[![HACS Downloads](https://img.shields.io/badge/dynamic/json?style=flat&color=41BDF5&label=HACS+Downloads&query=%24%5B%3F%28%40.full_name%3D%3D%22eigger%2Fhass-sip%22%29%5D.downloads&url=https%3A%2F%2Fdata-v2.hacs.xyz%2Fintegration%2Fdata.json)](https://www.hacs.xyz/)
 <!-- hass-standards:badges:end -->
+<!-- hass-standards:header:end -->
 
 hass-sip **registers as a SIP extension** on your PBX. It exposes the line as a media player, sends and receives DTMF, runs IVR menus, records calls, and can bridge a call to Home Assistant Voice Assist.
 
@@ -47,7 +51,11 @@ Home Assistant 2026.10.0 or newer (`hacs.json`) and a SIP PBX on the same LAN or
 
 ## Installation
 
-1. **HACS**: Add this repository (`eigger/hass-sip`) to HACS as a custom repository, or
+<!-- hass-standards:installation:start -->
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=eigger&repository=hass-sip)
+<!-- hass-standards:installation:end -->
+
+1. **HACS**: Search for **SIP Client** (`eigger/hass-sip`) in HACS and download it from the default repository list, or
    **Manual**: Copy the `custom_components/sip` directory into your Home Assistant `custom_components` folder.
 2. Restart Home Assistant.
 
@@ -70,6 +78,13 @@ Field list, firewall notes, and the pjsip snippet: **[Setup](docs/setup.md)**.
 - G.722 (16 kHz) when the far end offers it, otherwise G.711; the codec order (or G.711-only) is selectable under **Configure** on the integration
 - Sensors: registration, last caller, codec, audio path (`none` / `no_rx` / `no_tx` / `bidirectional`)
 
+### Keypad/IVR, intercom, and outgoing TTS
+
+- **Keypad control**: Any phone on the PBX can dial the extension and press digits to run Home Assistant services from an IVR menu ([example](docs/examples.md#control-home-assistant-with-dtmf-any-phone)).
+- **Intercom auto-answer**: Set `{"102": {"name": "Front Doorbell", "auto_answer": true}}` in `sip_contacts.json` to answer a door station immediately ([details](docs/examples.md#intercom--auto-answer-mode)).
+- **Outgoing TTS**: An automation dials a phone, speaks the message after the call is answered, then hangs up (`sip.dial`'s `message`, [example](docs/examples.md#example-announce-a-tts-message-then-hang-up)).
+- **ESPHome**: For DIY ESP32 SIP intercoms and doorbells, see [espcomponents](https://github.com/eigger/espcomponents/tree/master/components/sip_client#readme).
+
 ## ESPHome External Component
 
 Looking to build a DIY physical endpoint — such as an ESP32 intercom, doorbell, or paging speaker?
@@ -82,12 +97,37 @@ It registers an ESP32 as a SIP extension on your PBX with support for ESPHome st
 
 Run hass-sip on the same LAN (or VPN) as the PBX. Do not port-forward UDP 5060 or RTP (`local_rtp_port`, default 7078). For Assist that can unlock a door, use allow-list + DTMF PIN + a dedicated pipeline — **[Security](docs/security.md)**.
 
+## Documentation (English)
+
+- [Setup & Quick Start](docs/setup.md) · [PBX compatibility](docs/setup.md#pbx-compatibility)
+- [Services, entities, events](docs/services.md)
+- [Use cases](docs/use-cases.md)
+- [Examples](docs/examples.md)
+- [Security](docs/security.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [ESPHome external component](https://github.com/eigger/espcomponents/tree/master/components/sip_client#readme)
+- [Shared development rules](STANDARDS.md) · [Adoption checklist](ADOPTION_CHECKLIST.md)
+
 ## Development
 
 [Contributing](CONTRIBUTING.md) covers the local test setup, ruff, and the real Home Assistant test layout (`tests/components/sip/`). This repository follows [hass-repo-standards](https://github.com/eigger/hass-repo-standards); see [STANDARDS.md](STANDARDS.md).
 
-## Support and license
+<!-- hass-standards:support:start -->
+## Support
 
-🐞 [Issue](https://github.com/eigger/hass-sip/issues) · 💡 [Discussion](https://github.com/eigger/hass-sip/discussions)
+- [Issues](https://github.com/eigger/hass-sip/issues): Report bugs or request features.
+- [Discussions](https://github.com/eigger/hass-sip/discussions): Ask questions and share your experience.
+<!-- hass-standards:support:end -->
 
-Released under the [LICENSE](LICENSE) in this repository. Shared development rules: [STANDARDS.md](STANDARDS.md).
+<!-- hass-standards:related-projects:start -->
+## Related Projects
+
+- [espcomponents / sip_client](https://github.com/eigger/espcomponents/tree/master/components/sip_client#readme): ESPHome external component for ESP32 SIP endpoints.
+- [hass-repo-standards](https://github.com/eigger/hass-repo-standards): Shared development rules recorded in [STANDARDS.md](STANDARDS.md).
+<!-- hass-standards:related-projects:end -->
+
+<!-- hass-standards:license:start -->
+## License
+
+Released under the [MIT License](LICENSE).
+<!-- hass-standards:license:end -->

@@ -1,8 +1,11 @@
 {
   "repository": "eigger/hass-sip",
   "default_branch": "main",
-  "readmes": ["README.md", "README.ko.md"],
-  "hacs": "custom",
+  "readmes": [
+    "README.md",
+    "README.ko.md"
+  ],
+  "hacs": "default",
   "release": true,
   "installation_link": "#installation",
   "tests_workflow": "tests.yml",
@@ -10,5 +13,47 @@
   "installation_links": {
     "README.md": "#installation",
     "README.ko.md": "#설치"
+  },
+  "hacs_default_evidence": "https://raw.githubusercontent.com/hacs/default/master/integration (eigger/hass-sip listed; verified 2026-10-22)",
+  "readme": {
+    "title": "SIP Client Home Assistant Integration (hass-sip)",
+    "descriptions": {
+      "en": "A Home Assistant custom integration for SIP calls, IVR, intercoms, and Voice Assist.",
+      "ko": "SIP 통화, IVR, 인터폰, 음성 Assist를 위한 Home Assistant 커스텀 통합입니다."
+    },
+    "issues": true,
+    "discussions": true,
+    "license_name": "MIT License",
+    "license_notices": {
+      "en": [],
+      "ko": []
+    },
+    "related_projects": [
+      {
+        "name": "espcomponents / sip_client",
+        "url": "https://github.com/eigger/espcomponents/tree/master/components/sip_client#readme",
+        "description": {
+          "en": "ESPHome external component for ESP32 SIP endpoints.",
+          "ko": "ESP32 SIP 단말을 위한 ESPHome 외부 컴포넌트입니다."
+        }
+      },
+      {
+        "name": "hass-repo-standards",
+        "url": "https://github.com/eigger/hass-repo-standards",
+        "description": {
+          "en": "Shared development rules recorded in [STANDARDS.md](STANDARDS.md).",
+          "ko": "[STANDARDS.md](STANDARDS.md)에 적용을 기록한 공통 개발 규칙입니다."
+        }
+      }
+    ]
+  },
+  "categories_review": {
+    "value": [
+      "messaging_notifications.email_sms_calls",
+      "ai_voice.voice_assistants",
+      "security_safety.doorbells_intercoms"
+    ],
+    "integration_type": "hub",
+    "source": "README.md sections What it is for and Features; docs/use-cases.md and docs/examples.md. Primary: SIP PBX inbound/outbound calls, DTMF and TTS calls (messaging_notifications.email_sms_calls). Secondary: multi-turn Home Assistant Voice Assist bridge (ai_voice.voice_assistants), and SIP door-station auto-answer/intercom use (security_safety.doorbells_intercoms). Existing hub type retained; selection is based on documented use, not entity platforms."
   }
 }

@@ -1,20 +1,43 @@
-# SIP Client Home Assistant 통합 (hass-sip)
+<!-- hass-standards:header:start -->
+# SIP Client Home Assistant Integration (hass-sip)
+
+SIP 통화, IVR, 인터폰, 음성 Assist를 위한 Home Assistant 커스텀 통합입니다.
 
 [English](README.md) | **한국어**
 
 <!-- hass-standards:badges:start -->
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5?style=flat-square)](#설치)
-[![Release](https://img.shields.io/github/v/release/eigger/hass-sip?style=flat-square)](https://github.com/eigger/hass-sip/releases)
-[![Home Assistant minimum](https://img.shields.io/badge/HA-%E2%89%A5%202026.10.0-41BDF5?style=flat-square)](hacs.json)
-[![Tests](https://img.shields.io/github/actions/workflow/status/eigger/hass-sip/tests.yml?branch=main&style=flat-square&label=Tests)](https://github.com/eigger/hass-sip/actions/workflows/tests.yml)
-[![Validate](https://img.shields.io/github/actions/workflow/status/eigger/hass-sip/validate.yml?branch=main&style=flat-square&label=Validate)](https://github.com/eigger/hass-sip/actions/workflows/validate.yml)
-[![License](https://img.shields.io/github/license/eigger/hass-sip?style=flat-square)](LICENSE)
-[![Analytics reporting installs](https://img.shields.io/badge/dynamic/json?style=flat-square&color=41BDF5&label=Usage&query=%24.sip.total&url=https%3A%2F%2Fanalytics.home-assistant.io%2Fcustom_integrations.json)](https://analytics.home-assistant.io/)
+[![Release](https://img.shields.io/github/v/release/eigger/hass-sip?style=flat)](https://github.com/eigger/hass-sip/releases)
+[![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5?style=flat)](#설치)
+[![Home Assistant minimum](https://img.shields.io/badge/HA-%E2%89%A5%202026.10.0-41BDF5?style=flat)](hacs.json)
+[![Tests](https://img.shields.io/github/actions/workflow/status/eigger/hass-sip/tests.yml?branch=main&style=flat&label=Tests)](https://github.com/eigger/hass-sip/actions/workflows/tests.yml)
+[![Validate](https://img.shields.io/github/actions/workflow/status/eigger/hass-sip/validate.yml?branch=main&style=flat&label=Validate)](https://github.com/eigger/hass-sip/actions/workflows/validate.yml)
+[![License](https://img.shields.io/github/license/eigger/hass-sip?style=flat)](LICENSE)
+[![HACS Downloads](https://img.shields.io/badge/dynamic/json?style=flat&color=41BDF5&label=HACS+Downloads&query=%24%5B%3F%28%40.full_name%3D%3D%22eigger%2Fhass-sip%22%29%5D.downloads&url=https%3A%2F%2Fdata-v2.hacs.xyz%2Fintegration%2Fdata.json)](https://www.hacs.xyz/)
 <!-- hass-standards:badges:end -->
+<!-- hass-standards:header:end -->
 
 hass-sip는 PBX에 **SIP 내선으로 등록**됩니다. 이 회선을 미디어 플레이어로 노출하고, DTMF 송수신, IVR 메뉴, 통화 녹음, Home Assistant 음성 Assist 연결을 지원합니다. HACS 커스텀 통합이며 Home Assistant Core에 포함된 통합이 아닙니다.
 
 전송은 **UDP 기반 SIP**이고 **G.711(PCMU/PCMA)과 G.722**를 지원합니다. TLS, SRTP, Opus는 구현되어 있지 않습니다. **인터넷 노출은 지원하지 않으며** 검증되지 않은 PBX를 "지원"으로 표기하지 않습니다.
+
+| 내선 등록 | 자동화 | 참고 자료 |
+|---|---|---|
+| [설정 및 빠른 시작](docs/setup.md) | [예제](docs/examples.md) | [서비스, 엔티티, 이벤트](docs/services.md) |
+| [PBX 호환성](docs/setup.md#pbx-compatibility) | [보안](docs/security.md) | [문제 해결](docs/troubleshooting.md) |
+| [ESPHome 컴포넌트](#esphome-외부-컴포넌트) | [인터폰 예제](docs/examples.md#intercom--auto-answer-mode) | [espcomponents 리포지토리](https://github.com/eigger/espcomponents/tree/master/components/sip_client#readme) |
+
+위 상세 문서는 영어로 제공됩니다.
+
+## 사용 목적
+
+| 사용 사례 | 동작 | 상세 (영어) |
+|---|---|---|
+| 음성 제어 | 내선에 전화해 응답 후 Assist와 대화하며 한 통화에서 여러 명령 실행 | [사용 사례](docs/use-cases.md#control-home-assistant-by-voice) |
+| 전화 키패드 | PBX의 아무 전화로 숫자를 누르면 IVR 메뉴가 Home Assistant 서비스 실행 | [사용 사례](docs/use-cases.md#control-home-assistant-with-the-phone-keypad) |
+| 인터폰 | 도어 스테이션이 호출하면 hass-sip가 자동 응답하고 선택적으로 DTMF로 문 열기 | [사용 사례](docs/use-cases.md#intercom-auto-answer) |
+| Home Assistant에서 전화 걸기 | 자동화가 전화로 TTS 메시지 전달 | [사용 사례](docs/use-cases.md#home-assistant-calls-you-with-tts) |
+
+도어락에는 [허용 목록 + PIN](docs/security.md#door-locks-and-other-security-intents)을 사용하세요.
 
 ## 주요 기능
 
@@ -31,7 +54,11 @@ hass-sip는 PBX에 **SIP 내선으로 등록**됩니다. 이 회선을 미디어
 
 ## 설치
 
-1. **HACS**: 이 리포지토리(`eigger/hass-sip`)를 HACS 사용자 지정 리포지토리로 추가하거나, **수동**으로 `custom_components/sip` 폴더를 Home Assistant의 `custom_components`에 복사합니다.
+<!-- hass-standards:installation:start -->
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=eigger&repository=hass-sip)
+<!-- hass-standards:installation:end -->
+
+1. **HACS**: HACS 기본 저장소 목록에서 **SIP Client**(`eigger/hass-sip`)를 검색해 다운로드하거나, **수동**으로 `custom_components/sip` 폴더를 Home Assistant의 `custom_components`에 복사합니다.
 2. Home Assistant를 재시작합니다.
 
 ## 빠른 설정
@@ -66,6 +93,12 @@ target:
 - **TTS 발신**: 자동화가 전화를 걸고 응답하면 메시지를 읽은 뒤 끊습니다 (`sip.dial` 의 `message`, [예제](docs/examples.md#example-announce-a-tts-message-then-hang-up)).
 - **ESPHome**: ESP32를 SIP 내선으로 등록하는 DIY 인터폰/초인종 컴포넌트는 [espcomponents](https://github.com/eigger/espcomponents/tree/master/components/sip_client#readme)를 참고하세요.
 
+## ESPHome 외부 컴포넌트
+
+ESP32 인터폰, 초인종, 방송용 스피커 같은 DIY 물리 단말을 만들려면 [**eigger/espcomponents의 `sip_client`**](https://github.com/eigger/espcomponents/tree/master/components/sip_client#readme) ESPHome 외부 컴포넌트를 참고하세요.
+
+ESP32를 PBX의 SIP 내선으로 등록하며 ESPHome 표준 `microphone`과 `speaker`(I2S 오디오), G.711 / 광대역 G.722 코덱, DTMF, 전이중 또는 반이중 모드를 지원합니다. 전체 설정, 하드웨어 배선, YAML 예제는 [espcomponents 리포지토리(영어)](https://github.com/eigger/espcomponents/tree/master/components/sip_client#readme)에 있습니다.
+
 ## 중요 제한 사항
 
 PBX와 같은 LAN(또는 VPN)에서 실행하세요. UDP 5060이나 RTP(`local_rtp_port`, 기본 7078)를 포트 포워딩하지 마세요. 도어락을 제어할 수 있는 Assist는 허용 목록 + DTMF PIN + 전용 파이프라인을 사용하세요. 자세한 내용은 [보안(영어)](docs/security.md)을 참고하세요.
@@ -85,8 +118,22 @@ PBX와 같은 LAN(또는 VPN)에서 실행하세요. UDP 5060이나 RTP(`local_r
 
 로컬 테스트·ruff·실제 HA 테스트 구조는 [CONTRIBUTING(영어)](CONTRIBUTING.md)을 참고하세요. 이 리포는 [hass-repo-standards](https://github.com/eigger/hass-repo-standards)를 따르며 [STANDARDS.md](STANDARDS.md)에 기록합니다.
 
-## 지원 및 라이선스
+<!-- hass-standards:support:start -->
+## 지원
 
-🐞 [Issues](https://github.com/eigger/hass-sip/issues) · 💡 [Discussions](https://github.com/eigger/hass-sip/discussions)
+- [Issues](https://github.com/eigger/hass-sip/issues): 버그를 신고하거나 기능을 요청하세요.
+- [Discussions](https://github.com/eigger/hass-sip/discussions): 질문하고 사용 경험을 공유하세요.
+<!-- hass-standards:support:end -->
 
-[LICENSE](LICENSE)
+<!-- hass-standards:related-projects:start -->
+## 관련 프로젝트
+
+- [espcomponents / sip_client](https://github.com/eigger/espcomponents/tree/master/components/sip_client#readme): ESP32 SIP 단말을 위한 ESPHome 외부 컴포넌트입니다.
+- [hass-repo-standards](https://github.com/eigger/hass-repo-standards): [STANDARDS.md](STANDARDS.md)에 적용을 기록한 공통 개발 규칙입니다.
+<!-- hass-standards:related-projects:end -->
+
+<!-- hass-standards:license:start -->
+## 라이선스
+
+[MIT License](LICENSE) 라이선스로 배포됩니다.
+<!-- hass-standards:license:end -->

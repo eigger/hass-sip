@@ -1,6 +1,40 @@
 # 공통 규칙 적용 체크리스트
 
-hass-sip 의 적용 기록입니다. 실행하지 않은 검사는 PASS 로 표시하지 않았습니다. [사용법과 판정 기준](https://github.com/eigger/hass-repo-standards/blob/7acd9cab6ac774e4695f2c962e3d88b5faa4620d/docs/checklist.md)을 읽고, 아래 규칙은 `STANDARDS.md`에 기록한 표준 커밋에서 확인합니다. 태그·릴리스 대신 `main`의 검토 커밋을 기준으로 하며, 
+hass-sip 의 적용 기록입니다. 실행하지 않은 검사는 PASS 로 표시하지 않았습니다. [사용법과 판정 기준](https://github.com/eigger/hass-repo-standards/blob/0ec31111a81b0ee5702f1d8a17f03616a10a5db6/docs/checklist.md)을 읽고, 아래 규칙은 `STANDARDS.md`에 기록한 표준 커밋에서 확인합니다. 태그·릴리스 대신 `main`의 검토 커밋을 기준으로 합니다.
+
+## 2026-10-22 공용화·HACS Default 재검토 (현재)
+
+- 기준: 중앙 main `0ec31111a81b0ee5702f1d8a17f03616a10a5db6`, 대상 `55f47dc` 기반 로컬 변경. 최초 채택 기록은 아래 별도 이력으로 보존하며 이번 검증 결과와 구분합니다.
+- 담당: 조율 `/root`, 구현 `implementation` / `platform_tests`, 독립 리뷰 `independent_review`.
+- HACS Default: [공식 기본 integration 목록](https://github.com/hacs/default/blob/master/integration)에 `eigger/hass-sip` 등재 확인 (2026-10-22). Default·공식 HACS Downloads·My HACS 설치 링크 및 실제 검색 설치 안내 적용.
+- 중앙 README 관리 영역·공용 Tests/Validate·`standards-ref` SHA 일치·중앙 검사 job·기본 test scaffold 적용. SIP 전용 recorder 순서와 순수 프로토콜 테스트 동작은 domain fixture에 보존.
+- 실제 통화·Assist·인터폰 용도에 따른 manifest categories와 `.hass-standards.json.categories_review` 근거 기록. hub 유형·지원 최소 HA 2026.10.0·현재 테스트 HA 2026.10.2 유지.
+- binary_sensor/event/sensor/switch 플랫폼별 실제 HA 상태·서비스 및 mock PBX 통신 회귀 테스트 7개 추가.
+
+| 재검토 항목 | 상태 | 실제 근거 / 한계 |
+|---|---|---|
+| DOC-01/03/04/05/06, HACS-03 | PASS | 중앙 렌더러 관리 영역·flat/Default/Downloads·설치 링크 적용, `sync_badges.py . --check` 통과 |
+| DOC-02 | PASS | 기존 양언어 본문 순서·내용을 보존하며 빠진 내비게이션·사용 목적·ESPHome 상세·예제를 양쪽에 보완. DOC-01의 무승인 재구성 금지에 따라 기존 본문 절 순서는 유지; 독립 의미·누락 리뷰 수행 |
+| GOV-01/02, HA-02, TEST-08, CI-01/02/03/05/08/12 | PASS (로컬 정적 검사) | `python -X utf8 <central>/scripts/check_integration.py .` 통과. SHA 고정·기존 current/minimum job 유지. 원격 실행 성공을 뜻하지 않음 |
+| GOV-05 | PASS (이번 범위) | 구현과 독립 검증을 별도 collaboration 서브 에이전트에 위임. 과거 GOV-05 예외는 최초 채택 이력 |
+| 린트/Workflow | PASS | Ruff 0.17.1 check/format (75 files), actionlint 1.7.12 두 caller 및 최종 diff 검사 통과 |
+| 실제 HA current / 정확한 minimum | PASS (전체 재실행) | Python 3.14.7, HA 2026.10.2 / 2026.10.0, 플러그인 0.13.373 / 0.13.371. 별도 venv에 HA component 재귀 requirements 설치 및 양쪽 `uv pip check` 통과. current 전체 497 passed / 68.79초, minimum 단독 전체 497 passed / 66.95초. 아래 최초 실패 기록 참고 |
+| HACS-05 원격 HACS/Hassfest | TODO (원격 미실행) | 이번 변경은 로컬 작업이며 원격 CI를 실행하지 않음. 이전 실행의 PASS를 이번 metadata 변경에 재사용하지 않음. 게시 Hassfest 이미지의 categories 미지원은 독립 확인하여 공식 Core ec18d8b full SHA source 빌드 입력 지정; 실제 빌드/validator는 Docker 미실행으로 미검증 (STANDARDS.md 근거) |
+| GOV-04 중앙 현황 | 로컬 준비 / 미게시 | 최신 중앙 SHA의 별도 임시 checkout에서 hass-sip 행만 재검토 진행 중으로 준비. 기존 중앙 checkout의 사용자 수정은 보존; 원격 현황표에는 이번 결과 미반영 |
+| 기존 HA-13 / TEST-06 | EXCEPTION 유지 | 서비스 등록·untyped runtime_data 및 Assist pipeline patch는 이번 범위에서 변경하지 않음. STANDARDS.md 예외표 참고 |
+
+현재 판정: 로컬 갱신·검증 완료, 원격 검증 대기. 원격 반영·해당 커밋의 HACS/Hassfest/Tests 검증 전까지 새 기준의 최종 채택 완료를 주장하지 않습니다. 실제 PBX 하드웨어·HA UI는 미검증입니다.
+
+### 최초 실패와 독립 재검증
+
+- 최초 두 환경 동시 전체 실행은 각각 `496 passed, 1 failed` (current 73.08초 / minimum 73.77초). 신규 `test_call_sensors_preserve_completed_incoming_call`에서 PBX의 INVITE 200 응답을 기다리는 동안 timeout. 실패는 감추거나 PASS로 바꾸지 않음.
+- timeout을 늘리거나 검증을 삭제하지 않고 원인 조사. registration+RTP+sensor 33개, 독립 pure+registration+sensor 286개 / RTP+sensor 19개, 신규 플랫폼 7개 양환경, 독립 실제 HA lifecycle 등 33개를 통과.
+- 코드 변경 없이 전체 current 497개와 minimum 497개 재실행 통과. 순서 오염·동시 실행 충돌의 결정적 원인은 확인하지 못했으며, 초기 UDP 응답 timeout은 재발 감시 대상. 후속 원격 CI가 같은 실패를 보이면 실제 통신·fixture 원인을 재현해 수정해야 함.
+- 통합 지원 최소를 높이거나 테스트 skip/ignore를 추가하지 않음. 실제 하드웨어·HA UI·공식 HACS/Hassfest 빌드/원격 CI 검증은 포함하지 않음.
+
+## 2026-10-18 최초 채택 기록 (이력)
+
+아래 PASS·TODO·검증 개수·당시 기준 SHA와 담당자는 최초 채택 시점의 기록입니다. 2026-10-22 현재 판정은 위 재검토 절을 따릅니다.
 
 ## 검토 대상
 

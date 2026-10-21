@@ -27,6 +27,28 @@ from .common import reset_assist_ctx, wait_for
 from .mock_pbx import MockPbx
 
 
+# <!-- hass-standards:domain-fixtures:start -->
+# Use pytest_homeassistant_custom_component.common.MockConfigEntry for
+# mock_config_entry when the integration uses config entries.
+# Define mock_client only when an external communication client is present.
+# Mock external communication boundaries, never Home Assistant core modules.
+# Keep integration-specific fixtures below this managed block.
+# <!-- hass-standards:domain-fixtures:end -->
+
+
+@pytest.fixture(autouse=True)
+def auto_enable_custom_integrations(request: pytest.FixtureRequest) -> None:
+    """Enable SIP loading after recorder setup; keep protocol tests loop-free.
+
+    Override the shared fixture within this integration because logbook needs
+    recorder_mock before hass starts, including config-flow tests.
+    """
+    if "hass" not in request.fixturenames:
+        return
+    request.getfixturevalue("recorder_mock")
+    request.getfixturevalue("enable_custom_integrations")
+
+
 @pytest.fixture(autouse=True)
 def _reset_assist_doubles() -> Generator[None]:
     """Stop the per-test Assist pipeline doubles from common._assist_ctx()."""
