@@ -75,11 +75,8 @@ from .ivr import ASSIST_OPTION_FIELDS, IvrSession
 from .recording import (
     close_recorder_slot,
     default_recording_dir,
-    is_allowed_recording_path,
-    is_protected_config_path,
-    recording_allow_roots,
-    recording_target_error,
-    resolve_recording_path,
+    RecordingPathError,
+    validate_recording_target,
 )
 from .repairs import (
     is_register_auth_failure,
@@ -91,10 +88,9 @@ from .sip_client.sip_client import SipCallbacks, SipClient, SipConfig, SipState
 from .sip_client.trace import mask_number
 
 
-def _recording_roots(hass: HomeAssistant) -> list[str]:
-    extra = list(hass.config.allowlist_external_dirs)
-    extra.extend(hass.config.media_dirs.values())
-    return recording_allow_roots(extra)
+def _recording_extra_roots(hass: HomeAssistant) -> list[str]:
+    """Configured recording roots; pure, no filesystem access."""
+    return [*hass.config.allowlist_external_dirs, *hass.config.media_dirs.values()]
 
 
 def _fire_recording_stopped(hass: HomeAssistant, entry_id: str, data: dict) -> None:
@@ -1067,7 +1063,8 @@ async def async_register_services(hass: HomeAssistant) -> None:
         from .sip_client.audio import WavRecorderSink
         import os
 
-        roots = _recording_roots(hass)
+        extra_roots = _recording_extra_roots(hass)
+        media_dirs = list(hass.config.media_dirs.values())
         base_dir = default_recording_dir(hass.config.media_dirs, hass.config.path())
 
         for entry_id, data in targets:
@@ -1096,36 +1093,18 @@ async def async_register_services(hass: HomeAssistant) -> None:
                 if data["config"].username not in target_file:
                     target_file = f"{base}_{data['config'].username}{ext}"
 
+            # Path policy does blocking filesystem I/O (realpath, isdir, stat).
             try:
-                target_file = resolve_recording_path(str(target_file), base_dir)
-            except ValueError:
-                LOGGER.error("Recording path is empty")
-                continue
-            if not is_allowed_recording_path(target_file, roots):
-                LOGGER.error(
-                    "Recording path %s is outside allowed directories "
-                    "(allowlist_external_dirs, media_dirs, /media, /share)",
-                    target_file,
+                target_file = await hass.async_add_executor_job(
+                    validate_recording_target,
+                    str(target_file),
+                    base_dir,
+                    hass.config.config_dir,
+                    extra_roots,
+                    media_dirs,
                 )
-                continue
-            if is_protected_config_path(
-                target_file,
-                hass.config.config_dir,
-                list(hass.config.media_dirs.values()),
-            ):
-                LOGGER.error(
-                    "Recording path %s is inside the configuration directory; "
-                    "use a media directory instead",
-                    target_file,
-                )
-                continue
-            # The recorder truncates its target as soon as it starts, call or
-            # no call, so refuse anything that is not (already) a WAV file.
-            reason = await hass.async_add_executor_job(
-                recording_target_error, target_file
-            )
-            if reason:
-                LOGGER.error("Recording path %s rejected: %s", target_file, reason)
+            except RecordingPathError as err:
+                LOGGER.error("%s", err)
                 continue
 
             old = close_recorder_slot(data)

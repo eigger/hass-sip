@@ -12,6 +12,7 @@ import time
 import wave
 from unittest.mock import MagicMock, patch
 
+import pytest
 from pytest_homeassistant_custom_component.common import async_capture_events
 
 from homeassistant.core import HomeAssistant
@@ -304,6 +305,34 @@ def test_allow_roots_never_include_config_dir():
         assert recording.recording_allow_roots() == [
             root for root in recording.HAOS_RECORDING_ROOTS if os.path.isdir(root)
         ]
+
+
+def test_validate_recording_target():
+    with tempfile.TemporaryDirectory() as config_dir:
+        media = os.path.join(config_dir, "media")
+        os.makedirs(media)
+        www = os.path.join(config_dir, "www")
+        os.makedirs(www)
+        existing = os.path.join(media, "notes.wav")
+        with open(existing, "wb") as fh:
+            fh.write(b"not a wav file")
+
+        def check(raw):
+            return recording.validate_recording_target(
+                raw, media, config_dir, [media, www], [media]
+            )
+
+        ok = check("sip/rec.wav")
+        assert ok == os.path.realpath(os.path.join(media, "sip", "rec.wav"))
+        for raw in (
+            "  ",
+            "/etc/passwd.wav",
+            os.path.join(www, "evil.wav"),
+            "sip/rec.txt",
+            existing,
+        ):
+            with pytest.raises(recording.RecordingPathError):
+                check(raw)
 
 
 def test_default_recording_dir_prefers_local_media_dir():
