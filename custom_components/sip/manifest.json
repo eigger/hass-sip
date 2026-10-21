@@ -5,6 +5,11 @@
     "assist_pipeline",
     "stt"
   ],
+  "categories": [
+    "messaging_notifications.email_sms_calls",
+    "ai_voice.voice_assistants",
+    "security_safety.doorbells_intercoms"
+  ],
   "codeowners": [
     "@eigger"
   ],
