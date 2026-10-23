@@ -1,7 +1,7 @@
 # 적용한 공통 규칙
 
-- 표준: https://github.com/eigger/hass-repo-standards/tree/0ec31111a81b0ee5702f1d8a17f03616a10a5db6
-- 참조 커밋 SHA: 0ec31111a81b0ee5702f1d8a17f03616a10a5db6
+- 표준: https://github.com/eigger/hass-repo-standards/tree/b54ac48102d6e326c6929071fdc02ba8fade794e
+- 참조 커밋 SHA: b54ac48102d6e326c6929071fdc02ba8fade794e
 - 최초 채택: 2026-10-18, [PR #105](https://github.com/eigger/hass-sip/pull/105) / 병합 a960d49
 - 재검토: 2026-10-22, 공용 템플릿·CI 갱신 및 확인된 HACS Default 반영 (로컬 변경, 원격 CI 미실행)
 - profile: integration / ha
@@ -41,3 +41,9 @@
 - 중앙 [공식 Core source 경로](https://github.com/eigger/hass-repo-standards/blob/0ec31111a81b0ee5702f1d8a17f03616a10a5db6/docs/ci.md)에 따라 Validate `hassfest-core-ref`를 `ec18d8b25d1ee39aa8b85a72a170e42bee33228c`로 지정. [검토한 upstream manifest 검사](https://github.com/home-assistant/core/blob/ec18d8b25d1ee39aa8b85a72a170e42bee33228c/script/hassfest/manifest.py)에 categories 스키마가 있음.
 - 이 입력은 검토한 공식 Core Dockerfile로 빌드해 검사하는 경로이며 validator를 우회·ignore하지 않음. 통합 지원 최소나 HA 테스트 환경은 변경하지 않음.
 - 로컬 Docker daemon 미실행으로 실제 이미지 빌드·Hassfest 실행은 미검증. 원격 CI에서 확인해야 하며 PASS로 기록하지 않음. 공식 게시 이미지가 해당 스키마를 지원하면 같은 통합 변경으로 실제 재검증 후 입력을 제거. 담당 @eigger.
+
+## 2026-10-23 다운로드 배지 부분 갱신
+
+- 배지·DOC-03/05와 Validate 형식 검사기만 중앙 [`b54ac48102d6e326c6929071fdc02ba8fade794e`](https://github.com/eigger/hass-repo-standards/tree/b54ac48102d6e326c6929071fdc02ba8fade794e)를 채택합니다. 이전 기준 SHA `0ec31111a81b0ee5702f1d8a17f03616a10a5db6`의 채택 이력·예외는 보존합니다. 모든 중앙 workflow/action pin과 standards-ref는 GOV-02의 단일 기준 SHA 계약에 맞춰 갱신합니다. 중앙 diff에서 공용 workflow/action 실행 파일은 이전 기준과 동일함을 확인했습니다.
+- 대상 기본 브랜치 커밋: `6494a4b78011da79cffb046112bdf9e596ba055a`. 주 에이전트 직접 구현·자체 리뷰(GOV-05의 배지/생성물 변경 범위), 검증은 [ADOPTION_CHECKLIST.md](ADOPTION_CHECKLIST.md#2026-10-23-downloads-배지-부분-검증)에 기록합니다.
+- Downloads는 모든 릴리스 첨부 asset 다운로드 합계입니다. 사용자 지시에 따라 ZIP 배포를 도입하지 않으며 현재 HACS 소스 파일 설치는 이 수치에 집계되지 않습니다. 통합 코드·의존성·지원 최소·기존 설치 안내는 변경하지 않습니다.
