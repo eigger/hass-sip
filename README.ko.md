@@ -12,9 +12,11 @@ SIP 통화, IVR, 인터폰, 음성 Assist를 위한 Home Assistant 커스텀 통
 [![Tests](https://img.shields.io/github/actions/workflow/status/eigger/hass-sip/tests.yml?branch=main&style=flat&label=Tests)](https://github.com/eigger/hass-sip/actions/workflows/tests.yml)
 [![Validate](https://img.shields.io/github/actions/workflow/status/eigger/hass-sip/validate.yml?branch=main&style=flat&label=Validate)](https://github.com/eigger/hass-sip/actions/workflows/validate.yml)
 [![License](https://img.shields.io/github/license/eigger/hass-sip?style=flat)](LICENSE)
-[![HACS Downloads](https://img.shields.io/badge/dynamic/json?style=flat&color=41BDF5&label=HACS+Downloads&query=%24%5B%3F%28%40.full_name%3D%3D%22eigger%2Fhass-sip%22%29%5D.downloads&url=https%3A%2F%2Fdata-v2.hacs.xyz%2Fintegration%2Fdata.json)](https://www.hacs.xyz/)
+[![Downloads](https://img.shields.io/github/downloads/eigger/hass-sip/total?style=flat&color=41BDF5&label=Downloads)](https://github.com/eigger/hass-sip/releases)
 <!-- hass-standards:badges:end -->
 <!-- hass-standards:header:end -->
+
+Downloads 배지는 모든 GitHub 릴리스의 첨부 asset 다운로드 합계이며 활성 설치 수가 아닙니다.
 
 hass-sip는 PBX에 **SIP 내선으로 등록**됩니다. 이 회선을 미디어 플레이어로 노출하고, DTMF 송수신, IVR 메뉴, 통화 녹음, Home Assistant 음성 Assist 연결을 지원합니다. HACS 커스텀 통합이며 Home Assistant Core에 포함된 통합이 아닙니다.
 

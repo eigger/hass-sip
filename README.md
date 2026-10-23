@@ -12,9 +12,11 @@ A Home Assistant custom integration for SIP calls, IVR, intercoms, and Voice Ass
 [![Tests](https://img.shields.io/github/actions/workflow/status/eigger/hass-sip/tests.yml?branch=main&style=flat&label=Tests)](https://github.com/eigger/hass-sip/actions/workflows/tests.yml)
 [![Validate](https://img.shields.io/github/actions/workflow/status/eigger/hass-sip/validate.yml?branch=main&style=flat&label=Validate)](https://github.com/eigger/hass-sip/actions/workflows/validate.yml)
 [![License](https://img.shields.io/github/license/eigger/hass-sip?style=flat)](LICENSE)
-[![HACS Downloads](https://img.shields.io/badge/dynamic/json?style=flat&color=41BDF5&label=HACS+Downloads&query=%24%5B%3F%28%40.full_name%3D%3D%22eigger%2Fhass-sip%22%29%5D.downloads&url=https%3A%2F%2Fdata-v2.hacs.xyz%2Fintegration%2Fdata.json)](https://www.hacs.xyz/)
+[![Downloads](https://img.shields.io/github/downloads/eigger/hass-sip/total?style=flat&color=41BDF5&label=Downloads)](https://github.com/eigger/hass-sip/releases)
 <!-- hass-standards:badges:end -->
 <!-- hass-standards:header:end -->
+
+The Downloads badge counts GitHub release asset downloads across all releases, not active installations.
 
 hass-sip **registers as a SIP extension** on your PBX. It exposes the line as a media player, sends and receives DTMF, runs IVR menus, records calls, and can bridge a call to Home Assistant Voice Assist.
 
