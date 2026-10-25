@@ -20,9 +20,9 @@ concurrency:
 # installed HA.
 jobs:
   current:
-    uses: eigger/hass-repo-standards/.github/workflows/python-tests.yml@ca740d88b32fa5dcbc94c41fce2908450c76ed50
+    uses: eigger/hass-repo-standards/.github/workflows/python-tests.yml@v1.0.0
     with:
-      standards-ref: ca740d88b32fa5dcbc94c41fce2908450c76ed50
+      standards-ref: 44349ee5621eea5d80e5c427f7a2435d2c2491bb
       domain: sip
       python-versions: '["3.14"]'
       requirements: requirements_test.txt
@@ -31,9 +31,9 @@ jobs:
       ha-components: ffmpeg llm logbook media_source tts assist_pipeline stt
       pytest-args: tests/components/sip/ -v
   minimum-ha:
-    uses: eigger/hass-repo-standards/.github/workflows/python-tests.yml@ca740d88b32fa5dcbc94c41fce2908450c76ed50
+    uses: eigger/hass-repo-standards/.github/workflows/python-tests.yml@v1.0.0
     with:
-      standards-ref: ca740d88b32fa5dcbc94c41fce2908450c76ed50
+      standards-ref: 44349ee5621eea5d80e5c427f7a2435d2c2491bb
       domain: sip
       python-versions: '["3.14"]'
       requirements: requirements_test_min.txt

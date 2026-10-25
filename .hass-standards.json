@@ -55,5 +55,10 @@
     ],
     "integration_type": "hub",
     "source": "README.md sections What it is for and Features; docs/use-cases.md and docs/examples.md. Primary: SIP PBX inbound/outbound calls, DTMF and TTS calls (messaging_notifications.email_sms_calls). Secondary: multi-turn Home Assistant Voice Assist bridge (ai_voice.voice_assistants), and SIP door-station auto-answer/intercom use (security_safety.doorbells_intercoms). Existing hub type retained; selection is based on documented use, not entity platforms."
+  },
+  "standards": {
+    "kind": "release",
+    "tag": "v1.0.0",
+    "resolved_sha": "44349ee5621eea5d80e5c427f7a2435d2c2491bb"
   }
 }
