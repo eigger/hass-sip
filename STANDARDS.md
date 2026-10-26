@@ -1,9 +1,9 @@
 # 적용한 공통 규칙
 
-- 표준: https://github.com/eigger/hass-repo-standards/tree/v1.0.1
-- 참조 커밋 SHA: c9b4553184f9c27bdbe7bf8564eaf10153e9575b
-- Standards release: v1.0.1
-- Resolved standards SHA: c9b4553184f9c27bdbe7bf8564eaf10153e9575b
+- 표준: https://github.com/eigger/hass-repo-standards/tree/v1.1.2
+- 참조 커밋 SHA: df9798509d9228247ec32efb313ec7b687b5b152
+- Standards release: v1.1.2
+- Resolved standards SHA: df9798509d9228247ec32efb313ec7b687b5b152
 - 최초 채택: 2026-10-18, [PR #105](https://github.com/eigger/hass-sip/pull/105) / 병합 a960d49
 - 재검토: 2026-10-22, 공용 템플릿·CI 갱신 및 확인된 HACS Default 반영 (로컬 변경, 원격 CI 미실행)
 - profile: integration / ha
