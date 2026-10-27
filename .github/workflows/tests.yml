@@ -25,7 +25,6 @@ jobs:
       domain: sip
       python-versions: '["3.14"]'
       requirements: requirements_test.txt
-      expected-ha-version: '2026.10.2'
       test-profile: ha
       ha-components: ffmpeg llm logbook media_source tts assist_pipeline stt
       pytest-args: tests/components/sip/ -v
