@@ -3,5 +3,4 @@
 # homeassistant==2026.10.2 and its own pytest/pytest-asyncio; they are not
 # listed separately. Pinning homeassistant here does not declare or raise the
 # minimum supported HA (hacs.json); see requirements_test_min.txt.
-homeassistant==2026.10.2
 pytest-homeassistant-custom-component==0.13.373
