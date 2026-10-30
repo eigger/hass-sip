@@ -1,4 +1,4 @@
-# Shared standards: eigger/hass-repo-standards@0c1592977591ecba077a4666d699840062711201
+# Shared standards; upstream action SHAs verified 2026-10-17.
 name: Standards
 'on':
   push:
