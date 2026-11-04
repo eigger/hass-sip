@@ -16,6 +16,8 @@ SIP 통화, IVR, 인터폰, 음성 Assist를 위한 Home Assistant 커스텀 통
 <!-- hass-standards:badges:end -->
 <!-- hass-standards:header:end -->
 
+![SIP](custom_components/sip/brand/logo.png)
+
 Downloads 배지는 현재 GitHub 릴리스의 첨부 asset 다운로드 합계이며 활성 설치 수가 아닙니다.
 
 hass-sip는 PBX에 **SIP 내선으로 등록**됩니다. 이 회선을 미디어 플레이어로 노출하고, DTMF 송수신, IVR 메뉴, 통화 녹음, Home Assistant 음성 Assist 연결을 지원합니다. HACS 커스텀 통합이며 Home Assistant Core에 포함된 통합이 아닙니다.
