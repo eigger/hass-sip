@@ -16,6 +16,8 @@ A Home Assistant custom integration for SIP calls, IVR, intercoms, and Voice Ass
 <!-- hass-standards:badges:end -->
 <!-- hass-standards:header:end -->
 
+![SIP](custom_components/sip/brand/logo.png)
+
 The Downloads badge counts GitHub release asset downloads of the current release, not active installations.
 
 hass-sip **registers as a SIP extension** on your PBX. It exposes the line as a media player, sends and receives DTMF, runs IVR menus, records calls, and can bridge a call to Home Assistant Voice Assist.
