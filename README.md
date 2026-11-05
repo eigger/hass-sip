@@ -1,5 +1,5 @@
 <!-- hass-standards:header:start -->
-# SIP Client Home Assistant Integration (hass-sip)
+# SIP Client for Home Assistant
 
 A Home Assistant custom integration for SIP calls, IVR, intercoms, and Voice Assist.
 
@@ -26,7 +26,7 @@ Transport is **SIP over UDP** with **G.711 (PCMU/PCMA) and G.722**. TLS, SRTP, a
 |---|---|---|
 | [Setup & Quick Start](docs/setup.md) | [Examples](docs/examples.md) | [Services, entities, events](docs/services.md) |
 | [PBX compatibility](docs/setup.md#pbx-compatibility) | [Security](docs/security.md) | [Troubleshooting](docs/troubleshooting.md) |
-| [ESPHome Component](#esphome-external-component) | [Intercom example](docs/examples.md#intercom--auto-answer-mode) | [espcomponents repo](https://github.com/eigger/espcomponents/tree/master/components/sip_client#readme) |
+| [ESPHome Component](#esphome-external-component) | [Intercom example](docs/examples.md#intercom--auto-answer-mode) | [Documentation](#documentation-english) |
 
 ## What it is for
 
@@ -37,19 +37,20 @@ Transport is **SIP over UDP** with **G.711 (PCMU/PCMA) and G.722**. TLS, SRTP, a
 | Intercom | Door station rings, hass-sip auto-answers, optional DTMF opens the gate | [Use cases](docs/use-cases.md#intercom-auto-answer) |
 | Home Assistant calls you | An automation dials your phone and speaks a TTS message | [Use cases](docs/use-cases.md#home-assistant-calls-you-with-tts) |
 
-```yaml
-action: sip.start_assist
-target:
-  entity_id: media_player.phone_line
-```
-
-![Phone dials Home Assistant, Assist turns on a light, then sets brightness — storyboard](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/demo/phone-assist.gif)
-
 Door locks: [allow-list + PIN](docs/security.md#door-locks-and-other-security-intents).
+
+## Features
+
+- `media_player` line: TTS or audio URLs into the active call
+- Services: `sip.dial`, `sip.hangup`, `sip.answer`, `sip.send_dtmf`, `sip.start_recording`, `sip.stop_recording`, `sip.start_assist` (multi-turn)
+- IVR trees with DTMF, PIN, and Home Assistant service actions
+- G.722 (16 kHz) when the far end offers it, otherwise G.711; the codec order (or G.711-only) is selectable under **Configure** on the integration
+- Sensors: registration, last caller, codec, audio path (`none` / `no_rx` / `no_tx` / `bidirectional`)
 
 ## Requirements
 
-Home Assistant 2026.10.0 or newer (`hacs.json`) and a SIP PBX on the same LAN or VPN. This is a HACS custom integration, not part of Home Assistant Core.
+- **Home Assistant:** 2026.10.0 or later.
+- **SIP PBX:** A PBX on the same LAN or VPN, such as FreePBX with `chan_pjsip`.
 
 ## Installation
 
@@ -57,11 +58,13 @@ Home Assistant 2026.10.0 or newer (`hacs.json`) and a SIP PBX on the same LAN or
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=eigger&repository=hass-sip)
 <!-- hass-standards:installation:end -->
 
-1. **HACS**: Search for **SIP Client** (`eigger/hass-sip`) in HACS and download it from the default repository list, or
-   **Manual**: Copy the `custom_components/sip` directory into your Home Assistant `custom_components` folder.
-2. Restart Home Assistant.
+1. Click the badge above to open the repository in Marketplace.
+2. If you need to add it yourself, go to **Settings → Marketplace → Add from link** and enter <https://github.com/eigger/hass-sip>. Connect GitHub if prompted.
+3. Select **Install**. Restart Home Assistant if prompted, then continue to [Configuration](#configuration).
 
-## Get started
+<a name="get-started"></a>
+
+## Configuration
 
 On the same LAN as FreePBX:
 
@@ -72,32 +75,35 @@ On the same LAN as FreePBX:
 
 Field list, firewall notes, and the pjsip snippet: **[Setup](docs/setup.md)**.
 
-## Features
+## Examples
 
-- `media_player` line: TTS or audio URLs into the active call
-- Services: `sip.dial`, `sip.hangup`, `sip.answer`, `sip.send_dtmf`, `sip.start_recording`, `sip.stop_recording`, `sip.start_assist` (multi-turn)
-- IVR trees with DTMF, PIN, and Home Assistant service actions
-- G.722 (16 kHz) when the far end offers it, otherwise G.711; the codec order (or G.711-only) is selectable under **Configure** on the integration
-- Sensors: registration, last caller, codec, audio path (`none` / `no_rx` / `no_tx` / `bidirectional`)
+```yaml
+action: sip.start_assist
+target:
+  entity_id: media_player.phone_line
+```
+
+![Phone dials Home Assistant, Assist turns on a light, then sets brightness — storyboard](https://raw.githubusercontent.com/eigger/hass-sip/main/docs/demo/phone-assist.gif)
 
 ### Keypad/IVR, intercom, and outgoing TTS
 
 - **Keypad control**: Any phone on the PBX can dial the extension and press digits to run Home Assistant services from an IVR menu ([example](docs/examples.md#control-home-assistant-with-dtmf-any-phone)).
 - **Intercom auto-answer**: Set `{"102": {"name": "Front Doorbell", "auto_answer": true}}` in `sip_contacts.json` to answer a door station immediately ([details](docs/examples.md#intercom--auto-answer-mode)).
 - **Outgoing TTS**: An automation dials a phone, speaks the message after the call is answered, then hangs up (`sip.dial`'s `message`, [example](docs/examples.md#example-announce-a-tts-message-then-hang-up)).
-- **ESPHome**: For DIY ESP32 SIP intercoms and doorbells, see [espcomponents](https://github.com/eigger/espcomponents/tree/master/components/sip_client#readme).
 
-## ESPHome External Component
+## ESPHome external component
 
 Looking to build a DIY physical endpoint — such as an ESP32 intercom, doorbell, or paging speaker?
 
 Check out the ESPHome external component: [**`sip_client` in eigger/espcomponents**](https://github.com/eigger/espcomponents/tree/master/components/sip_client#readme).
 
-It registers an ESP32 as a SIP extension on your PBX with support for ESPHome standard `microphone` and `speaker` (I2S audio), G.711 / wideband G.722 codecs, DTMF, and full or half-duplex modes. Full configuration, hardware wiring, and YAML examples are documented in the [espcomponents repository](https://github.com/eigger/espcomponents/tree/master/components/sip_client#readme).
+It registers an ESP32 as a SIP extension on your PBX with support for ESPHome standard `microphone` and `speaker` (I2S audio), G.711 / wideband G.722 codecs, DTMF, and full or half-duplex modes. Full configuration, hardware wiring, and YAML examples are documented in the component guide above.
 
 ## Security
 
 Run hass-sip on the same LAN (or VPN) as the PBX. Do not port-forward UDP 5060 or RTP (`local_rtp_port`, default 7078). For Assist that can unlock a door, use allow-list + DTMF PIN + a dedicated pipeline — **[Security](docs/security.md)**.
+
+<a name="development"></a>
 
 ## Documentation (English)
 
@@ -107,12 +113,8 @@ Run hass-sip on the same LAN (or VPN) as the PBX. Do not port-forward UDP 5060 o
 - [Examples](docs/examples.md)
 - [Security](docs/security.md)
 - [Troubleshooting](docs/troubleshooting.md)
-- [ESPHome external component](https://github.com/eigger/espcomponents/tree/master/components/sip_client#readme)
 - [Shared development rules](STANDARDS.md) · [Adoption checklist](ADOPTION_CHECKLIST.md)
-
-## Development
-
-[Contributing](CONTRIBUTING.md) covers the local test setup, ruff, and the real Home Assistant test layout (`tests/components/sip/`). This repository follows [hass-repo-standards](https://github.com/eigger/hass-repo-standards); see [STANDARDS.md](STANDARDS.md).
+- [Contributing and tests](CONTRIBUTING.md)
 
 <!-- hass-standards:support:start -->
 ## Support
