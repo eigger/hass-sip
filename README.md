@@ -103,6 +103,8 @@ It registers an ESP32 as a SIP extension on your PBX with support for ESPHome st
 
 Run hass-sip on the same LAN (or VPN) as the PBX. Do not port-forward UDP 5060 or RTP (`local_rtp_port`, default 7078). For Assist that can unlock a door, use allow-list + DTMF PIN + a dedicated pipeline — **[Security](docs/security.md)**.
 
+<a name="development"></a>
+
 ## Documentation (English)
 
 - [Setup & Quick Start](docs/setup.md) · [PBX compatibility](docs/setup.md#pbx-compatibility)
@@ -112,10 +114,7 @@ Run hass-sip on the same LAN (or VPN) as the PBX. Do not port-forward UDP 5060 o
 - [Security](docs/security.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Shared development rules](STANDARDS.md) · [Adoption checklist](ADOPTION_CHECKLIST.md)
-
-## Development
-
-[Contributing](CONTRIBUTING.md) covers the local test setup, ruff, and the real Home Assistant test layout (`tests/components/sip/`). This repository follows [hass-repo-standards](https://github.com/eigger/hass-repo-standards); see [STANDARDS.md](STANDARDS.md).
+- [Contributing and tests](CONTRIBUTING.md)
 
 <!-- hass-standards:support:start -->
 ## Support

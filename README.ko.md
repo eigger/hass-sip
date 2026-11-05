@@ -107,6 +107,8 @@ ESP32를 PBX의 SIP 내선으로 등록하며 ESPHome 표준 `microphone`과 `sp
 
 PBX와 같은 LAN(또는 VPN)에서 실행하세요. UDP 5060이나 RTP(`local_rtp_port`, 기본 7078)를 포트 포워딩하지 마세요. 도어락을 제어할 수 있는 Assist는 허용 목록 + DTMF PIN + 전용 파이프라인을 사용하세요. 자세한 내용은 [보안(영어)](docs/security.md)을 참고하세요.
 
+<a name="개발"></a>
+
 ## 문서 (영어)
 
 - [설정 및 빠른 시작](docs/setup.md) · [PBX 호환성](docs/setup.md#pbx-compatibility)
@@ -116,10 +118,7 @@ PBX와 같은 LAN(또는 VPN)에서 실행하세요. UDP 5060이나 RTP(`local_r
 - [보안](docs/security.md)
 - [문제 해결](docs/troubleshooting.md)
 - [공통 개발 규칙 적용 기록](STANDARDS.md) · [적용 체크리스트](ADOPTION_CHECKLIST.md)
-
-## 개발
-
-로컬 테스트·ruff·실제 HA 테스트 구조는 [CONTRIBUTING(영어)](CONTRIBUTING.md)을 참고하세요. 이 리포는 [hass-repo-standards](https://github.com/eigger/hass-repo-standards)를 따르며 [STANDARDS.md](STANDARDS.md)에 기록합니다.
+- [기여와 테스트](CONTRIBUTING.md)
 
 <!-- hass-standards:support:start -->
 ## 지원
