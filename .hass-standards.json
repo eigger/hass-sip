@@ -16,7 +16,7 @@
   },
   "hacs_default_evidence": "https://raw.githubusercontent.com/hacs/default/master/integration (eigger/hass-sip listed; verified 2026-10-22)",
   "readme": {
-    "title": "SIP Client Home Assistant Integration (hass-sip)",
+    "title": "SIP Client for Home Assistant",
     "descriptions": {
       "en": "A Home Assistant custom integration for SIP calls, IVR, intercoms, and Voice Assist.",
       "ko": "SIP 통화, IVR, 인터폰, 음성 Assist를 위한 Home Assistant 커스텀 통합입니다."

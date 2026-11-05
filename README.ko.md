@@ -1,5 +1,5 @@
 <!-- hass-standards:header:start -->
-# SIP Client Home Assistant Integration (hass-sip)
+# SIP Client for Home Assistant
 
 SIP 통화, IVR, 인터폰, 음성 Assist를 위한 Home Assistant 커스텀 통합입니다.
 
@@ -17,8 +17,6 @@ SIP 통화, IVR, 인터폰, 음성 Assist를 위한 Home Assistant 커스텀 통
 <!-- hass-standards:header:end -->
 
 ![SIP](custom_components/sip/brand/logo.png)
-
-Downloads 배지는 현재 GitHub 릴리스의 첨부 asset 다운로드 합계이며 활성 설치 수가 아닙니다.
 
 hass-sip는 PBX에 **SIP 내선으로 등록**됩니다. 이 회선을 미디어 플레이어로 노출하고, DTMF 송수신, IVR 메뉴, 통화 녹음, Home Assistant 음성 Assist 연결을 지원합니다. HACS 커스텀 통합이며 Home Assistant Core에 포함된 통합이 아닙니다.
 
@@ -51,10 +49,10 @@ hass-sip는 PBX에 **SIP 내선으로 등록**됩니다. 이 회선을 미디어
 - 상대가 제안하면 G.722(16 kHz), 아니면 G.711. 코덱 순서(또는 G.711 전용)는 통합의 **구성(Configure)** 에서 선택
 - 센서: 등록 상태, 마지막 발신자, 코덱, 오디오 경로(`none` / `no_rx` / `no_tx` / `bidirectional`)
 
-## 최소 요구사항
+## 요구사항
 
-- Home Assistant 2026.10.0 이상 (`hacs.json` 기준)
-- 같은 LAN(또는 VPN)의 SIP PBX (예: FreePBX chan_pjsip)
+- **Home Assistant:** 2026.10.0 이상.
+- **SIP PBX:** 같은 LAN 또는 VPN의 PBX(예: FreePBX의 `chan_pjsip`).
 
 ## 설치
 
@@ -62,10 +60,13 @@ hass-sip는 PBX에 **SIP 내선으로 등록**됩니다. 이 회선을 미디어
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=eigger&repository=hass-sip)
 <!-- hass-standards:installation:end -->
 
-1. **HACS**: HACS 기본 저장소 목록에서 **SIP Client**(`eigger/hass-sip`)를 검색해 다운로드하거나, **수동**으로 `custom_components/sip` 폴더를 Home Assistant의 `custom_components`에 복사합니다.
-2. Home Assistant를 재시작합니다.
+1. 위 배지를 클릭해 마켓플레이스에서 저장소를 엽니다.
+2. 저장소를 직접 추가하려면 **설정 → 마켓플레이스 → 링크에서 추가**에서 <https://github.com/eigger/hass-sip>을 입력합니다. 안내가 표시되면 GitHub 계정을 연결합니다.
+3. **설치**를 선택합니다. 재시작 안내가 표시되면 Home Assistant를 재시작합니다. 설치가 끝나면 [설정](#설정)으로 이동합니다.
 
-## 빠른 설정
+<a name="빠른-설정"></a>
+
+## 설정
 
 FreePBX와 같은 LAN에서:
 

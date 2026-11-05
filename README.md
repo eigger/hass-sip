@@ -1,5 +1,5 @@
 <!-- hass-standards:header:start -->
-# SIP Client Home Assistant Integration (hass-sip)
+# SIP Client for Home Assistant
 
 A Home Assistant custom integration for SIP calls, IVR, intercoms, and Voice Assist.
 
@@ -49,7 +49,8 @@ Door locks: [allow-list + PIN](docs/security.md#door-locks-and-other-security-in
 
 ## Requirements
 
-Home Assistant 2026.10.0 or newer (`hacs.json`) and a SIP PBX on the same LAN or VPN. This is a HACS custom integration, not part of Home Assistant Core.
+- **Home Assistant:** 2026.10.0 or later.
+- **SIP PBX:** A PBX on the same LAN or VPN, such as FreePBX with `chan_pjsip`.
 
 ## Installation
 
@@ -57,11 +58,13 @@ Home Assistant 2026.10.0 or newer (`hacs.json`) and a SIP PBX on the same LAN or
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=eigger&repository=hass-sip)
 <!-- hass-standards:installation:end -->
 
-1. **HACS**: Search for **SIP Client** (`eigger/hass-sip`) in HACS and download it from the default repository list, or
-   **Manual**: Copy the `custom_components/sip` directory into your Home Assistant `custom_components` folder.
-2. Restart Home Assistant.
+1. Click the badge above to open the repository in Marketplace.
+2. If you need to add it yourself, go to **Settings → Marketplace → Add from link** and enter <https://github.com/eigger/hass-sip>. Connect GitHub if prompted.
+3. Select **Install**. Restart Home Assistant if prompted, then continue to [Configuration](#configuration).
 
-## Get started
+<a name="get-started"></a>
+
+## Configuration
 
 On the same LAN as FreePBX:
 
@@ -87,7 +90,7 @@ Field list, firewall notes, and the pjsip snippet: **[Setup](docs/setup.md)**.
 - **Outgoing TTS**: An automation dials a phone, speaks the message after the call is answered, then hangs up (`sip.dial`'s `message`, [example](docs/examples.md#example-announce-a-tts-message-then-hang-up)).
 - **ESPHome**: For DIY ESP32 SIP intercoms and doorbells, see [espcomponents](https://github.com/eigger/espcomponents/tree/master/components/sip_client#readme).
 
-## ESPHome External Component
+## ESPHome external component
 
 Looking to build a DIY physical endpoint — such as an ESP32 intercom, doorbell, or paging speaker?
 
