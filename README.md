@@ -18,8 +18,6 @@ A Home Assistant custom integration for SIP calls, IVR, intercoms, and Voice Ass
 
 ![SIP](custom_components/sip/brand/logo.png)
 
-The Downloads badge counts GitHub release asset downloads of the current release, not active installations.
-
 hass-sip **registers as a SIP extension** on your PBX. It exposes the line as a media player, sends and receives DTMF, runs IVR menus, records calls, and can bridge a call to Home Assistant Voice Assist.
 
 Transport is **SIP over UDP** with **G.711 (PCMU/PCMA) and G.722**. TLS, SRTP, and Opus are not implemented. **Internet exposure is unsupported.** Unverified PBXs are not labelled "supported".
