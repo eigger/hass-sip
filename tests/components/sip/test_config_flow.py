@@ -19,6 +19,7 @@ from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType, InvalidData
 
+from custom_components.sip.config_flow import _error_key
 from custom_components.sip.const import (
     CONF_ASSIST_USER,
     CONF_CODEC_PREFERENCE,
