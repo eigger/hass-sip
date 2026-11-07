@@ -67,8 +67,10 @@ def _build_schema(
 ) -> vol.Schema:
     """Build the account form schema.
 
-    When `defaults` is given (editing an existing entry), every field is
+    When `defaults` is given (editing an existing entry), every field in it is
     pre-filled with its current value instead of the fresh-entry defaults.
+    Reconfigure leaves the clearable text fields out of `defaults` and refills
+    them as suggested values instead, so the user can empty them.
     The password is a masked selector. Reconfigure always passes
     ``omit_password_default=True`` so a failed retry can still submit with a
     blank password and keep the stored secret.
