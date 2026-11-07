@@ -295,6 +295,7 @@ class MockPbx:
         return {
             403: "Forbidden",
             404: "Not Found",
+            410: "Gone",
             423: "Interval Too Brief",
             480: "Temporarily Unavailable",
             486: "Busy Here",

@@ -154,15 +154,29 @@ def _suggested_rtp_port(hass: HomeAssistant) -> int:
     return port
 
 
+# Optional free-text fields. The form refills them as suggested values (not
+# defaults) so the user can clear one; an omitted key then means "cleared".
+_CLEARABLE_FIELDS = (
+    CONF_AUTH_USERNAME,
+    CONF_DOMAIN,
+    CONF_CALLER_ID,
+    CONF_OUTBOUND_PROXY,
+)
+
+
 def merge_reconfigure_data(
     entry_data: Mapping[str, Any], user_input: dict[str, Any]
 ) -> dict[str, Any]:
     """Apply form fields onto existing entry data.
 
     Reconfigure must not drop keys the form does not collect (``assist_user``).
+    A clearable text field left out of the form was emptied by the user.
     An omitted or blank password keeps the stored secret.
     """
     merged = {**entry_data, **user_input}
+    for key in _CLEARABLE_FIELDS:
+        if key not in user_input:
+            merged.pop(key, None)
     if not str(user_input.get(CONF_PASSWORD) or "").strip():
         if CONF_PASSWORD in entry_data:
             merged[CONF_PASSWORD] = entry_data[CONF_PASSWORD]
@@ -350,12 +364,20 @@ class SipConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     reconfigure_entry, data=candidate
                 )
 
+        current = user_input or reconfigure_entry.data
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=_build_schema(
-                reconfigure_entry.data.get(CONF_LOCAL_RTP_PORT, DEFAULT_LOCAL_RTP_PORT),
-                defaults=user_input or reconfigure_entry.data,
-                omit_password_default=True,
+            data_schema=self.add_suggested_values_to_schema(
+                _build_schema(
+                    reconfigure_entry.data.get(
+                        CONF_LOCAL_RTP_PORT, DEFAULT_LOCAL_RTP_PORT
+                    ),
+                    defaults={
+                        k: v for k, v in current.items() if k not in _CLEARABLE_FIELDS
+                    },
+                    omit_password_default=True,
+                ),
+                {k: v for k, v in current.items() if k in _CLEARABLE_FIELDS},
             ),
             errors=errors,
         )
