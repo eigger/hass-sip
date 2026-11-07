@@ -48,7 +48,8 @@
     },
     "error": {
       "cannot_connect": "Failed to connect to the SIP server. Please check the host and port.",
-      "invalid_auth": "Invalid username or password. Please verify your credentials."
+      "invalid_auth": "Invalid username or password. Please verify your credentials.",
+      "unknown_user": "Unknown SIP user. The server is reachable but does not know this username. Check the extension number, SIP domain and auth username."
     },
     "abort": {
       "already_configured": "This username and server combination is already configured.",

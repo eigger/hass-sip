@@ -13,6 +13,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import voluptuous as vol
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
@@ -96,6 +97,7 @@ async def test_user_flow_creates_entry(
     [
         ({"password": "other-secret"}, "invalid_auth"),
         ({"force_code": 403}, "invalid_auth"),
+        ({"force_code": 404}, "unknown_user"),
         ({"force_code": 503}, "cannot_connect"),
     ],
 )
@@ -118,6 +120,14 @@ async def test_user_flow_errors_then_recovers(
     )
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": error}
+    # The submitted values are kept so the user does not retype them.
+    suggested = {
+        str(k): k.default()
+        for k in result["data_schema"].schema
+        if k.default is not vol.UNDEFINED
+    }
+    assert suggested["username"] == entry_data["username"]
+    assert suggested["server"] == entry_data["server"]
 
     # The same flow can be retried once the PBX/credentials are fixed.
     for key, value in good.items():
