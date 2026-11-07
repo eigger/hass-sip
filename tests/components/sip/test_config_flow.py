@@ -19,6 +19,7 @@ from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType, InvalidData
 
+from custom_components.sip.config_flow import _error_key
 from custom_components.sip.const import (
     CONF_ASSIST_USER,
     CONF_CODEC_PREFERENCE,
@@ -59,6 +60,28 @@ def _schema_default(result, key: str) -> Any:
     raise KeyError(key)
 
 
+def _schema_suggested(result, key: str) -> Any:
+    for marker in result["data_schema"].schema:
+        if str(marker) == key:
+            return (marker.description or {}).get("suggested_value")
+    raise KeyError(key)
+
+
+@pytest.mark.parametrize(
+    ("msg", "key"),
+    [
+        ("401 Unauthorized", "invalid_auth"),
+        ("404 Not Found", "unknown_user"),
+        ("410 Gone", "unknown_user"),
+        ("503 Service Unavailable", "cannot_connect"),
+        ("timeout", "cannot_connect"),
+        ("start failed: bind 127.0.0.1:4040 failed", "cannot_connect"),
+    ],
+)
+def test_error_key_mapping(msg: str, key: str) -> None:
+    assert _error_key(msg) == key
+
+
 async def test_user_flow_creates_entry(
     hass: HomeAssistant,
     mock_pbx: MockPbx,
@@ -96,6 +119,7 @@ async def test_user_flow_creates_entry(
     [
         ({"password": "other-secret"}, "invalid_auth"),
         ({"force_code": 403}, "invalid_auth"),
+        ({"force_code": 404}, "unknown_user"),
         ({"force_code": 503}, "cannot_connect"),
     ],
 )
@@ -118,6 +142,10 @@ async def test_user_flow_errors_then_recovers(
     )
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": error}
+    # The submitted values are kept, but the password is never echoed back.
+    assert _schema_suggested(result, CONF_USERNAME) == entry_data[CONF_USERNAME]
+    assert _schema_suggested(result, CONF_SERVER) == entry_data[CONF_SERVER]
+    assert _schema_suggested(result, CONF_PASSWORD) is None
 
     # The same flow can be retried once the PBX/credentials are fixed.
     for key, value in good.items():

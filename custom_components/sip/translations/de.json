@@ -48,7 +48,8 @@
     },
     "error": {
       "cannot_connect": "Verbindung zum SIP-Server fehlgeschlagen. Bitte überprüfe Host und Port.",
-      "invalid_auth": "Ungültiger Benutzername oder Passwort. Bitte überprüfe deine Zugangsdaten."
+      "invalid_auth": "Ungültiger Benutzername oder Passwort. Bitte überprüfe deine Zugangsdaten.",
+      "unknown_user": "Unbekannter SIP-Benutzer. Der Server ist erreichbar, kennt diesen Benutzernamen aber nicht. Prüfe Nebenstellennummer, SIP-Domain und Auth-Benutzername."
     },
     "abort": {
       "already_configured": "Diese Kombination aus Benutzername und Server ist bereits konfiguriert.",
