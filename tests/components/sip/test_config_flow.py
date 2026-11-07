@@ -13,6 +13,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import voluptuous as vol
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
@@ -22,6 +23,7 @@ from homeassistant.data_entry_flow import FlowResultType, InvalidData
 from custom_components.sip.config_flow import _error_key
 from custom_components.sip.const import (
     CONF_ASSIST_USER,
+    CONF_CALLER_ID,
     CONF_CODEC_PREFERENCE,
     CONF_LOCAL_RTP_PORT,
     CONF_MAX_CALL_DURATION,
@@ -57,6 +59,13 @@ def _schema_default(result, key: str) -> Any:
     for marker in result["data_schema"].schema:
         if str(marker) == key:
             return marker.default()
+    raise KeyError(key)
+
+
+def _schema_default_is_undefined(result, key: str) -> bool:
+    for marker in result["data_schema"].schema:
+        if str(marker) == key:
+            return marker.default is vol.UNDEFINED
     raise KeyError(key)
 
 
@@ -120,6 +129,7 @@ async def test_user_flow_creates_entry(
         ({"password": "other-secret"}, "invalid_auth"),
         ({"force_code": 403}, "invalid_auth"),
         ({"force_code": 404}, "unknown_user"),
+        ({"force_code": 410}, "unknown_user"),
         ({"force_code": 503}, "cannot_connect"),
     ],
 )
@@ -265,6 +275,64 @@ async def test_reconfigure_rejects_other_account(
     assert result["reason"] == "unique_id_mismatch"
     assert entry.data == entry_data
     assert mock_pbx.registers == []
+
+
+async def test_reconfigure_can_clear_optional_field(
+    hass: HomeAssistant,
+    mock_pbx: MockPbx,
+    entry_data: dict[str, Any],
+    mock_setup_entry: AsyncMock,
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1001@127.0.0.1",
+        data={**entry_data, CONF_CALLER_ID: "Front Desk"},
+    )
+    entry.add_to_hass(hass)
+
+    result = await entry.start_reconfigure_flow(hass)
+    assert _schema_suggested(result, CONF_CALLER_ID) == "Front Desk"
+    assert _schema_default_is_undefined(result, CONF_CALLER_ID)
+
+    # The frontend omits an emptied field; it must not come back as a default.
+    form = {
+        k: v for k, v in entry_data.items() if k not in (CONF_PASSWORD, CONF_CALLER_ID)
+    }
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], form)
+
+    assert result["type"] is FlowResultType.ABORT
+    assert CONF_CALLER_ID not in entry.data
+
+
+async def test_reconfigure_clear_survives_failed_retry(
+    hass: HomeAssistant,
+    mock_pbx: MockPbx,
+    entry_data: dict[str, Any],
+    mock_setup_entry: AsyncMock,
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="1001@127.0.0.1",
+        data={**entry_data, CONF_CALLER_ID: "Front Desk"},
+    )
+    entry.add_to_hass(hass)
+    form = {
+        k: v for k, v in entry_data.items() if k not in (CONF_PASSWORD, CONF_CALLER_ID)
+    }
+
+    mock_pbx.force_code = 503
+    result = await entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], form)
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "cannot_connect"}
+    assert _schema_suggested(result, CONF_CALLER_ID) is None
+    assert _schema_default_is_undefined(result, CONF_CALLER_ID)
+    assert entry.data[CONF_CALLER_ID] == "Front Desk"
+
+    mock_pbx.force_code = None
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], form)
+    assert result["type"] is FlowResultType.ABORT
+    assert CONF_CALLER_ID not in entry.data
 
 
 async def test_reconfigure_invalid_auth_shows_error(

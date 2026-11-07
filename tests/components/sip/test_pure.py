@@ -6810,6 +6810,24 @@ def test_reconfigure_preserves_assist_user():
     assert merged["username"] == "1001"
 
 
+def test_reconfigure_drops_clearable_fields_missing_from_form():
+    merged = config_flow.merge_reconfigure_data(
+        {
+            "username": "1001",
+            "caller_id": "Front Desk",
+            "domain": "pbx.example.com",
+            "outbound_proxy": "proxy.example.com",
+            "authentication_username": "auth1",
+            "assist_user": "keep-me",
+        },
+        {"username": "1001", "domain": "pbx.example.com"},
+    )
+    assert merged["domain"] == "pbx.example.com"
+    for key in ("caller_id", "outbound_proxy", "authentication_username"):
+        assert key not in merged
+    assert merged["assist_user"] == "keep-me"
+
+
 def test_reconfigure_keeps_password_when_blank():
     merged = config_flow.merge_reconfigure_data(
         {
