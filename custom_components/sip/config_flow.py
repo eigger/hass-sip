@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 from collections.abc import Mapping
 import asyncio
+import re
 import voluptuous as vol
 
 from homeassistant import config_entries
@@ -255,10 +256,16 @@ async def async_validate_sip_registration(
 
 
 def _error_key(error_msg: str) -> str:
-    """Map a registration failure message to a config flow error key."""
-    if any(x in error_msg for x in ("401", "403", "407")):
+    """Map a registration failure message to a config flow error key.
+
+    Only a leading SIP status code counts; other messages (timeouts, start
+    errors) may contain digits that merely look like one.
+    """
+    match = re.match(r"\s*(\d{3})\b", error_msg)
+    code = int(match.group(1)) if match else 0
+    if code in (401, 403, 407):
         return "invalid_auth"
-    if any(x in error_msg for x in ("404", "410")):
+    if code in (404, 410):
         return "unknown_user"
     return "cannot_connect"
 
@@ -304,8 +311,10 @@ class SipConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=_build_schema(
-                _suggested_rtp_port(self.hass), defaults=user_input
+            data_schema=self.add_suggested_values_to_schema(
+                _build_schema(_suggested_rtp_port(self.hass)),
+                # Refill what was typed, but never echo the password back.
+                {k: v for k, v in (user_input or {}).items() if k != CONF_PASSWORD},
             ),
             errors=errors,
         )

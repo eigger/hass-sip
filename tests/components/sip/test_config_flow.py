@@ -13,7 +13,6 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-import voluptuous as vol
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
@@ -58,6 +57,28 @@ def _schema_default(result, key: str) -> Any:
         if str(marker) == key:
             return marker.default()
     raise KeyError(key)
+
+
+def _schema_suggested(result, key: str) -> Any:
+    for marker in result["data_schema"].schema:
+        if str(marker) == key:
+            return (marker.description or {}).get("suggested_value")
+    raise KeyError(key)
+
+
+@pytest.mark.parametrize(
+    ("msg", "key"),
+    [
+        ("401 Unauthorized", "invalid_auth"),
+        ("404 Not Found", "unknown_user"),
+        ("410 Gone", "unknown_user"),
+        ("503 Service Unavailable", "cannot_connect"),
+        ("timeout", "cannot_connect"),
+        ("start failed: bind 127.0.0.1:4040 failed", "cannot_connect"),
+    ],
+)
+def test_error_key_mapping(msg: str, key: str) -> None:
+    assert _error_key(msg) == key
 
 
 async def test_user_flow_creates_entry(
@@ -120,14 +141,10 @@ async def test_user_flow_errors_then_recovers(
     )
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": error}
-    # The submitted values are kept so the user does not retype them.
-    suggested = {
-        str(k): k.default()
-        for k in result["data_schema"].schema
-        if k.default is not vol.UNDEFINED
-    }
-    assert suggested["username"] == entry_data["username"]
-    assert suggested["server"] == entry_data["server"]
+    # The submitted values are kept, but the password is never echoed back.
+    assert _schema_suggested(result, CONF_USERNAME) == entry_data[CONF_USERNAME]
+    assert _schema_suggested(result, CONF_SERVER) == entry_data[CONF_SERVER]
+    assert _schema_suggested(result, CONF_PASSWORD) is None
 
     # The same flow can be retried once the PBX/credentials are fixed.
     for key, value in good.items():
