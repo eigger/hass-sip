@@ -248,7 +248,7 @@ def test_register_refresh_keeps_registered_state():
     assert pending is False
 
 
-def test_register_deferred_during_call():
+def test_register_refresh_sent_during_call():
 
     async def run():
         pbx = MockPbx()
@@ -262,27 +262,114 @@ def test_register_deferred_during_call():
                 await asyncio.sleep(0.02)
             before = len(pbx.registers)
             client.state = sip_client.SipState.IN_CALL
-            delays = []
-            real = client._schedule_register
-
-            def spy(seconds):
-                delays.append(seconds)
-                real(3600)
-
-            client._schedule_register = spy
-            client._register_tick()
-            during = len(pbx.registers)
-            client.state = sip_client.SipState.REGISTERED
-            client._register_tick()
-            await asyncio.sleep(0.05)
-            return before, during, len(pbx.registers), delays
+            fire_register_timer(client)
+            state_sent = client.state
+            for _ in range(30):
+                if len(pbx.registers) > before and not client._reg_pending:
+                    break
+                await asyncio.sleep(0.02)
+            return (
+                before,
+                len(pbx.registers),
+                state_sent,
+                client.state,
+                client.registered,
+                client._reg_pending,
+            )
         finally:
             await _stop(client, pbx)
 
-    before, during, after, delays = asyncio.run(run())
-    assert during == before
-    assert delays[0] == 30
+    before, after, state_sent, state, ok, pending = asyncio.run(run())
     assert after > before
+    assert state_sent == sip_client.SipState.IN_CALL
+    assert state == sip_client.SipState.IN_CALL
+    assert ok is True
+    assert pending is False
+
+
+def test_register_unanswered_during_call_does_not_reconnect():
+
+    async def run():
+        pbx = MockPbx()
+        await pbx.start()
+        client, registered, _failed = await _make_client(pbx)
+        reconnects = []
+
+        async def no_reconnect():
+            reconnects.append(True)
+
+        client._reconnect = no_reconnect
+        try:
+            await client.start()
+            for _ in range(20):
+                if registered:
+                    break
+                await asyncio.sleep(0.02)
+            client.state = sip_client.SipState.IN_CALL
+            pbx.drop = True
+            before = len(pbx.registers)
+            states = []
+            for _ in range(6):
+                fire_register_timer(client)
+                await asyncio.sleep(0.02)
+                states.append(client.state)
+            return before, len(pbx.registers), states, reconnects, client._transport
+        finally:
+            await _stop(client, pbx)
+
+    before, after, states, reconnects, transport = asyncio.run(run())
+    assert reconnects == []
+    assert transport is not None
+    assert set(states) == {sip_client.SipState.IN_CALL}
+    assert after > before
+
+
+def test_register_failure_during_call_keeps_call_state():
+
+    async def run():
+        pbx = MockPbx()
+        await pbx.start()
+        client, registered, failed = await _make_client(pbx)
+        reconnects = []
+
+        async def no_reconnect():
+            reconnects.append(True)
+
+        client._reconnect = no_reconnect
+        try:
+            await client.start()
+            for _ in range(20):
+                if registered:
+                    break
+                await asyncio.sleep(0.02)
+            client.state = sip_client.SipState.IN_CALL
+            pbx.require_auth = False
+            pbx.force_code = 403
+            fire_register_timer(client)
+            for _ in range(30):
+                if failed:
+                    break
+                await asyncio.sleep(0.02)
+            state_failed = client.state
+            # The retry tick keeps going without reconnecting.
+            fire_register_timer(client)
+            await asyncio.sleep(0.05)
+            return (
+                list(failed),
+                state_failed,
+                client.state,
+                client.registered,
+                reconnects,
+            )
+        finally:
+            await _stop(client, pbx)
+
+    failed, state_failed, state, ok, reconnects = asyncio.run(run())
+    assert failed and failed[0].startswith("403")
+    assert state_failed == sip_client.SipState.IN_CALL
+    assert state == sip_client.SipState.IN_CALL
+    assert ok is False
+    assert reconnects == []
 
 
 def test_register_recovers_after_pbx_restart():

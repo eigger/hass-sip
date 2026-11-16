@@ -712,8 +712,9 @@ class SipClient:
         self._send_raw(self._build_register())
         # A refresh of a live registration stays REGISTERED: the registrar
         # still holds the binding, and flipping to REGISTERING every half
-        # expiry would churn state-change events for nothing.
-        if self.state != SipState.REGISTERED:
+        # expiry would churn state-change events for nothing. Never touch a
+        # call state: registration is independent of the dialog.
+        if self.state in (SipState.IDLE, SipState.REGISTERING):
             self._set_state(SipState.REGISTERING)
         self._schedule_register(5)  # retry window if no response
 
@@ -735,7 +736,6 @@ class SipClient:
             self._schedule_register(10)
 
     def _register_tick(self) -> None:
-        # Don't disturb an active call; defer the refresh.
         if self.state in (
             SipState.IN_CALL,
             SipState.ANSWERING,
@@ -743,7 +743,19 @@ class SipClient:
             SipState.INVITING,
             SipState.RINGING_OUT,
         ):
-            self._schedule_register(30)
+            # Registration is independent of the dialog (RFC 3261): keep
+            # refreshing during a call or the registrar expires the binding
+            # and drops the call. Never reconnect here: that closes the
+            # socket the dialog uses and resets the state. A stuck REGISTER is
+            # retried slowly; the idle path recovers after the call ends.
+            if self._reg_pending:
+                self._reg_attempts += 1
+                if self._reg_attempts >= 3:
+                    _LOGGER.warning("REGISTER unanswered during call; will retry")
+                    self._reg_attempts = 0
+                    self._schedule_register(30)
+                    return
+            self._do_register()
             return
         if self._reg_pending or self.state == SipState.REGISTERING:
             # No response in the window. Resend a few times, then rebuild the
